@@ -1,0 +1,17 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Backend (Go)",
+      "type": "go",
+      "request": "launch",
+      "mode": "auto",
+      "program": "${workspaceFolder}/backend/cmd/server",
+      "env": {
+        "DB_PASSWORD": "devpassword",
+        "JWT_SECRET": "dev-only-change-in-production-min-32-chars",
+        "MAIL_DRIVER": "log"
+      }
+    }
+  ]
+}
