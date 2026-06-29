@@ -1,0 +1,17 @@
+$kind: http-request
+name: GET /api/users/me
+url: "{{baseUrl}}/api/users/me"
+method: GET
+headers:
+  Authorization: Bearer {{access_token}}
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      pm.test('current user returned', function () {
+        pm.response.to.have.status(200);
+        const json = pm.response.json();
+        pm.expect(json.email).to.be.a('string');
+        pm.expect(json.username).to.be.a('string');
+      });
+order: 3000

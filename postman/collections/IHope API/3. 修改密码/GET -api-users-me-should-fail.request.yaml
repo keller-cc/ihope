@@ -1,0 +1,15 @@
+$kind: http-request
+name: GET /api/users/me (should fail after change)
+url: "{{baseUrl}}/api/users/me"
+method: GET
+headers:
+  Authorization: Bearer {{old_access_token}}
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      pm.test('old access token invalidated', function () {
+        pm.response.to.have.status(401);
+        pm.expect(pm.response.json().error).to.eql('session_revoked');
+      });
+order: 2000

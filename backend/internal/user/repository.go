@@ -1,0 +1,277 @@
+// Package user 用户领域：数据模型、PostgreSQL 仓储、/api/users/me 接口。
+//
+// Repository 封装所有 users / user_devices / password_reset_tokens 表的 SQL。
+package user
+
+import (
+	"context"
+	"errors"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+var (
+	ErrNotFound      = errors.New("user not found")
+	ErrEmailTaken    = errors.New("email already registered")
+	ErrUsernameTaken = errors.New("username already taken")
+)
+
+// User 返回给客户端的用户信息（不含 password_hash）。
+type User struct {
+	ID                string     `json:"id"`
+	Email             string     `json:"email"`
+	Username          string     `json:"username"`
+	AvatarURL         *string    `json:"avatar_url"`
+	IdentityPublicKey string     `json:"identity_public_key"`
+	EmailVerifiedAt   *time.Time `json:"email_verified_at,omitempty"`
+	CreatedAt         time.Time  `json:"created_at"`
+	UpdatedAt         time.Time  `json:"updated_at"`
+}
+
+// Repository 用户与设备、重置令牌的数据库访问层。
+type Repository struct {
+	pool *pgxpool.Pool
+}
+
+func NewRepository(pool *pgxpool.Pool) *Repository {
+	return &Repository{pool: pool}
+}
+
+func (r *Repository) Create(ctx context.Context, email, username, passwordHash, identityPublicKey string) (*User, error) {
+	row := r.pool.QueryRow(ctx, `
+		INSERT INTO users (email, username, password_hash, identity_public_key)
+		VALUES ($1, $2, $3, $4)
+		RETURNING id, email, username, avatar_url, identity_public_key, email_verified_at, created_at, updated_at`,
+		email, username, passwordHash, identityPublicKey,
+	)
+	u, err := scanUser(row)
+	if err != nil {
+		if isUniqueViolation(err) {
+			// distinguish email vs username by re-query is expensive; inspect constraint name if needed
+			if containsConstraint(err, "users_email_key") {
+				return nil, ErrEmailTaken
+			}
+			if containsConstraint(err, "users_username_key") {
+				return nil, ErrUsernameTaken
+			}
+			return nil, ErrEmailTaken
+		}
+		return nil, err
+	}
+	return u, nil
+}
+
+func (r *Repository) GetByID(ctx context.Context, id string) (*User, error) {
+	row := r.pool.QueryRow(ctx, `
+		SELECT id, email, username, avatar_url, identity_public_key, email_verified_at, created_at, updated_at
+		FROM users WHERE id = $1`, id)
+	u, err := scanUser(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	return u, err
+}
+
+func (r *Repository) GetByEmail(ctx context.Context, email string) (*User, string, error) {
+	row := r.pool.QueryRow(ctx, `
+		SELECT id, email, username, avatar_url, identity_public_key, email_verified_at, created_at, updated_at, password_hash
+		FROM users WHERE email = $1`, email)
+	var passwordHash string
+	u, err := scanUserWithPassword(row, &passwordHash)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, "", ErrNotFound
+	}
+	return u, passwordHash, err
+}
+
+func (r *Repository) GetPasswordHashByID(ctx context.Context, userID string) (string, error) {
+	var hash string
+	err := r.pool.QueryRow(ctx, `SELECT password_hash FROM users WHERE id = $1`, userID).Scan(&hash)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	return hash, err
+}
+
+func (r *Repository) GetTokenVersion(ctx context.Context, userID string) (int, error) {
+	var version int
+	err := r.pool.QueryRow(ctx, `SELECT token_version FROM users WHERE id = $1`, userID).Scan(&version)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, ErrNotFound
+	}
+	return version, err
+}
+
+func (r *Repository) UpdatePassword(ctx context.Context, userID, passwordHash string) error {
+	tag, err := r.pool.Exec(ctx, `
+		UPDATE users SET password_hash = $2, updated_at = now() WHERE id = $1`,
+		userID, passwordHash,
+	)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (r *Repository) ClearDeviceRefreshTokens(ctx context.Context, userID string) error {
+	_, err := r.pool.Exec(ctx, `
+		UPDATE user_devices SET refresh_token_hash = NULL WHERE user_id = $1`, userID)
+	return err
+}
+
+// ChangePasswordAndRevokeSessions 更新密码、递增 token_version，并清除全部 refresh_token。
+func (r *Repository) ChangePasswordAndRevokeSessions(ctx context.Context, userID, passwordHash string) error {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	tag, err := tx.Exec(ctx, `
+		UPDATE users
+		SET password_hash = $2, token_version = token_version + 1, updated_at = now()
+		WHERE id = $1`, userID, passwordHash)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+
+	if _, err := tx.Exec(ctx, `
+		UPDATE user_devices SET refresh_token_hash = NULL WHERE user_id = $1`, userID); err != nil {
+		return err
+	}
+
+	return tx.Commit(ctx)
+}
+
+func (r *Repository) UpsertDevice(ctx context.Context, userID, deviceID, deviceName, refreshTokenHash string) error {
+	_, err := r.pool.Exec(ctx, `
+		INSERT INTO user_devices (user_id, device_id, device_name, refresh_token_hash, last_active_at)
+		VALUES ($1, $2, $3, $4, now())
+		ON CONFLICT (user_id, device_id) DO UPDATE SET
+			device_name = COALESCE(EXCLUDED.device_name, user_devices.device_name),
+			refresh_token_hash = EXCLUDED.refresh_token_hash,
+			last_active_at = now()`,
+		userID, deviceID, nullIfEmpty(deviceName), refreshTokenHash,
+	)
+	return err
+}
+
+func (r *Repository) GetDeviceRefreshHash(ctx context.Context, userID, deviceID string) (string, error) {
+	var hash *string
+	err := r.pool.QueryRow(ctx, `
+		SELECT refresh_token_hash FROM user_devices
+		WHERE user_id = $1 AND device_id = $2`, userID, deviceID).Scan(&hash)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	if err != nil {
+		return "", err
+	}
+	if hash == nil || *hash == "" {
+		return "", ErrNotFound
+	}
+	return *hash, nil
+}
+
+func (r *Repository) CreatePasswordResetToken(ctx context.Context, userID, tokenHash string, expiresAt time.Time) error {
+	_, err := r.pool.Exec(ctx, `
+		INSERT INTO password_reset_tokens (user_id, token_hash, expires_at)
+		VALUES ($1, $2, $3)`, userID, tokenHash, expiresAt)
+	return err
+}
+
+func (r *Repository) ConsumePasswordResetToken(ctx context.Context, tokenHash string) (string, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var userID string
+	err = tx.QueryRow(ctx, `
+		SELECT user_id FROM password_reset_tokens
+		WHERE token_hash = $1 AND used_at IS NULL AND expires_at > now()
+		FOR UPDATE`, tokenHash).Scan(&userID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", errors.New("invalid or expired token")
+	}
+	if err != nil {
+		return "", err
+	}
+
+	if _, err := tx.Exec(ctx, `
+		UPDATE password_reset_tokens SET used_at = now()
+		WHERE token_hash = $1`, tokenHash); err != nil {
+		return "", err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return "", err
+	}
+	return userID, nil
+}
+
+type scannable interface {
+	Scan(dest ...any) error
+}
+
+func scanUser(row scannable) (*User, error) {
+	var u User
+	err := row.Scan(&u.ID, &u.Email, &u.Username, &u.AvatarURL, &u.IdentityPublicKey, &u.EmailVerifiedAt, &u.CreatedAt, &u.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &u, nil
+}
+
+func scanUserWithPassword(row scannable, passwordHash *string) (*User, error) {
+	var u User
+	err := row.Scan(&u.ID, &u.Email, &u.Username, &u.AvatarURL, &u.IdentityPublicKey, &u.EmailVerifiedAt, &u.CreatedAt, &u.UpdatedAt, passwordHash)
+	if err != nil {
+		return nil, err
+	}
+	return &u, nil
+}
+
+func (r *Repository) FindUserIDByDeviceRefresh(ctx context.Context, deviceID, tokenHash string) (string, error) {
+	var userID string
+	err := r.pool.QueryRow(ctx, `
+		SELECT user_id FROM user_devices
+		WHERE device_id = $1 AND refresh_token_hash = $2`, deviceID, tokenHash).Scan(&userID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	return userID, err
+}
+
+func isUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		return pgErr.Code == "23505"
+	}
+	return false
+}
+
+func containsConstraint(err error, name string) bool {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		return pgErr.ConstraintName == name
+	}
+	return false
+}
+
+func nullIfEmpty(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
+}

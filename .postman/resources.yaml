@@ -1,0 +1,13 @@
+workspace:
+  id: 45aef7e5-e125-41c8-9d22-707bb3a26a73
+
+# 只保留 postman/ 下的 Native Git 资源；不要同时映射 docs/postman/*.json
+localResources:
+  collections:
+    - postman/collections/IHope API
+  environments:
+    - postman/environments/IHope.environment.yaml
+
+cloudResources:
+  collections: {}
+  environments: {}

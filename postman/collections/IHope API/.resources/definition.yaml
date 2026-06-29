@@ -1,0 +1,3 @@
+$kind: collection
+name: IHope API
+description: 选 IHope Local 环境。测完先跑「0. 健康检查 → Reset environment variables」恢复变量（Postman 自带 Reset all 在 Native Git 下常无效，勿依赖）。

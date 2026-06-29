@@ -37,11 +37,9 @@ flutter doctor
 ```powershell
 cd "D:\施玮书房\IHope"
 
-# 环境变量（本地开发，勿提交）
-copy .env.example .env
-
-# 数据库
+# 数据库环境变量（必须在 deploy 目录，勿提交）
 cd deploy
+copy ..\.env.example .env
 docker compose -f docker-compose.dev.yml up -d
 cd ..
 
@@ -49,6 +47,7 @@ cd ..
 cd backend
 go mod download
 go run ./cmd/server
+# 自动加载 ../deploy/.env，控制台应看到：config: loaded ../deploy/.env
 ```
 
 另开 PowerShell 窗口验证：
@@ -63,22 +62,74 @@ curl http://localhost:8080/api/health
 
 ### 3.1 启动数据库（开机后一次）
 
+**必须在 `deploy` 目录执行**，Compose 才会加载 `deploy/.env`。
+
 ```powershell
 cd D:\施玮书房\IHope\deploy
+copy ..\.env.example .env   # 首次；.env 已存在则跳过
 docker compose -f docker-compose.dev.yml up -d
 ```
 
+确认运行中：
+
+```powershell
+docker ps --filter name=ihope-postgres-dev
+docker compose -f docker-compose.dev.yml ps
+```
+
+#### Navicat 连接参数
+
+| 字段 | 值 |
+|------|-----|
+| 连接类型 | PostgreSQL |
+| 主机 | `127.0.0.1` |
+| 端口 | `5432`（与 `deploy/.env` 中 `DB_PORT` 一致，可自行修改） |
+| 初始数据库 | `ihope` |
+| 用户名 | `ihope` |
+| 密码 | `deploy/.env` 里 `DB_PASSWORD`（默认 `devpassword`） |
+| SSL | 关闭 |
+
+连接字符串：`postgres://ihope:devpassword@127.0.0.1:5432/ihope?sslmode=disable`
+
+容器内验证：
+
+```powershell
+docker exec -it ihope-postgres-dev psql -U ihope -d ihope -c "SELECT 1;"
+```
+
+#### Navicat 连不上
+
+1. **端口不一致**：Navicat 端口须与 `deploy/.env` 的 `DB_PORT` 相同（默认 `5432`）。
+2. **密码与数据卷不一致**：PostgreSQL 密码在首次建库时固定；改 `.env` 后需重建数据卷：
+
+```powershell
+cd D:\施玮书房\IHope\deploy
+docker compose -f docker-compose.dev.yml down
+Remove-Item -Recurse -Force .\data\postgres -ErrorAction SilentlyContinue
+docker compose -f docker-compose.dev.yml up -d
+```
+
+3. **容器未跑**：先启动 Docker Desktop，再 `docker compose ... up -d`。
+4. **主机填错**：用 `127.0.0.1`，不要用容器名 `ihope-postgres-dev`。
+
 ### 3.2 启动后端（开发窗口 1）
+
+在 `backend` 目录执行即可，**会自动读取 `../deploy/.env`**（无需再手动 `$env:DB_*`）。
 
 ```powershell
 cd D:\施玮书房\IHope\backend
-
-$env:DB_PASSWORD="devpassword"
-$env:JWT_SECRET="dev-only-change-in-production-min-32-chars"
-$env:MAIL_DRIVER="log"
-
 go run ./cmd/server
 ```
+
+启动日志应包含：
+
+```
+config: loaded ../deploy/.env
+database migrations applied
+server listening on http://localhost:8080
+```
+
+若需指定其他 env 文件：`$env:ENV_FILE="D:\path\to\.env"; go run ./cmd/server`
 
 **提示：** 可把环境变量写入项目根 `.env`，用 [godotenv](https://github.com/joho/godotenv) 加载，或 Windows 用户环境变量里配置。
 
@@ -230,9 +281,9 @@ git push
 ```powershell
 git clone https://github.com/<用户名>/ihope.git
 cd ihope
-copy .env.example .env
 
 cd deploy
+copy ..\.env.example .env
 docker compose -f docker-compose.dev.yml up -d
 
 cd ..\backend
@@ -267,6 +318,10 @@ flutter doctor
 git config --global core.quotepath false
 ```
 
+### Navicat 无法连接 PostgreSQL
+
+见 [3.1 启动数据库](#31-启动数据库开机后一次) 中「Navicat 连不上」四条排查。
+
 ### 端口 5432 / 8080 被占用
 
 ```powershell
@@ -299,6 +354,10 @@ taskkill /PID <pid> /F
       "program": "${workspaceFolder}/backend/cmd/server",
       "env": {
         "DB_PASSWORD": "devpassword",
+        "POSTGRES_USER": "ihope",
+        "POSTGRES_DB": "ihope",
+        "DB_HOST": "127.0.0.1",
+        "DB_PORT": "5432",
         "JWT_SECRET": "dev-only-change-in-production-min-32-chars",
         "MAIL_DRIVER": "log"
       }
@@ -313,4 +372,6 @@ taskkill /PID <pid> /F
 
 | 版本 | 日期 | 说明 |
 |------|------|------|
+| v1.2 | 2026-06-29 | 补充 Navicat 连接说明与 DB_PORT 配置 |
+| v1.1 | 2026-06-29 | 统一本地 DB 密码说明，补充 Navicat 连接与排查 |
 | v1.0 | 2026-06-29 | Windows 单人开发 + GitHub 初版 |

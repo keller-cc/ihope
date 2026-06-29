@@ -1,0 +1,28 @@
+$kind: http-request
+name: POST /api/auth/refresh
+url: "{{baseUrl}}/api/auth/refresh"
+method: POST
+headers:
+  Content-Type: application/json
+body:
+  type: json
+  content: |-
+    {
+      "refresh_token": "{{refresh_token}}",
+      "device_id": "{{device_id}}"
+    }
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      pm.test('refresh returns new tokens and saves variables', function () {
+        pm.response.to.have.status(200);
+        const json = pm.response.json();
+        pm.expect(json.access_token).to.be.a('string').and.not.empty;
+        pm.expect(json.refresh_token).to.be.a('string').and.not.empty;
+        if (pm.environment.name) {
+          pm.environment.set('access_token', json.access_token);
+          pm.environment.set('refresh_token', json.refresh_token);
+        }
+      });
+order: 4000

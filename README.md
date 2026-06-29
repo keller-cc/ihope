@@ -1,89 +1,48 @@
 # IHope
 
-公司内部轻量即时通讯：单聊/群聊、图片文件、E2EE、多设备同步。  
-约 100 人规模，部署于境外云公网。
+公司内部轻量 IM（Go 后端 + Flutter，当前完成后端账号体系）。
 
 ## 文档
 
 | 文档 | 说明 |
 |------|------|
-| [需求规格说明书](docs/需求规格说明书.md) | 功能、安全、接口、数据模型 |
-| [开发指南](docs/开发指南.md) | 分阶段开发路线 |
-| [Windows 开发环境](docs/Windows开发环境.md) | **Windows 单机 + GitHub 工作流** |
+| [Postman 自动同步](postman/README.md) | 关联 Git，免 Import |
+| [API 与 Postman 测试](docs/API与Postman测试指南.md) | 启动、测 API |
+| [后端说明](backend/README.md) | 目录、限流、命令 |
+| [Windows 开发环境](docs/Windows开发环境.md) | Git、Navicat 等 |
+| [开发指南](docs/开发指南.md) | 分阶段路线 |
+| [需求规格](docs/需求规格说明书.md) | 完整需求 |
 
-## 仓库结构
-
-```
-├── backend/          Go 后端
-├── mobile/           Flutter App（需 flutter create 初始化）
-├── deploy/           Docker Compose（本地 PostgreSQL）
-├── docs/             文档
-└── .github/workflows CI
-```
-
-## 快速开始（Windows）
-
-### 1. 安装依赖
-
-- [Go 1.22+](https://go.dev/dl/)
-- [Docker Desktop](https://www.docker.com/products/docker-desktop/)
-- [Flutter](https://docs.flutter.dev/get-started/install/windows)（做 App 时）
-- [Git](https://git-scm.com/download/win)
-
-### 2. 启动数据库
+## 快速开始
 
 ```powershell
+# 1. 数据库
 cd deploy
-copy ..\.env.example .env
-# 编辑 .env 中的 DB_PASSWORD（可选，默认 devpassword 即可本地用）
+copy ..\.env.example .env    # 首次
 docker compose -f docker-compose.dev.yml up -d
-```
 
-### 3. 启动后端
-
-```powershell
-cd backend
-$env:DB_PASSWORD="devpassword"
-$env:JWT_SECRET="dev-only-change-in-production-min-32-chars"
-go mod download
+# 2. 后端
+cd ..\backend
 go run ./cmd/server
 ```
 
-浏览器访问：<http://localhost:8080/api/health>
+浏览器：<http://localhost:8080/api/health>
 
-### 4. 初始化 Flutter（可选）
+Postman：**Connect to Git** 关联本仓库，自动加载 `postman/`（见 [postman/README.md](postman/README.md)）。
 
-```powershell
-cd mobile
-flutter create --org com.ihope --project-name ihope .
-flutter pub add dio web_socket_channel flutter_secure_storage
-flutter run
-```
+## 配置
 
-## 提交到 GitHub
+**全部在 `deploy/.env`**（改完重启后端）：
 
-```powershell
-cd "D:\施玮书房\IHope"
-git init
-git add .
-git commit -m "chore: initial project scaffold for Windows solo dev"
-```
+| 变量 | 说明 |
+|------|------|
+| `DB_PORT` / `DB_PASSWORD` 等 | 数据库 |
+| `JWT_ACCESS_TTL_MIN` | access_token 分钟数 |
+| `LOGIN_RATE_LIMIT` / `LOGIN_RATE_WINDOW_SEC` | 注册/登录限流 |
+| `RESET_TOKEN_TTL_MIN` | 重置密码 token 分钟数 |
+| `CORS_ALLOW_ORIGIN` | 跨域 |
 
-在 GitHub 新建空仓库（不要勾选 README），然后：
-
-```powershell
-git remote add origin https://github.com/<你的用户名>/ihope.git
-git branch -M main
-git push -u origin main
-```
-
-详细说明（SSH、分支策略、Secrets）见 [docs/Windows开发环境.md](docs/Windows开发环境.md)。
-
-## 技术栈
-
-- **后端**：Go、PostgreSQL、WebSocket
-- **移动端**：Flutter
-- **部署**：Docker、Nginx、境外 VPS
+模板：`.env.example`
 
 ## License
 

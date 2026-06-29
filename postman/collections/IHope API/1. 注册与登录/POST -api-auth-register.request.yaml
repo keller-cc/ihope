@@ -1,0 +1,23 @@
+$kind: http-request
+name: POST /api/auth/register
+url: "{{baseUrl}}/api/auth/register"
+method: POST
+headers:
+  Content-Type: application/json
+body:
+  type: json
+  content: |-
+    {
+      "email": "alice@example.com",
+      "username": "alice",
+      "password": "password123",
+      "identity_public_key": "dGVzdF9pZGVudGl0eV9rZXk="
+    }
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      pm.test('register ok or already exists', function () {
+        pm.expect([201, 409]).to.include(pm.response.code);
+      });
+order: 1000

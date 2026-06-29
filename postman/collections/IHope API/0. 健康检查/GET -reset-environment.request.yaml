@@ -1,0 +1,34 @@
+$kind: http-request
+name: Reset environment variables
+url: "{{baseUrl}}/api/health"
+method: GET
+scripts:
+  - type: beforeRequest
+    language: text/javascript
+    code: |-
+      const defaults = {
+        baseUrl: 'http://localhost:8080',
+        device_id: 'postman-device-1',
+        access_token: '',
+        refresh_token: '',
+        old_access_token: '',
+        old_refresh_token: '',
+        reset_token: '',
+        login_password: 'password123',
+      };
+      if (!pm.environment.name) {
+        throw new Error('请先选择 IHope Local 环境');
+      }
+      Object.entries(defaults).forEach(([key, value]) => pm.environment.set(key, value));
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      pm.test('environment reset to defaults', function () {
+        pm.expect(pm.environment.get('login_password')).to.eql('password123');
+        pm.expect(pm.environment.get('access_token')).to.eql('');
+        pm.expect(pm.environment.get('baseUrl')).to.eql('http://localhost:8080');
+      });
+      pm.test('server reachable after reset', function () {
+        pm.response.to.have.status(200);
+      });
+order: 500
