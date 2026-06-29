@@ -1,0 +1,19 @@
+$kind: http-request
+name: GET /api/users
+url: "{{baseUrl}}/api/users"
+method: GET
+headers:
+  Authorization: Bearer {{access_token}}
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      pm.test('user list ok', function () {
+        pm.response.to.have.status(200);
+        const json = pm.response.json();
+        pm.expect(json.users).to.be.an('array');
+        if (pm.environment.name && json.users.length > 0) {
+          pm.environment.set('peer_user_id', json.users[0].id);
+        }
+      });
+order: 1000

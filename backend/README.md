@@ -1,6 +1,6 @@
 # IHope 后端
 
-Go 1.22+ REST API，当前实现账号体系（阶段 1）。
+Go 1.22+ REST API，当前实现阶段 1 账号体系 + 阶段 2 会话与消息（明文版）。
 
 ## 启动
 
@@ -61,6 +61,16 @@ go test ./internal/server/... -count=1 -v -run Integration
 | `TestAuthFlowIntegration` | 注册 → 登录 → /me → refresh → forgot |
 | `TestResetPasswordFlowIntegration` | 找回密码 → reset → 旧 token 失效 → 新密码登录 |
 | `TestChangePasswordFlowIntegration` | 修改密码 → 旧 token 失效 → 新密码登录 |
+
+### 只跑会话集成测试
+
+```powershell
+go test ./internal/server/... -count=1 -v -run Conversation
+```
+
+| 测试 | 对应 Postman |
+|------|----------------|
+| `TestConversationFlowIntegration` | 用户列表 → 单聊 → 发消息 → 拉历史 → 建群 |
 
 ### 只跑单元测试（无需数据库）
 

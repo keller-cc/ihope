@@ -1,0 +1,15 @@
+$kind: http-request
+name: GET /api/conversations
+url: "{{baseUrl}}/api/conversations"
+method: GET
+headers:
+  Authorization: Bearer {{access_token}}
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      pm.test('conversation list ok', function () {
+        pm.response.to.have.status(200);
+        pm.expect(pm.response.json().conversations).to.be.an('array');
+      });
+order: 5000

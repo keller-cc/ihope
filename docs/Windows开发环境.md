@@ -131,6 +131,26 @@ server listening on http://localhost:8080
 
 若需指定其他 env 文件：`$env:ENV_FILE="D:\path\to\.env"; go run ./cmd/server`
 
+### 3.2.1 运行 Go 测试
+
+```powershell
+cd D:\施玮书房\IHope\backend
+
+# 全部测试（单元 + 集成）
+go test ./... -count=1 -v
+```
+
+**Docker 端口 5433 时：** 确保 `deploy/.env` 里 `DB_PORT=5433`，且容器已启动。测试会自动向上查找 `deploy/.env`（与 `go run` 一致）。
+
+若仍出现 `SKIP: database not available` 且连的是 **5432**，可显式指定：
+
+```powershell
+$env:TEST_DATABASE_URL = "postgres://ihope:devpassword@127.0.0.1:5433/ihope?sslmode=disable"
+go test ./... -count=1 -v
+```
+
+密码以 `deploy/.env` 的 `DB_PASSWORD` 为准。详见 [开发指南.md §12](./开发指南.md#12-测试建议)。
+
 **提示：** 可把环境变量写入项目根 `.env`，用 [godotenv](https://github.com/joho/godotenv) 加载，或 Windows 用户环境变量里配置。
 
 ### 3.3 启动 Flutter（开发窗口 2）

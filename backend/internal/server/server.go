@@ -6,29 +6,47 @@ import (
 
 	"github.com/ihope/ihope/internal/auth"
 	"github.com/ihope/ihope/internal/config"
+	"github.com/ihope/ihope/internal/conversation"
 	"github.com/ihope/ihope/internal/httpx"
 	"github.com/ihope/ihope/internal/jwt"
+	"github.com/ihope/ihope/internal/message"
 	"github.com/ihope/ihope/internal/middleware"
 	"github.com/ihope/ihope/internal/user"
+	"github.com/ihope/ihope/internal/ws"
 )
 
 type Server struct {
-	cfg        config.Config
-	auth       *auth.Handler
-	users      *user.Handler
-	userRepo   *user.Repository
-	jwt        *jwt.Manager
-	loginLimit *middleware.RateLimiter
+	cfg           config.Config
+	auth          *auth.Handler
+	users         *user.Handler
+	conversations *conversation.Handler
+	messages      *message.Handler
+	ws            *ws.Handler
+	userRepo      *user.Repository
+	jwt           *jwt.Manager
+	loginLimit    *middleware.RateLimiter
 }
 
-func New(cfg config.Config, authHandler *auth.Handler, userHandler *user.Handler, userRepo *user.Repository, jwtMgr *jwt.Manager) *Server {
+func New(
+	cfg config.Config,
+	authHandler *auth.Handler,
+	userHandler *user.Handler,
+	userRepo *user.Repository,
+	jwtMgr *jwt.Manager,
+	convHandler *conversation.Handler,
+	msgHandler *message.Handler,
+	wsHandler *ws.Handler,
+) *Server {
 	return &Server{
-		cfg:        cfg,
-		auth:       authHandler,
-		users:      userHandler,
-		userRepo:   userRepo,
-		jwt:        jwtMgr,
-		loginLimit: middleware.NewRateLimiter(cfg.LoginRateLimit, cfg.LoginRateWindow),
+		cfg:           cfg,
+		auth:          authHandler,
+		users:         userHandler,
+		conversations: convHandler,
+		messages:      msgHandler,
+		ws:            wsHandler,
+		userRepo:      userRepo,
+		jwt:           jwtMgr,
+		loginLimit:    middleware.NewRateLimiter(cfg.LoginRateLimit, cfg.LoginRateWindow),
 	}
 }
 
@@ -47,6 +65,19 @@ func (s *Server) Router() http.Handler {
 	authRequired := middleware.Auth(s.jwt, s.userRepo)
 	mux.Handle("POST /api/auth/change-password", authRequired(http.HandlerFunc(s.auth.ChangePassword)))
 	mux.Handle("GET /api/users/me", authRequired(http.HandlerFunc(s.users.Me)))
+	mux.Handle("GET /api/users", authRequired(http.HandlerFunc(s.users.List)))
+
+	if s.conversations != nil {
+		mux.Handle("GET /api/conversations", authRequired(http.HandlerFunc(s.conversations.List)))
+		mux.Handle("POST /api/conversations", authRequired(http.HandlerFunc(s.conversations.Create)))
+	}
+	if s.messages != nil {
+		mux.Handle("GET /api/conversations/{id}/messages", authRequired(http.HandlerFunc(s.messages.List)))
+		mux.Handle("POST /api/conversations/{id}/messages", authRequired(http.HandlerFunc(s.messages.Send)))
+	}
+	if s.ws != nil {
+		mux.Handle("GET /ws", s.ws)
+	}
 
 	return cors(s.cfg.CORSAllowOrigin, mux)
 }

@@ -8,11 +8,14 @@ import (
 
 	"github.com/ihope/ihope/internal/auth"
 	"github.com/ihope/ihope/internal/config"
+	"github.com/ihope/ihope/internal/conversation"
 	"github.com/ihope/ihope/internal/db"
 	"github.com/ihope/ihope/internal/jwt"
 	"github.com/ihope/ihope/internal/mail"
+	"github.com/ihope/ihope/internal/message"
 	"github.com/ihope/ihope/internal/server"
 	"github.com/ihope/ihope/internal/user"
+	"github.com/ihope/ihope/internal/ws"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -66,8 +69,25 @@ func NewTestServer(t *testing.T) *server.Server {
 	cfg := TestConfig()
 
 	userRepo := user.NewRepository(pool)
+	convRepo := conversation.NewRepository(pool)
+	msgRepo := message.NewRepository(pool)
+
 	jwtMgr := jwt.NewManager(cfg.JWTSecret, cfg.JWTAccessTTL)
 	authSvc := auth.NewService(cfg, userRepo, jwtMgr, mail.New(cfg))
+	convSvc := conversation.NewService(convRepo, userRepo)
 
-	return server.New(cfg, auth.NewHandler(authSvc), user.NewHandler(userRepo), userRepo, jwtMgr)
+	hub := ws.NewHub()
+	msgSvc := message.NewService(msgRepo, convRepo)
+	wsHandler := ws.NewHandler(hub, jwtMgr, userRepo, convSvc, msgSvc)
+
+	return server.New(
+		cfg,
+		auth.NewHandler(authSvc),
+		user.NewHandler(userRepo),
+		userRepo,
+		jwtMgr,
+		conversation.NewHandler(convSvc),
+		message.NewHandler(msgSvc, convSvc, hub),
+		wsHandler,
+	)
 }

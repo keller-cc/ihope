@@ -15,6 +15,9 @@ scripts:
         old_refresh_token: '',
         reset_token: '',
         login_password: 'password123',
+        peer_user_id: '',
+        conversation_id: '',
+        ws_base_url: 'ws://localhost:8080',
       };
       if (!pm.environment.name) {
         throw new Error('请先选择 IHope Local 环境');

@@ -3,6 +3,7 @@ package user
 import (
 	"errors"
 	"net/http"
+	"strconv"
 
 	"github.com/ihope/ihope/internal/httpx"
 	"github.com/ihope/ihope/internal/middleware"
@@ -36,4 +37,25 @@ func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
 	}
 
 	httpx.WriteJSON(w, http.StatusOK, u)
+}
+
+// List GET /api/users — 用户列表（不含邮箱，用于发起单聊）。
+func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
+	userID := middleware.UserIDFromContext(r.Context())
+	limit := 50
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			limit = n
+		}
+	}
+	if limit > 100 {
+		limit = 100
+	}
+
+	users, err := h.repo.ListPublic(r.Context(), userID, r.URL.Query().Get("q"), limit)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "could not list users")
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"users": users})
 }

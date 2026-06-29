@@ -1,0 +1,23 @@
+$kind: http-request
+name: POST /api/conversations/{id}/messages
+url: "{{baseUrl}}/api/conversations/{{conversation_id}}/messages"
+method: POST
+headers:
+  Content-Type: application/json
+  Authorization: Bearer {{access_token}}
+body:
+  type: json
+  content: |-
+    {
+      "type": "text",
+      "ciphertext": "hello from postman"
+    }
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      pm.test('message sent', function () {
+        pm.response.to.have.status(201);
+        pm.expect(pm.response.json().message.ciphertext).to.eql('hello from postman');
+      });
+order: 3000

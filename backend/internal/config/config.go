@@ -4,6 +4,7 @@ package config
 import (
 	"log"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -61,14 +62,33 @@ func Load() Config {
 }
 
 func loadDotEnv() {
-	for _, path := range []string{os.Getenv("ENV_FILE"), "../deploy/.env", ".env", "../.env"} {
-		if path == "" {
-			continue
+	if path := strings.TrimSpace(os.Getenv("ENV_FILE")); path != "" {
+		if err := godotenv.Overload(path); err == nil {
+			log.Printf("config: loaded %s", path)
 		}
+		return
+	}
+
+	for _, path := range []string{"../deploy/.env", ".env", "../.env"} {
 		if err := godotenv.Overload(path); err == nil {
 			log.Printf("config: loaded %s", path)
 			return
 		}
+	}
+
+	// go test 在 internal/*/ 子目录运行，../deploy/.env 会找不到；向上查找 deploy/.env
+	dir, err := os.Getwd()
+	for i := 0; i < 8 && err == nil; i++ {
+		candidate := filepath.Join(dir, "deploy", ".env")
+		if err := godotenv.Overload(candidate); err == nil {
+			log.Printf("config: loaded %s", candidate)
+			return
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
 	}
 }
 

@@ -1,0 +1,27 @@
+$kind: http-request
+name: POST /api/conversations (private)
+url: "{{baseUrl}}/api/conversations"
+method: POST
+headers:
+  Content-Type: application/json
+  Authorization: Bearer {{access_token}}
+body:
+  type: json
+  content: |-
+    {
+      "type": "private",
+      "peer_user_id": "{{peer_user_id}}"
+    }
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      pm.test('private conversation created', function () {
+        pm.response.to.have.status(201);
+        const json = pm.response.json();
+        pm.expect(json.conversation.id).to.be.a('string').and.not.empty;
+        if (pm.environment.name) {
+          pm.environment.set('conversation_id', json.conversation.id);
+        }
+      });
+order: 2000

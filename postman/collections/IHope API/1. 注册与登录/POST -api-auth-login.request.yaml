@@ -8,7 +8,7 @@ body:
   type: json
   content: |-
     {
-      "email": "alice@example.com",
+      "email": "{{login_email}}",
       "password": "{{login_password}}",
       "device_id": "{{device_id}}",
       "device_name": "Postman"

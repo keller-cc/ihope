@@ -31,6 +31,14 @@ type User struct {
 	UpdatedAt         time.Time  `json:"updated_at"`
 }
 
+// PublicUser 用户列表/会话成员展示（不含邮箱）。
+type PublicUser struct {
+	ID                string  `json:"id"`
+	Username          string  `json:"username"`
+	AvatarURL         *string `json:"avatar_url"`
+	IdentityPublicKey string  `json:"identity_public_key"`
+}
+
 // Repository 用户与设备、重置令牌的数据库访问层。
 type Repository struct {
 	pool *pgxpool.Pool
@@ -73,6 +81,51 @@ func (r *Repository) GetByID(ctx context.Context, id string) (*User, error) {
 		return nil, ErrNotFound
 	}
 	return u, err
+}
+
+func (r *Repository) ExistsByID(ctx context.Context, id string) (bool, error) {
+	var exists bool
+	err := r.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM users WHERE id = $1)`, id).Scan(&exists)
+	return exists, err
+}
+
+func (r *Repository) ListPublic(ctx context.Context, excludeUserID, query string, limit int) ([]PublicUser, error) {
+	var rows pgx.Rows
+	var err error
+
+	if query != "" {
+		pattern := "%" + query + "%"
+		rows, err = r.pool.Query(ctx, `
+			SELECT id, username, avatar_url, identity_public_key
+			FROM users
+			WHERE id <> $1 AND username ILIKE $2
+			ORDER BY username
+			LIMIT $3`, excludeUserID, pattern, limit)
+	} else {
+		rows, err = r.pool.Query(ctx, `
+			SELECT id, username, avatar_url, identity_public_key
+			FROM users
+			WHERE id <> $1
+			ORDER BY username
+			LIMIT $2`, excludeUserID, limit)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var users []PublicUser
+	for rows.Next() {
+		var u PublicUser
+		if err := rows.Scan(&u.ID, &u.Username, &u.AvatarURL, &u.IdentityPublicKey); err != nil {
+			return nil, err
+		}
+		users = append(users, u)
+	}
+	if users == nil {
+		users = []PublicUser{}
+	}
+	return users, rows.Err()
 }
 
 func (r *Repository) GetByEmail(ctx context.Context, email string) (*User, string, error) {

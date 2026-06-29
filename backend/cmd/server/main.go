@@ -11,11 +11,14 @@ import (
 
 	"github.com/ihope/ihope/internal/auth"
 	"github.com/ihope/ihope/internal/config"
+	"github.com/ihope/ihope/internal/conversation"
 	"github.com/ihope/ihope/internal/db"
 	"github.com/ihope/ihope/internal/jwt"
 	"github.com/ihope/ihope/internal/mail"
+	"github.com/ihope/ihope/internal/message"
 	"github.com/ihope/ihope/internal/server"
 	"github.com/ihope/ihope/internal/user"
+	"github.com/ihope/ihope/internal/ws"
 )
 
 func main() {
@@ -33,9 +36,27 @@ func main() {
 	}
 
 	userRepo := user.NewRepository(pool)
+	convRepo := conversation.NewRepository(pool)
+	msgRepo := message.NewRepository(pool)
+
 	jwtMgr := jwt.NewManager(cfg.JWTSecret, cfg.JWTAccessTTL)
 	authSvc := auth.NewService(cfg, userRepo, jwtMgr, mail.New(cfg))
-	srv := server.New(cfg, auth.NewHandler(authSvc), user.NewHandler(userRepo), userRepo, jwtMgr)
+	convSvc := conversation.NewService(convRepo, userRepo)
+
+	hub := ws.NewHub()
+	msgSvc := message.NewService(msgRepo, convRepo)
+	wsHandler := ws.NewHandler(hub, jwtMgr, userRepo, convSvc, msgSvc)
+
+	srv := server.New(
+		cfg,
+		auth.NewHandler(authSvc),
+		user.NewHandler(userRepo),
+		userRepo,
+		jwtMgr,
+		conversation.NewHandler(convSvc),
+		message.NewHandler(msgSvc, convSvc, hub),
+		wsHandler,
+	)
 
 	httpServer := &http.Server{
 		Addr:    ":" + cfg.Port,

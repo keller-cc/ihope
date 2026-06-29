@@ -1,0 +1,8 @@
+$kind: websocket-message
+content: |-
+  {
+    "event": "join",
+    "conversation_id": "{{conversation_id}}"
+  }
+contentType: text
+order: 7010

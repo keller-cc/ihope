@@ -36,6 +36,7 @@ Postman 自带 **Reset all** 在 Native Git 下常无效，不要依赖。也不
 | `access_token` / `refresh_token` / `reset_token` / `old_*` | 空 |
 | `login_password` | `password123` |
 | `baseUrl` / `device_id` | 见上表 |
+| `peer_user_id` / `conversation_id` | 空 |
 
 ## 测试顺序
 
@@ -53,8 +54,101 @@ Postman 自带 **Reset all** 在 Native Git 下常无效，不要依赖。也不
 | 10 | POST /api/auth/reset-password | 200 |
 | 11 | GET /api/users/me (after reset) | 401 `session_revoked` |
 | 12 | POST /api/auth/login (after reset) | 200，新密码 |
+| 13 | GET /api/users | 200，写入 `peer_user_id` |
+| 14 | POST /api/conversations (private) | 201，写入 `conversation_id` |
+| 15 | POST /api/conversations/{id}/messages | 201 |
+| 16 | GET /api/conversations/{id}/messages | 200，含刚发的消息 |
 
-登录/注册 body 示例见集合内各请求。
+**阶段 2 提示：** 需至少两个账号。推荐 **双窗口 + 双环境**（见下），不要在一个环境里反复 login 切换。
+
+## 双人测试：开两个 Postman 窗口
+
+单窗口只有一个 `access_token`，alice / bob 来回 login 很容易搞混。更直观的做法：
+
+### 1. Pull 后确认有三个环境
+
+| 环境 | 用途 |
+|------|------|
+| **IHope Local** | 单人全流程（默认 alice） |
+| **IHope Alice** | 窗口 A：alice，`device_id=postman-alice` |
+| **IHope Bob** | 窗口 B：bob，`device_id=postman-bob` |
+
+### 2. 开第二个窗口
+
+Postman 桌面版：
+
+- 菜单 **View → New Postman Window**（或 **File → New Postman Window**）
+- 快捷键因版本而异，可在命令面板（Ctrl+K）搜 **New Postman Window**
+
+你会得到 **两个独立窗口**，各自可选不同 Environment，**互不影响**。
+
+### 3. 推荐分工
+
+| 窗口 | 右上角环境 | 操作 |
+|------|------------|------|
+| **A** | IHope Alice | register → login → 建单聊 → 发消息 → WS 连接 |
+| **B** | IHope Bob | register → login → GET 会话/消息 → WS 连接 |
+
+两边 **`conversation_id` 要一致**：alice 建单聊后，把 Environment 里的 `conversation_id` 复制到 bob 窗口（或 bob 跑 `GET /api/conversations` 自动看到）。
+
+### 4. WebSocket 双窗口
+
+- **窗口 A**：`ws://localhost:8080/ws?token={{access_token}}`（alice 已 login）
+- **窗口 B**：同样 URL（bob 已 login，token 不同）
+- 两边都对同一 `conversation_id` 发 `join`
+- alice 窗口 `send` 或 REST 发消息 → bob 窗口应收 `message` 事件
+
+### 5. 首次准备（各窗口各跑一遍）
+
+```
+register → login
+```
+
+Alice 窗口额外：`GET /api/users` → `POST conversations (private)`（peer 填 bob 的 id，或 users 列表里选）
+
+---
+
+## WebSocket 测试与加密说明
+
+**需求文档里的「端到端加密」在阶段 3 才做；当前阶段 2 尚未实现。**
+
+| 层级 | 当前（阶段 2） | 最终目标 |
+|------|----------------|----------|
+| 传输 | 本地 `ws://`（无 TLS） | 生产 `wss://` |
+| 消息字段 `ciphertext` | **明文**（字段名预留） | 客户端加密后的密文 |
+| 服务端 | 能读到消息内容 | 只存密文，无法解密 |
+
+Postman 里 `ciphertext` **直接填可读文字**即可，不是加密 bug。
+
+### 集合内 WebSocket 请求（Pull 后）
+
+| 请求 | 环境 / 窗口 | Saved messages |
+|------|-------------|----------------|
+| **WS Alice join and send** | IHope Alice | 1 join → 2 send |
+| **WS Bob join (listen)** | IHope Bob | 1 join |
+
+**推荐顺序：**
+
+1. REST 准备好：`conversation_id`（Alice 建单聊）  
+2. **Bob 窗口**：打开 `WS Bob join (listen)` → **Connect** → Send **1 join** → 等 `joined`  
+3. **Alice 窗口**：打开 `WS Alice join and send` → **Connect** → Send **1 join** → **2 send**  
+4. Alice 收 `sent`；Bob 收 `message`（含 `sender_id`、明文 `ciphertext`）
+
+连接 URL：`{{ws_base_url}}/ws?token={{access_token}}`
+
+手动 JSON 示例：
+
+```json
+{"event":"join","conversation_id":"{{conversation_id}}"}
+{"event":"send","conversation_id":"{{conversation_id}}","type":"text","ciphertext":"hi"}
+```
+
+| 方向 | event | 说明 |
+|------|-------|------|
+| C→S | join / send | 订阅会话 / 发消息 |
+| S→C | joined / sent / message / error | 响应 |
+
+登录/注册使用 `login_email` / `login_username` / `login_password`。
 
 ## 已实现 API
 
@@ -68,6 +162,12 @@ Postman 自带 **Reset all** 在 Native Git 下常无效，不要依赖。也不
 | POST | /api/auth/reset-password | 否 |
 | POST | /api/auth/change-password | Bearer JWT |
 | GET | /api/users/me | Bearer JWT |
+| GET | /api/users | Bearer JWT |
+| GET | /api/conversations | Bearer JWT |
+| POST | /api/conversations | Bearer JWT |
+| GET | /api/conversations/{id}/messages | Bearer JWT |
+| POST | /api/conversations/{id}/messages | Bearer JWT |
+| GET | /ws | JWT（query `token` 或 Bearer） |
 
 ## 限流
 

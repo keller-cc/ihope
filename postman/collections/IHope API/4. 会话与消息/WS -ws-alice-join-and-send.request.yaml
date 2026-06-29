@@ -1,0 +1,7 @@
+$kind: websocket-request
+name: WS Alice join and send
+url: "{{ws_base_url}}/ws"
+queryParams:
+  token: "{{access_token}}"
+messages: .resources/WS -ws-alice-join-and-send.resources/messages
+order: 6000

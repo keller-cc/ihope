@@ -8,9 +8,9 @@ body:
   type: json
   content: |-
     {
-      "email": "alice@example.com",
-      "username": "alice",
-      "password": "password123",
+      "email": "{{login_email}}",
+      "username": "{{login_username}}",
+      "password": "{{login_password}}",
       "identity_public_key": "dGVzdF9pZGVudGl0eV9rZXk="
     }
 scripts:

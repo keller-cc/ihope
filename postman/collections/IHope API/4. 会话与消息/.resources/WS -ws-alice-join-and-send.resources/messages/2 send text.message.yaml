@@ -1,0 +1,10 @@
+$kind: websocket-message
+content: |-
+  {
+    "event": "send",
+    "conversation_id": "{{conversation_id}}",
+    "type": "text",
+    "ciphertext": "hello from alice via websocket"
+  }
+contentType: text
+order: 6020

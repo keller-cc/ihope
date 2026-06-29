@@ -1,27 +1,21 @@
-name: IHope Local
+name: IHope Bob
 values:
   - key: baseUrl
     value: 'http://localhost:8080'
   - key: ws_base_url
     value: 'ws://localhost:8080'
   - key: device_id
-    value: postman-device-1
+    value: postman-bob
   - key: login_email
-    value: alice@example.com
+    value: bob@example.com
   - key: login_username
-    value: alice
+    value: bob
+  - key: login_password
+    value: password123
   - key: access_token
     value: ''
   - key: refresh_token
     value: ''
-  - key: old_access_token
-    value: ''
-  - key: old_refresh_token
-    value: ''
-  - key: reset_token
-    value: ''
-  - key: login_password
-    value: password123
   - key: peer_user_id
     value: ''
   - key: conversation_id

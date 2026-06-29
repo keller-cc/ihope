@@ -1,0 +1,7 @@
+$kind: websocket-request
+name: WS Bob join (listen)
+url: "{{ws_base_url}}/ws"
+queryParams:
+  token: "{{access_token}}"
+messages: .resources/WS -ws-bob-join.resources/messages
+order: 7000
