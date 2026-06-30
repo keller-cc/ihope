@@ -38,11 +38,12 @@ type ListItem struct {
 }
 
 type Preview struct {
-	ID         string    `json:"id"`
-	SenderID   string    `json:"sender_id"`
-	Type       string    `json:"type"`
-	Ciphertext string    `json:"ciphertext"`
-	CreatedAt  time.Time `json:"created_at"`
+	ID             string    `json:"id"`
+	ConversationID string    `json:"conversation_id"`
+	SenderID       string    `json:"sender_id"`
+	Type           string    `json:"type"`
+	Ciphertext     string    `json:"ciphertext"`
+	CreatedAt      time.Time `json:"created_at"`
 }
 
 type Repository struct {
@@ -232,13 +233,13 @@ func (r *Repository) listMembers(ctx context.Context, conversationID string) ([]
 
 func (r *Repository) lastMessage(ctx context.Context, conversationID string) (*Preview, error) {
 	row := r.pool.QueryRow(ctx, `
-		SELECT id, sender_id, type, ciphertext, created_at
+		SELECT id, conversation_id, sender_id, type, ciphertext, created_at
 		FROM messages
 		WHERE conversation_id = $1
 		ORDER BY created_at DESC
 		LIMIT 1`, conversationID)
 	var p Preview
-	err := row.Scan(&p.ID, &p.SenderID, &p.Type, &p.Ciphertext, &p.CreatedAt)
+	err := row.Scan(&p.ID, &p.ConversationID, &p.SenderID, &p.Type, &p.Ciphertext, &p.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}

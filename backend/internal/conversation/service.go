@@ -95,7 +95,6 @@ func (s *Service) createGroup(ctx context.Context, ownerID, name string, memberI
 		}
 		members = append(members, id)
 	}
-	members = append([]string{ownerID}, members...)
 
 	conv, err := s.conv.CreateGroup(ctx, name, ownerID, members)
 	if err != nil {
