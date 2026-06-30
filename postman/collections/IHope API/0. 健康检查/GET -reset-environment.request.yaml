@@ -6,9 +6,11 @@ scripts:
   - type: beforeRequest
     language: text/javascript
     code: |-
-      const defaults = {
+      const envName = pm.environment.name;
+
+      const common = {
         baseUrl: 'http://localhost:8080',
-        device_id: 'postman-device-1',
+        ws_base_url: 'ws://localhost:8080',
         access_token: '',
         refresh_token: '',
         old_access_token: '',
@@ -17,19 +19,56 @@ scripts:
         login_password: 'password123',
         peer_user_id: '',
         conversation_id: '',
-        ws_base_url: 'ws://localhost:8080',
       };
-      if (!pm.environment.name) {
-        throw new Error('请先选择 IHope Local 环境');
+
+      const profiles = {
+        'IHope Local': {
+          device_id: 'postman-device-1',
+          login_email: 'alice@example.com',
+          login_username: 'alice',
+          identity_public_key: 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=',
+        },
+        'IHope Alice': {
+          device_id: 'postman-alice',
+          login_email: 'alice@example.com',
+          login_username: 'alice',
+          identity_public_key: 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=',
+        },
+        'IHope Bob': {
+          device_id: 'postman-bob',
+          login_email: 'bob@example.com',
+          login_username: 'bob',
+          identity_public_key: 'ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8=',
+        },
+      };
+
+      if (!envName || !profiles[envName]) {
+        throw new Error('请先选择 IHope Local / IHope Alice / IHope Bob 环境');
       }
+
+      const defaults = { ...common, ...profiles[envName] };
       Object.entries(defaults).forEach(([key, value]) => pm.environment.set(key, value));
   - type: afterResponse
     language: text/javascript
     code: |-
+      const envName = pm.environment.name;
+      const expectedKeys = {
+        'IHope Local': 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=',
+        'IHope Alice': 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=',
+        'IHope Bob': 'ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8=',
+      };
+
       pm.test('environment reset to defaults', function () {
         pm.expect(pm.environment.get('login_password')).to.eql('password123');
         pm.expect(pm.environment.get('access_token')).to.eql('');
+        pm.expect(pm.environment.get('refresh_token')).to.eql('');
+        pm.expect(pm.environment.get('peer_user_id')).to.eql('');
+        pm.expect(pm.environment.get('conversation_id')).to.eql('');
         pm.expect(pm.environment.get('baseUrl')).to.eql('http://localhost:8080');
+        pm.expect(pm.environment.get('ws_base_url')).to.eql('ws://localhost:8080');
+        if (expectedKeys[envName]) {
+          pm.expect(pm.environment.get('identity_public_key')).to.eql(expectedKeys[envName]);
+        }
       });
       pm.test('server reachable after reset', function () {
         pm.response.to.have.status(200);

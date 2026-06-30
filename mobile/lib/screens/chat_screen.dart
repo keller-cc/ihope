@@ -36,7 +36,9 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void initState() {
     super.initState();
-    _msgSub = widget.auth.ws.onMessage.listen(_onIncomingMessage);
+    _msgSub = widget.auth.ws.onMessage.listen((msg) {
+      unawaited(_onIncomingMessage(msg));
+    });
     _connSub = widget.auth.ws.onConnectionChanged.listen((connected) {
       if (!mounted) return;
       setState(() {});
@@ -57,10 +59,13 @@ class _ChatScreenState extends State<ChatScreen> {
     super.dispose();
   }
 
-  void _onIncomingMessage(ChatMessage msg) {
+  Future<void> _onIncomingMessage(ChatMessage msg) async {
     if (msg.conversationId != widget.conversation.id) return;
     if (!mounted) return;
-    setState(() => _addMessage(msg));
+    final decrypted =
+        await widget.auth.decryptMessage(widget.conversation, msg);
+    if (!mounted) return;
+    setState(() => _addMessage(decrypted));
     _scrollToBottom();
   }
 
@@ -78,8 +83,12 @@ class _ChatScreenState extends State<ChatScreen> {
         widget.conversation.id,
         limit: 100,
       );
+      final decrypted = await widget.auth.decryptMessages(
+        widget.conversation,
+        msgs,
+      );
       if (!mounted) return;
-      setState(() => _messages = msgs);
+      setState(() => _messages = decrypted);
       _scrollToBottom();
     } catch (e) {
       setState(() => _error = e.toString());
@@ -127,8 +136,8 @@ class _ChatScreenState extends State<ChatScreen> {
     if (text.isEmpty) return;
     _input.clear();
     try {
-      final msg = await widget.auth.conversations.sendMessage(
-        widget.conversation.id,
+      final msg = await widget.auth.sendChatMessage(
+        widget.conversation,
         text,
       );
       if (!mounted) return;
@@ -136,6 +145,7 @@ class _ChatScreenState extends State<ChatScreen> {
       _scrollToBottom();
     } catch (e) {
       if (!mounted) return;
+      _input.text = text;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(e.toString())),
       );
@@ -290,7 +300,7 @@ class _ChatScreenState extends State<ChatScreen> {
                                                         BorderRadius.circular(
                                                             12),
                                                   ),
-                                                  child: Text(msg.ciphertext),
+                                                  child: Text(msg.displayText),
                                                 ),
                                                 Padding(
                                                   padding:

@@ -102,6 +102,9 @@ func (s *Service) Register(ctx context.Context, in RegisterInput) (*user.User, e
 	if identityKey == "" {
 		return nil, fmt.Errorf("identity_public_key is required")
 	}
+	if err := user.ValidateIdentityPublicKey(identityKey); err != nil {
+		return nil, fmt.Errorf("identity_public_key must be a base64-encoded 32-byte X25519 public key")
+	}
 
 	hash, err := HashPassword(in.Password)
 	if err != nil {

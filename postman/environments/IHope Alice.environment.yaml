@@ -12,9 +12,17 @@ values:
     value: alice
   - key: login_password
     value: password123
+  - key: identity_public_key
+    value: ZxfR5oB15T7ae44NVxOswGTMDzqOac+NxAqo8ZGRGyU=
   - key: access_token
     value: ''
   - key: refresh_token
+    value: ''
+  - key: old_access_token
+    value: ''
+  - key: old_refresh_token
+    value: ''
+  - key: reset_token
     value: ''
   - key: peer_user_id
     value: ''

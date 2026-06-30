@@ -45,7 +45,7 @@ func TestProfileFlowIntegration(t *testing.T) {
 		"email":               email,
 		"username":            username,
 		"password":            password,
-		"identity_public_key": "dGVzdA==",
+		"identity_public_key": testutil.TestIdentityPublicKey,
 	}, "")
 
 	loginRec := doJSON(t, handler, http.MethodPost, "/api/auth/login", map[string]string{

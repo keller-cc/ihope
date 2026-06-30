@@ -22,6 +22,8 @@ values:
     value: ''
   - key: login_password
     value: password123
+  - key: identity_public_key
+    value: AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=
   - key: peer_user_id
     value: ''
   - key: conversation_id

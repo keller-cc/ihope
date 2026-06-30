@@ -33,7 +33,7 @@ func TestAuthFlowIntegration(t *testing.T) {
 		"email":               email,
 		"username":            username,
 		"password":            password,
-		"identity_public_key": "dGVzdF9pZGVudGl0eV9rZXk=",
+		"identity_public_key": testutil.TestIdentityPublicKey,
 	}
 	regRec := doJSON(t, handler, http.MethodPost, "/api/auth/register", regBody, "")
 	if regRec.Code != http.StatusCreated {
@@ -103,7 +103,7 @@ func TestResetPasswordFlowIntegration(t *testing.T) {
 		"email":               email,
 		"username":            username,
 		"password":            "password123",
-		"identity_public_key": "dGVzdA==",
+		"identity_public_key": testutil.TestIdentityPublicKey,
 	}, "")
 
 	loginRec := doJSON(t, handler, http.MethodPost, "/api/auth/login", map[string]string{
@@ -162,7 +162,7 @@ func TestChangePasswordFlowIntegration(t *testing.T) {
 		"email":               email,
 		"username":            username,
 		"password":            password,
-		"identity_public_key": "dGVzdA==",
+		"identity_public_key": testutil.TestIdentityPublicKey,
 	}, "")
 
 	loginRec := doJSON(t, handler, http.MethodPost, "/api/auth/login", map[string]string{

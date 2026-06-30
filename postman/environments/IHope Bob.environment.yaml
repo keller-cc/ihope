@@ -12,6 +12,8 @@ values:
     value: bob
   - key: login_password
     value: password123
+  - key: identity_public_key
+    value: v7MAS9QNMWbO+4X0FkMFFOrWd1wLWhEriVUx/PeeHlM=
   - key: access_token
     value: ''
   - key: refresh_token
@@ -19,4 +21,10 @@ values:
   - key: peer_user_id
     value: ''
   - key: conversation_id
+    value: ''
+  - key: old_access_token
+    value: ''
+  - key: old_refresh_token
+    value: ''
+  - key: reset_token
     value: ''

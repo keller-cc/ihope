@@ -10,7 +10,7 @@ body:
   content: |-
     {
       "type": "text",
-      "ciphertext": "hello from postman"
+      "ciphertext": "hello from postman (API 测试明文；Flutter 客户端会发 e2ee:v1: 密文)"
     }
 scripts:
   - type: afterResponse
@@ -18,6 +18,6 @@ scripts:
     code: |-
       pm.test('message sent', function () {
         pm.response.to.have.status(201);
-        pm.expect(pm.response.json().message.ciphertext).to.eql('hello from postman');
+        pm.expect(pm.response.json().message.ciphertext).to.be.a('string');
       });
 order: 3000

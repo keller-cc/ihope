@@ -5,17 +5,20 @@ class ConversationMember {
     required this.userId,
     required this.username,
     this.avatarUrl,
+    this.identityPublicKey = '',
   });
 
   final String userId;
   final String username;
   final String? avatarUrl;
+  final String identityPublicKey;
 
   factory ConversationMember.fromJson(Map<String, dynamic> json) {
     return ConversationMember(
       userId: json['user_id'] as String,
       username: json['username'] as String,
       avatarUrl: json['avatar_url'] as String?,
+      identityPublicKey: json['identity_public_key'] as String? ?? '',
     );
   }
 }

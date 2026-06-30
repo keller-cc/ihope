@@ -34,9 +34,12 @@ Postman 自带 **Reset all** 在 Native Git 下常无效，不要依赖。也不
 | 变量 | 重置后 |
 |------|--------|
 | `access_token` / `refresh_token` / `reset_token` / `old_*` | 空 |
-| `login_password` | `password123` |
-| `baseUrl` / `device_id` | 见上表 |
 | `peer_user_id` / `conversation_id` | 空 |
+| `login_password` | `password123` |
+| `login_email` / `login_username` | 见当前环境（Local/Alice=alice，Bob=bob） |
+| `identity_public_key` | 见当前环境（Alice 与 Local 相同，Bob 独立公钥） |
+| `baseUrl` / `ws_base_url` | `http://localhost:8080` / `ws://localhost:8080` |
+| `device_id` | `postman-device-1` / `postman-alice` / `postman-bob` |
 
 ## 测试顺序
 
@@ -59,7 +62,7 @@ Postman 自带 **Reset all** 在 Native Git 下常无效，不要依赖。也不
 | 15 | POST /api/conversations/{id}/messages | 201 |
 | 16 | GET /api/conversations/{id}/messages | 200，含刚发的消息 |
 
-**阶段 2 提示：** 需至少两个账号。推荐 **双窗口 + 双环境**（见下），不要在一个环境里反复 login 切换。
+**阶段 3 提示：** 需至少两个账号，且 **Alice / Bob 环境各用不同 `identity_public_key`**（注册时写入，之后不可 PATCH 修改）。推荐 **双窗口 + 双环境**（见下）。
 
 ## 双人测试：开两个 Postman 窗口
 
@@ -70,8 +73,8 @@ Postman 自带 **Reset all** 在 Native Git 下常无效，不要依赖。也不
 | 环境 | 用途 |
 |------|------|
 | **IHope Local** | 单人全流程（默认 alice） |
-| **IHope Alice** | 窗口 A：alice，`device_id=postman-alice` |
-| **IHope Bob** | 窗口 B：bob，`device_id=postman-bob` |
+| **IHope Alice** | 窗口 A：alice，`device_id=postman-alice`，独立公钥 |
+| **IHope Bob** | 窗口 B：bob，`device_id=postman-bob`，独立公钥 |
 
 ### 2. 开第二个窗口
 
@@ -110,15 +113,13 @@ Alice 窗口额外：`GET /api/users` → `POST conversations (private)`（peer 
 
 ## WebSocket 测试与加密说明
 
-**需求文档里的「端到端加密」在阶段 3 才做；当前阶段 2 尚未实现。**
+| 层级 | Postman（API 测试） | Flutter 客户端 |
+|------|---------------------|----------------|
+| 传输 | 本地 `ws://`（无 TLS） | 同左；生产用 `wss://` |
+| 消息字段 `ciphertext` | **可填明文**（测存取/推送） | **必须** `e2ee:v1:` 密文 |
+| `identity_public_key` | 注册时写入，32 字节 Base64 | 每账号独立，注册时上传 |
 
-| 层级 | 当前（阶段 2） | 最终目标 |
-|------|----------------|----------|
-| 传输 | 本地 `ws://`（无 TLS） | 生产 `wss://` |
-| 消息字段 `ciphertext` | **明文**（字段名预留） | 客户端加密后的密文 |
-| 服务端 | 能读到消息内容 | 只存密文，无法解密 |
-
-Postman 里 `ciphertext` **直接填可读文字**即可，不是加密 bug。
+Postman 里 `ciphertext` 直接填可读文字即可，用于验证 REST/WS 链路；**不是** Flutter E2EE 行为。
 
 ### 集合内 WebSocket 请求（Pull 后）
 
@@ -155,7 +156,7 @@ Postman 里 `ciphertext` **直接填可读文字**即可，不是加密 bug。
 | 方法 | 路径 | 鉴权 |
 |------|------|------|
 | GET | /api/health | 否 |
-| POST | /api/auth/register | 否（限流） |
+| POST | /api/auth/register | 否（限流；须带合法 `identity_public_key`） |
 | POST | /api/auth/login | 否（限流） |
 | POST | /api/auth/refresh | 否 |
 | POST | /api/auth/forgot-password | 否 |

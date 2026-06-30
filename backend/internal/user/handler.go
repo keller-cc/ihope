@@ -20,8 +20,8 @@ import (
 var usernamePattern = regexp.MustCompile(`^[a-zA-Z0-9_]{3,32}$`)
 
 var (
-	ErrInvalidUsername = errors.New("invalid username")
-	ErrInvalidAvatar   = errors.New("invalid avatar file")
+	ErrInvalidUsername    = errors.New("invalid username")
+	ErrInvalidAvatar      = errors.New("invalid avatar file")
 )
 
 // Handler 用户资料 HTTP 接口。

@@ -27,6 +27,7 @@ class ConversationsScreen extends StatefulWidget {
 
 class _ConversationsScreenState extends State<ConversationsScreen> {
   List<ConversationItem> _items = [];
+  final Map<String, String> _previews = {};
   bool _loading = true;
   String? _error;
   StreamSubscription<ChatMessage>? _msgSub;
@@ -58,11 +59,22 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
       return;
     }
 
-    final updated = _items[index].copyWith(lastMessage: msg);
+    final conv = _items[index];
+    unawaited(_applyIncomingPreview(conv, msg));
+  }
+
+  Future<void> _applyIncomingPreview(
+    ConversationItem conv,
+    ChatMessage msg,
+  ) async {
+    final preview = await widget.auth.decryptPreview(conv, msg);
+    if (!mounted) return;
+    final updated = conv.copyWith(lastMessage: msg);
     setState(() {
+      _previews[conv.id] = preview;
       _items = [
         updated,
-        ..._items.where((c) => c.id != msg.conversationId),
+        ..._items.where((c) => c.id != conv.id),
       ];
     });
   }
@@ -75,8 +87,21 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
     try {
       await widget.auth.reconnectRealtime();
       final items = await widget.auth.conversations.listConversations();
+      final previews = <String, String>{};
+      for (final item in items) {
+        final last = item.lastMessage;
+        if (last != null) {
+          previews[item.id] =
+              await widget.auth.decryptPreview(item, last);
+        }
+      }
       if (!mounted) return;
-      setState(() => _items = items);
+      setState(() {
+        _items = items;
+        _previews
+          ..clear()
+        ..addAll(previews);
+      });
     } catch (e) {
       setState(() => _error = e.toString());
     } finally {
@@ -194,8 +219,10 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
                         separatorBuilder: (_, __) => const Divider(height: 1),
                         itemBuilder: (context, index) {
                           final item = _items[index];
-                          final preview =
-                              item.lastMessage?.ciphertext ?? '暂无消息';
+                          final preview = item.lastMessage == null
+                              ? '暂无消息'
+                              : (_previews[item.id] ??
+                                  item.lastMessage!.displayText);
                           final peerName = item.peerDisplayName(me.id);
                           return ListTile(
                             leading: UserAvatar(

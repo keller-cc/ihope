@@ -6,6 +6,7 @@ class ChatMessage {
     required this.type,
     required this.ciphertext,
     required this.createdAt,
+    this.plaintext,
   });
 
   final String id;
@@ -14,6 +15,9 @@ class ChatMessage {
   final String type;
   final String ciphertext;
   final DateTime createdAt;
+  final String? plaintext;
+
+  String get displayText => plaintext ?? ciphertext;
 
   factory ChatMessage.fromJson(Map<String, dynamic> json) {
     return ChatMessage(
@@ -23,6 +27,18 @@ class ChatMessage {
       type: json['type'] as String? ?? 'text',
       ciphertext: json['ciphertext'] as String? ?? '',
       createdAt: DateTime.parse(json['created_at'] as String),
+    );
+  }
+
+  ChatMessage copyWith({String? plaintext}) {
+    return ChatMessage(
+      id: id,
+      conversationId: conversationId,
+      senderId: senderId,
+      type: type,
+      ciphertext: ciphertext,
+      createdAt: createdAt,
+      plaintext: plaintext ?? this.plaintext,
     );
   }
 }

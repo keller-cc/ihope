@@ -98,7 +98,7 @@ func registerUser(t *testing.T, handler http.Handler, email, username, password 
 		"email":               email,
 		"username":            username,
 		"password":            password,
-		"identity_public_key": "dGVzdA==",
+		"identity_public_key": testutil.TestIdentityPublicKey,
 	}, "")
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("register status = %d body = %s", rec.Code, rec.Body.String())

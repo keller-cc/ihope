@@ -25,10 +25,11 @@ type Conversation struct {
 }
 
 type Member struct {
-	UserID   string    `json:"user_id"`
-	Username string    `json:"username"`
-	AvatarURL *string  `json:"avatar_url,omitempty"`
-	JoinedAt time.Time `json:"joined_at"`
+	UserID             string    `json:"user_id"`
+	Username           string    `json:"username"`
+	AvatarURL          *string   `json:"avatar_url,omitempty"`
+	IdentityPublicKey  string    `json:"identity_public_key"`
+	JoinedAt           time.Time `json:"joined_at"`
 }
 
 type ListItem struct {
@@ -207,7 +208,7 @@ func (r *Repository) ListForUser(ctx context.Context, userID string) ([]ListItem
 
 func (r *Repository) listMembers(ctx context.Context, conversationID string) ([]Member, error) {
 	rows, err := r.pool.Query(ctx, `
-		SELECT m.user_id, u.username, u.avatar_url, m.joined_at
+		SELECT m.user_id, u.username, u.avatar_url, u.identity_public_key, m.joined_at
 		FROM conversation_members m
 		JOIN users u ON u.id = m.user_id
 		WHERE m.conversation_id = $1 AND m.left_at IS NULL
@@ -220,7 +221,7 @@ func (r *Repository) listMembers(ctx context.Context, conversationID string) ([]
 	var members []Member
 	for rows.Next() {
 		var m Member
-		if err := rows.Scan(&m.UserID, &m.Username, &m.AvatarURL, &m.JoinedAt); err != nil {
+		if err := rows.Scan(&m.UserID, &m.Username, &m.AvatarURL, &m.IdentityPublicKey, &m.JoinedAt); err != nil {
 			return nil, err
 		}
 		members = append(members, m)

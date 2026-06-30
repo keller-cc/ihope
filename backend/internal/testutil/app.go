@@ -1,7 +1,6 @@
 package testutil
 
 import (
-	"context"
 	"os"
 	"testing"
 	"time"
@@ -18,6 +17,9 @@ import (
 	"github.com/ihope/ihope/internal/ws"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+// TestIdentityPublicKey 32 字节 X25519 公钥（Base64），供集成测试注册使用。
+const TestIdentityPublicKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
 
 func DatabaseURL() string {
 	if v := os.Getenv("TEST_DATABASE_URL"); v != "" {

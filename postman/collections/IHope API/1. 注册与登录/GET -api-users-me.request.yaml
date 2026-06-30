@@ -13,5 +13,9 @@ scripts:
         const json = pm.response.json();
         pm.expect(json.email).to.be.a('string');
         pm.expect(json.username).to.be.a('string');
+        pm.expect(json.identity_public_key).to.be.a('string');
+        if (json.identity_public_key) {
+          pm.environment.set('identity_public_key', json.identity_public_key);
+        }
       });
 order: 3000
