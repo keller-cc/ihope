@@ -1,0 +1,34 @@
+$kind: http-request
+name: POST /api/conversations/{id}/members
+url: "{{baseUrl}}/api/conversations/{{conversation_id}}/members"
+method: POST
+headers:
+  Content-Type: application/json
+  Authorization: Bearer {{access_token}}
+body:
+  type: json
+  content: |-
+    {
+      "member_ids": ["{{member_user_id}}"]
+    }
+scripts:
+  - type: beforeRequest
+    language: text/javascript
+    code: |-
+      if (!pm.environment.get('member_user_id')) {
+        const peer = pm.environment.get('peer_user_id');
+        if (peer) pm.environment.set('member_user_id', peer);
+      }
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      pm.test('members added, epoch incremented', function () {
+        pm.response.to.have.status(200);
+        const json = pm.response.json();
+        pm.expect(json.epoch).to.be.a('number').that.is.at.least(1);
+        pm.expect(json.conversation.members).to.be.an('array').that.is.not.empty;
+        if (pm.environment.name) {
+          pm.environment.set('group_epoch', String(json.epoch));
+        }
+      });
+order: 3500

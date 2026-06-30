@@ -13,16 +13,28 @@ class MessageCodec {
   MessageCodec({
     required Future<SimpleKeyPair> Function() loadIdentity,
     required Future<List<int>?> Function(String peerUserId) readSession,
-    required Future<void> Function(String peerUserId, List<int> keyBytes)
-        writeSession,
+    required Future<String?> Function(String peerUserId) readSessionPeerKey,
+    required Future<void> Function(
+      String peerUserId,
+      List<int> keyBytes,
+      String peerPublicKeyBase64,
+    ) writeSession,
+    required Future<void> Function(String peerUserId) clearSession,
   })  : _loadIdentity = loadIdentity,
         _readSession = readSession,
-        _writeSession = writeSession;
+        _readSessionPeerKey = readSessionPeerKey,
+        _writeSession = writeSession,
+        _clearSession = clearSession;
 
   final Future<SimpleKeyPair> Function() _loadIdentity;
   final Future<List<int>?> Function(String peerUserId) _readSession;
-  final Future<void> Function(String peerUserId, List<int> keyBytes)
-      _writeSession;
+  final Future<String?> Function(String peerUserId) _readSessionPeerKey;
+  final Future<void> Function(
+    String peerUserId,
+    List<int> keyBytes,
+    String peerPublicKeyBase64,
+  ) _writeSession;
+  final Future<void> Function(String peerUserId) _clearSession;
 
   static final _x25519 = X25519();
   static final _hkdf = Hkdf(hmac: Hmac.sha256(), outputLength: 32);
@@ -55,6 +67,18 @@ class MessageCodec {
     if (!canUseE2EEWithPeer(peerPublicKeyBase64)) {
       return '[无法解密：对方未配置加密密钥]';
     }
+    final first = await _tryDecrypt(peerUserId, peerPublicKeyBase64, payload);
+    if (first != null) return first;
+    await _clearSession(peerUserId);
+    final second = await _tryDecrypt(peerUserId, peerPublicKeyBase64, payload);
+    return second ?? '[无法解密]';
+  }
+
+  Future<String?> _tryDecrypt(
+    String peerUserId,
+    String peerPublicKeyBase64,
+    String payload,
+  ) async {
     try {
       final sessionKey = await _sessionKey(peerUserId, peerPublicKeyBase64);
       final raw = base64Decode(payload.substring(_wirePrefix.length));
@@ -66,7 +90,7 @@ class MessageCodec {
       final clear = await _aes.decrypt(box, secretKey: sessionKey);
       return utf8.decode(clear);
     } catch (_) {
-      return '[无法解密]';
+      return null;
     }
   }
 
@@ -75,7 +99,10 @@ class MessageCodec {
     String peerPublicKeyBase64,
   ) async {
     final cached = await _readSession(peerUserId);
-    if (cached != null && cached.length == 32) {
+    final cachedPub = await _readSessionPeerKey(peerUserId);
+    if (cached != null &&
+        cached.length == 32 &&
+        cachedPub == peerPublicKeyBase64) {
       return SecretKey(cached);
     }
 
@@ -89,7 +116,7 @@ class MessageCodec {
       info: utf8.encode(_sessionInfo),
     );
     final bytes = await derived.extractBytes();
-    await _writeSession(peerUserId, bytes);
+    await _writeSession(peerUserId, bytes, peerPublicKeyBase64);
     return derived;
   }
 }

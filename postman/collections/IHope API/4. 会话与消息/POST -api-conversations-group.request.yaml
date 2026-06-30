@@ -1,0 +1,33 @@
+$kind: http-request
+name: POST /api/conversations (group)
+url: "{{baseUrl}}/api/conversations"
+method: POST
+headers:
+  Content-Type: application/json
+  Authorization: Bearer {{access_token}}
+body:
+  type: json
+  content: |-
+    {
+      "type": "group",
+      "name": "Postman Test Group",
+      "member_ids": ["{{peer_user_id}}"]
+    }
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      pm.test('group conversation created', function () {
+        pm.response.to.have.status(201);
+        const json = pm.response.json();
+        const conv = json.conversation;
+        pm.expect(conv.id).to.be.a('string').and.not.empty;
+        pm.expect(conv.type).to.eql('group');
+        pm.expect(conv.epoch).to.eql(0);
+        pm.expect(conv.members).to.be.an('array').with.lengthOf.at.least(2);
+        if (pm.environment.name) {
+          pm.environment.set('conversation_id', conv.id);
+          pm.environment.set('group_epoch', String(conv.epoch));
+        }
+      });
+order: 2050

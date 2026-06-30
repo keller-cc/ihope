@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+
 	"github.com/ihope/ihope/internal/conversation"
 	"github.com/ihope/ihope/internal/httpx"
 	"github.com/ihope/ihope/internal/jwt"
@@ -71,6 +72,10 @@ func (h *Handler) handleFrame(r *http.Request, c *Conn, userID string, data []by
 		ConversationID string `json:"conversation_id"`
 		Type           string `json:"type"`
 		Ciphertext     string `json:"ciphertext"`
+		TargetUserID   string `json:"target_user_id"`
+		PayloadType    string `json:"payload_type"`
+		Epoch          int    `json:"epoch"`
+		Epochs         []int  `json:"epochs"`
 	}
 	if err := json.Unmarshal(data, &frame); err != nil {
 		h.hub.SendJSON(c, map[string]string{"event": "error", "error": "invalid_json"})
@@ -88,6 +93,68 @@ func (h *Handler) handleFrame(r *http.Request, c *Conn, userID string, data []by
 			return
 		}
 		h.hub.SendJSON(c, map[string]any{"event": "joined", "conversation_id": frame.ConversationID})
+
+	case "gmk_request":
+		if frame.ConversationID == "" {
+			h.hub.SendJSON(c, map[string]string{"event": "error", "error": "missing conversation_id"})
+			return
+		}
+		conv, err := h.convSvc.GetIfMember(r.Context(), frame.ConversationID, userID)
+		if err != nil {
+			h.hub.SendJSON(c, map[string]string{"event": "error", "error": "forbidden"})
+			return
+		}
+		if conv.Type != "group" || conv.OwnerID == nil {
+			h.hub.SendJSON(c, map[string]string{"event": "error", "error": "not_group"})
+			return
+		}
+		if *conv.OwnerID == userID {
+			h.hub.SendJSON(c, map[string]string{"event": "error", "error": "owner_has_key"})
+			return
+		}
+		epochs := frame.Epochs
+		if len(epochs) == 0 {
+			epoch := frame.Epoch
+			if epoch <= 0 {
+				epoch = conv.Epoch
+			}
+			epochs = []int{epoch}
+		}
+		h.hub.NotifyGmkRequest(*conv.OwnerID, map[string]any{
+			"event":             "gmk_request",
+			"conversation_id":   frame.ConversationID,
+			"requester_user_id": userID,
+			"epochs":            epochs,
+		})
+		h.hub.SendJSON(c, map[string]any{"event": "gmk_requested", "epochs": epochs})
+
+	case "key_relay":
+		if frame.ConversationID == "" || frame.TargetUserID == "" || strings.TrimSpace(frame.Ciphertext) == "" {
+			h.hub.SendJSON(c, map[string]string{"event": "error", "error": "invalid_key_relay"})
+			return
+		}
+		if _, err := h.convSvc.GetIfMember(r.Context(), frame.ConversationID, userID); err != nil {
+			h.hub.SendJSON(c, map[string]string{"event": "error", "error": "forbidden"})
+			return
+		}
+		ok, err := h.convSvc.IsActiveMember(r.Context(), frame.ConversationID, frame.TargetUserID)
+		if err != nil || !ok {
+			h.hub.SendJSON(c, map[string]string{"event": "error", "error": "invalid_target"})
+			return
+		}
+		payloadType := strings.TrimSpace(frame.PayloadType)
+		if payloadType == "" {
+			payloadType = "welcome_bundle"
+		}
+		h.hub.NotifyKeyRelay(frame.TargetUserID, map[string]any{
+			"event":           "key_relay",
+			"conversation_id": frame.ConversationID,
+			"from_user_id":    userID,
+			"target_user_id":  frame.TargetUserID,
+			"payload_type":    payloadType,
+			"ciphertext":      frame.Ciphertext,
+		})
+		h.hub.SendJSON(c, map[string]any{"event": "relayed", "target_user_id": frame.TargetUserID})
 
 	case "send":
 		msg, err := h.msgSvc.Send(r.Context(), message.SendInput{

@@ -46,6 +46,8 @@ func main() {
 	hub := ws.NewHub()
 	msgSvc := message.NewService(msgRepo, convRepo)
 	wsHandler := ws.NewHandler(hub, jwtMgr, userRepo, convSvc, msgSvc)
+	convNotify := server.NewConvRealtime(hub)
+	convSys := server.NewConvSystemMessenger(msgSvc)
 
 	srv := server.New(
 		cfg,
@@ -53,7 +55,7 @@ func main() {
 		user.NewHandler(userRepo, cfg),
 		userRepo,
 		jwtMgr,
-		conversation.NewHandler(convSvc),
+		conversation.NewHandler(convSvc, convNotify, convSys, cfg),
 		message.NewHandler(msgSvc, convSvc, hub),
 		wsHandler,
 	)

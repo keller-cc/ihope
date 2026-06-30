@@ -40,24 +40,114 @@ func (r *Repository) Create(ctx context.Context, conversationID, senderID, msgTy
 	return scanMessage(row)
 }
 
-func (r *Repository) List(ctx context.Context, conversationID string, before *time.Time, limit int) ([]Message, error) {
+func (r *Repository) List(ctx context.Context, conversationID string, minEpoch int, before, maxCreatedAt, priorHistoryBefore *time.Time, limit int) ([]Message, error) {
 	var rows pgx.Rows
 	var err error
 
-	if before != nil {
-		rows, err = r.pool.Query(ctx, `
-			SELECT id, conversation_id, sender_id, type, ciphertext, epoch, file_id, created_at
-			FROM messages
-			WHERE conversation_id = $1 AND created_at < $2
-			ORDER BY created_at DESC
-			LIMIT $3`, conversationID, *before, limit)
-	} else {
+	usePriorHistory := priorHistoryBefore != nil && maxCreatedAt == nil
+
+	switch {
+	case usePriorHistory && before != nil:
 		rows, err = r.pool.Query(ctx, `
 			SELECT id, conversation_id, sender_id, type, ciphertext, epoch, file_id, created_at
 			FROM messages
 			WHERE conversation_id = $1
+			  AND (epoch >= $2 OR created_at <= $3)
+			  AND created_at < $4
 			ORDER BY created_at DESC
-			LIMIT $2`, conversationID, limit)
+			LIMIT $5`, conversationID, minEpoch, *priorHistoryBefore, *before, limit)
+	case usePriorHistory:
+		rows, err = r.pool.Query(ctx, `
+			SELECT id, conversation_id, sender_id, type, ciphertext, epoch, file_id, created_at
+			FROM messages
+			WHERE conversation_id = $1
+			  AND (epoch >= $2 OR created_at <= $3)
+			ORDER BY created_at DESC
+			LIMIT $4`, conversationID, minEpoch, *priorHistoryBefore, limit)
+	case before != nil && maxCreatedAt != nil:
+		rows, err = r.pool.Query(ctx, `
+			SELECT id, conversation_id, sender_id, type, ciphertext, epoch, file_id, created_at
+			FROM messages
+			WHERE conversation_id = $1 AND epoch >= $2 AND created_at <= $3 AND created_at < $4
+			ORDER BY created_at DESC
+			LIMIT $5`, conversationID, minEpoch, *maxCreatedAt, *before, limit)
+	case maxCreatedAt != nil:
+		rows, err = r.pool.Query(ctx, `
+			SELECT id, conversation_id, sender_id, type, ciphertext, epoch, file_id, created_at
+			FROM messages
+			WHERE conversation_id = $1 AND epoch >= $2 AND created_at <= $3
+			ORDER BY created_at DESC
+			LIMIT $4`, conversationID, minEpoch, *maxCreatedAt, limit)
+	case before != nil:
+		rows, err = r.pool.Query(ctx, `
+			SELECT id, conversation_id, sender_id, type, ciphertext, epoch, file_id, created_at
+			FROM messages
+			WHERE conversation_id = $1 AND epoch >= $2 AND created_at < $3
+			ORDER BY created_at DESC
+			LIMIT $4`, conversationID, minEpoch, *before, limit)
+	default:
+		rows, err = r.pool.Query(ctx, `
+			SELECT id, conversation_id, sender_id, type, ciphertext, epoch, file_id, created_at
+			FROM messages
+			WHERE conversation_id = $1 AND epoch >= $2
+			ORDER BY created_at DESC
+			LIMIT $3`, conversationID, minEpoch, limit)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var msgs []Message
+	for rows.Next() {
+		m, err := scanMessage(rows)
+		if err != nil {
+			return nil, err
+		}
+		msgs = append(msgs, *m)
+	}
+	if msgs == nil {
+		msgs = []Message{}
+	}
+	return msgs, rows.Err()
+}
+
+func (r *Repository) ListForMember(
+	ctx context.Context,
+	conversationID, userID string,
+	before *time.Time,
+	limit int,
+) ([]Message, error) {
+	const periodFilter = `
+		EXISTS (
+			SELECT 1 FROM conversation_member_periods p
+			WHERE p.conversation_id = m.conversation_id
+			  AND p.user_id = $2
+			  AND m.created_at >= p.joined_at
+			  AND (p.left_at IS NULL OR m.created_at <= p.left_at)
+			  AND m.epoch >= p.joined_epoch
+		)`
+
+	var rows pgx.Rows
+	var err error
+	switch {
+	case before != nil:
+		rows, err = r.pool.Query(ctx, `
+			SELECT m.id, m.conversation_id, m.sender_id, m.type, m.ciphertext, m.epoch, m.file_id, m.created_at
+			FROM messages m
+			WHERE m.conversation_id = $1
+			  AND `+periodFilter+`
+			  AND m.created_at < $3
+			ORDER BY m.created_at DESC
+			LIMIT $4`, conversationID, userID, *before, limit)
+	default:
+		rows, err = r.pool.Query(ctx, `
+			SELECT m.id, m.conversation_id, m.sender_id, m.type, m.ciphertext, m.epoch, m.file_id, m.created_at
+			FROM messages m
+			WHERE m.conversation_id = $1
+			  AND `+periodFilter+`
+			ORDER BY m.created_at DESC
+			LIMIT $3`, conversationID, userID, limit)
 	}
 	if err != nil {
 		return nil, err

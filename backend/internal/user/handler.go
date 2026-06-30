@@ -3,8 +3,6 @@ package user
 import (
 	"errors"
 	"fmt"
-	"io"
-	"mime/multipart"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -12,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/ihope/ihope/internal/avatarutil"
 	"github.com/ihope/ihope/internal/config"
 	"github.com/ihope/ihope/internal/httpx"
 	"github.com/ihope/ihope/internal/middleware"
@@ -118,9 +117,9 @@ func (h *Handler) UploadAvatar(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
-	ext, err := validateAvatarFile(file, header, h.maxAvatarSize)
+	ext, err := avatarutil.ValidateUpload(file, header, h.maxAvatarSize)
 	if err != nil {
-		httpx.WriteError(w, http.StatusBadRequest, "validation_error", err.Error())
+		httpx.WriteError(w, http.StatusBadRequest, "validation_error", ErrInvalidAvatar.Error())
 		return
 	}
 
@@ -132,7 +131,7 @@ func (h *Handler) UploadAvatar(w http.ResponseWriter, r *http.Request) {
 
 	filename := fmt.Sprintf("%s%s", userID, ext)
 	destPath := filepath.Join(avatarDir, filename)
-	if err := saveAvatarFile(destPath, file); err != nil {
+	if err := avatarutil.SaveFile(destPath, file); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "could not store avatar")
 		return
 	}
@@ -151,7 +150,7 @@ func (h *Handler) UploadAvatar(w http.ResponseWriter, r *http.Request) {
 // ServeAvatar GET /api/avatars/{filename}
 func (h *Handler) ServeAvatar(w http.ResponseWriter, r *http.Request) {
 	filename := filepath.Base(r.PathValue("filename"))
-	if !safeAvatarFilename(filename) {
+	if !avatarutil.SafeFilename(filename) {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid_file", "invalid filename")
 		return
 	}
@@ -179,60 +178,4 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"users": users})
-}
-
-func validateAvatarFile(file multipart.File, header *multipart.FileHeader, maxBytes int64) (string, error) {
-	if header.Size > maxBytes {
-		return "", ErrInvalidAvatar
-	}
-
-	head := make([]byte, 512)
-	n, err := file.Read(head)
-	if err != nil {
-		return "", ErrInvalidAvatar
-	}
-	if _, err := file.Seek(0, io.SeekStart); err != nil {
-		return "", ErrInvalidAvatar
-	}
-
-	contentType := http.DetectContentType(head[:n])
-	switch contentType {
-	case "image/jpeg":
-		return ".jpg", nil
-	case "image/png":
-		return ".png", nil
-	case "image/gif":
-		return ".gif", nil
-	case "image/webp":
-		return ".webp", nil
-	default:
-		return "", ErrInvalidAvatar
-	}
-}
-
-func saveAvatarFile(path string, src multipart.File) error {
-	dst, err := os.Create(path)
-	if err != nil {
-		return err
-	}
-	defer dst.Close()
-
-	if _, err := io.Copy(dst, src); err != nil {
-		_ = os.Remove(path)
-		return err
-	}
-	return nil
-}
-
-func safeAvatarFilename(name string) bool {
-	if name == "" || name == "." || name == ".." {
-		return false
-	}
-	ext := strings.ToLower(filepath.Ext(name))
-	switch ext {
-	case ".jpg", ".jpeg", ".png", ".gif", ".webp":
-		return !strings.Contains(name, "..") && !strings.ContainsAny(name, `/\`)
-	default:
-		return false
-	}
 }

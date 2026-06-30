@@ -73,19 +73,174 @@ class AuthStorage {
   Future<List<int>?> readSessionKey(String ownerUserId, String peerUserId) async {
     final raw = await _storage.read(key: _sessionKey(ownerUserId, peerUserId));
     if (raw == null || raw.isEmpty) return null;
-    return base64Decode(raw);
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is Map<String, dynamic>) {
+        final key = decoded['key'] as String?;
+        if (key != null && key.isNotEmpty) {
+          return base64Decode(key);
+        }
+      }
+    } catch (_) {}
+    try {
+      return base64Decode(raw);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<String?> readSessionPeerKey(String ownerUserId, String peerUserId) async {
+    final raw = await _storage.read(key: _sessionKey(ownerUserId, peerUserId));
+    if (raw == null || raw.isEmpty) return null;
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is Map<String, dynamic>) {
+        return decoded['peer_pub'] as String?;
+      }
+    } catch (_) {}
+    return null;
   }
 
   Future<void> writeSessionKey(
     String ownerUserId,
     String peerUserId,
-    List<int> keyBytes,
-  ) async {
+    List<int> keyBytes, {
+    required String peerPublicKey,
+  }) async {
     await _storage.write(
       key: _sessionKey(ownerUserId, peerUserId),
-      value: base64Encode(keyBytes),
+      value: jsonEncode({
+        'key': base64Encode(keyBytes),
+        'peer_pub': peerPublicKey,
+      }),
     );
   }
+
+  Future<void> clearSessionKey(String ownerUserId, String peerUserId) async {
+    await _storage.delete(key: _sessionKey(ownerUserId, peerUserId));
+  }
+
+  Future<List<int>?> readGroupGmk(
+    String ownerUserId,
+    String conversationId,
+    int epoch,
+  ) async {
+    final raw = await _storage.read(
+      key: _groupGmkKey(ownerUserId, conversationId, epoch),
+    );
+    if (raw == null || raw.isEmpty) return null;
+    return base64Decode(raw);
+  }
+
+  Future<void> writeGroupGmk(
+    String ownerUserId,
+    String conversationId,
+    int epoch,
+    List<int> bytes,
+  ) async {
+    await _storage.write(
+      key: _groupGmkKey(ownerUserId, conversationId, epoch),
+      value: base64Encode(bytes),
+    );
+  }
+
+  Future<List<String>> readPinnedConversations(String userId) async {
+    final raw = await _storage.read(key: _pinnedKey(userId));
+    if (raw == null || raw.isEmpty) return [];
+    try {
+      final list = jsonDecode(raw) as List<dynamic>;
+      return list.map((e) => e as String).toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  Future<void> writePinnedConversations(
+    String userId,
+    List<String> conversationIds,
+  ) async {
+    await _storage.write(
+      key: _pinnedKey(userId),
+      value: jsonEncode(conversationIds),
+    );
+  }
+
+  Future<void> saveArchivedConversation(
+    String userId,
+    Map<String, dynamic> conversation,
+  ) async {
+    final list = await readArchivedConversationsRaw(userId);
+    final id = conversation['id'] as String;
+    list.removeWhere((e) => e['id'] == id);
+    list.insert(0, conversation);
+    await _storage.write(
+      key: _archivedConversationsKey(userId),
+      value: jsonEncode(list),
+    );
+  }
+
+  Future<List<Map<String, dynamic>>> readArchivedConversationsRaw(
+    String userId,
+  ) async {
+    final raw = await _storage.read(key: _archivedConversationsKey(userId));
+    if (raw == null || raw.isEmpty) return [];
+    try {
+      final list = jsonDecode(raw) as List<dynamic>;
+      return list.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  Future<void> removeArchivedConversation(
+    String userId,
+    String conversationId,
+  ) async {
+    final list = await readArchivedConversationsRaw(userId);
+    final next =
+        list.where((e) => e['id'] != conversationId).toList(growable: false);
+    if (next.length == list.length) return;
+    await _storage.write(
+      key: _archivedConversationsKey(userId),
+      value: jsonEncode(next),
+    );
+  }
+
+  Future<void> saveMessageCache(
+    String userId,
+    String conversationId,
+    List<Map<String, dynamic>> messages,
+  ) async {
+    await _storage.write(
+      key: _messageCacheKey(userId, conversationId),
+      value: jsonEncode(messages),
+    );
+  }
+
+  Future<List<Map<String, dynamic>>> readMessageCache(
+    String userId,
+    String conversationId,
+  ) async {
+    final raw = await _storage.read(key: _messageCacheKey(userId, conversationId));
+    if (raw == null || raw.isEmpty) return [];
+    try {
+      final list = jsonDecode(raw) as List<dynamic>;
+      return list.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  String _archivedConversationsKey(String userId) =>
+      'archived_conversations_$userId';
+
+  String _messageCacheKey(String userId, String conversationId) =>
+      'message_cache_${userId}_$conversationId';
+
+  String _pinnedKey(String userId) => 'pinned_conversations_$userId';
+
+  String _groupGmkKey(String ownerUserId, String conversationId, int epoch) =>
+      'group_gmk_${ownerUserId}_${conversationId}_$epoch';
 
   String _userIdentityKey(String userId) => 'identity_seed_user_$userId';
 

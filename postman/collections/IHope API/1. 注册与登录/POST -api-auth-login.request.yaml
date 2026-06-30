@@ -25,6 +25,9 @@ scripts:
         if (pm.environment.name) {
           pm.environment.set('access_token', json.access_token);
           pm.environment.set('refresh_token', json.refresh_token);
+          if (json.user && json.user.id) {
+            pm.environment.set('my_user_id', json.user.id);
+          }
         }
       });
 order: 2000

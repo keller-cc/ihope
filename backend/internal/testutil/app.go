@@ -1,6 +1,7 @@
 package testutil
 
 import (
+	"context"
 	"os"
 	"testing"
 	"time"
@@ -83,6 +84,8 @@ func NewTestServer(t *testing.T) *server.Server {
 	hub := ws.NewHub()
 	msgSvc := message.NewService(msgRepo, convRepo)
 	wsHandler := ws.NewHandler(hub, jwtMgr, userRepo, convSvc, msgSvc)
+	convNotify := server.NewConvRealtime(hub)
+	convSys := server.NewConvSystemMessenger(msgSvc)
 
 	return server.New(
 		cfg,
@@ -90,7 +93,7 @@ func NewTestServer(t *testing.T) *server.Server {
 		user.NewHandler(userRepo, cfg),
 		userRepo,
 		jwtMgr,
-		conversation.NewHandler(convSvc),
+		conversation.NewHandler(convSvc, convNotify, convSys, cfg),
 		message.NewHandler(msgSvc, convSvc, hub),
 		wsHandler,
 	)

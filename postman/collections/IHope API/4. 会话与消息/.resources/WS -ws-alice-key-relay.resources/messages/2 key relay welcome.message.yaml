@@ -1,0 +1,11 @@
+$kind: websocket-message
+content: |-
+  {
+    "event": "key_relay",
+    "conversation_id": "{{conversation_id}}",
+    "target_user_id": "{{member_user_id}}",
+    "payload_type": "welcome_bundle",
+    "ciphertext": "e2ee:gw:v1:postman-opaque-welcome-placeholder"
+  }
+contentType: text
+order: 6520

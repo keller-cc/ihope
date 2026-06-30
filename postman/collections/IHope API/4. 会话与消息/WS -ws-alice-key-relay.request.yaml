@@ -1,0 +1,7 @@
+$kind: websocket-request
+name: WS Alice key_relay
+url: "{{ws_base_url}}/ws"
+queryParams:
+  token: "{{access_token}}"
+messages: .resources/WS -ws-alice-key-relay.resources/messages
+order: 6500

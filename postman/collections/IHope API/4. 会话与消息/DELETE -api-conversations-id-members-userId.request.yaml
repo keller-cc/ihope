@@ -1,0 +1,28 @@
+$kind: http-request
+name: DELETE /api/conversations/{id}/members/{userId}
+url: "{{baseUrl}}/api/conversations/{{conversation_id}}/members/{{member_user_id}}"
+method: DELETE
+headers:
+  Authorization: Bearer {{access_token}}
+scripts:
+  - type: beforeRequest
+    language: text/javascript
+    code: |-
+      if (!pm.environment.get('member_user_id')) {
+        const peer = pm.environment.get('peer_user_id');
+        const self = pm.environment.get('my_user_id');
+        if (peer) pm.environment.set('member_user_id', peer);
+        else if (self) pm.environment.set('member_user_id', self);
+      }
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      pm.test('member removed, epoch incremented', function () {
+        pm.response.to.have.status(200);
+        const json = pm.response.json();
+        pm.expect(json.epoch).to.be.a('number').that.is.at.least(1);
+        if (pm.environment.name) {
+          pm.environment.set('group_epoch', String(json.epoch));
+        }
+      });
+order: 3600

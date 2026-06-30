@@ -67,11 +67,7 @@ func (s *Service) Send(ctx context.Context, in SendInput) (*Message, error) {
 }
 
 func (s *Service) List(ctx context.Context, conversationID, userID string, beforeMessageID string, limit int) ([]Message, bool, error) {
-	ok, err := s.conv.IsActiveMember(ctx, conversationID, userID)
-	if err != nil {
-		return nil, false, err
-	}
-	if !ok {
+	if _, err := s.conv.GetMembership(ctx, conversationID, userID); err != nil {
 		return nil, false, ErrNotMember
 	}
 
@@ -91,7 +87,7 @@ func (s *Service) List(ctx context.Context, conversationID, userID string, befor
 		before = &t
 	}
 
-	msgs, err := s.messages.List(ctx, conversationID, before, limit+1)
+	msgs, err := s.messages.ListForMember(ctx, conversationID, userID, before, limit+1)
 	if err != nil {
 		return nil, false, err
 	}
@@ -105,9 +101,40 @@ func (s *Service) List(ctx context.Context, conversationID, userID string, befor
 
 func isAllowedType(t string) bool {
 	switch t {
-	case "text", "image", "file", "announcement":
+	case "text", "image", "file", "announcement", "system":
 		return true
 	default:
 		return false
 	}
+}
+
+// SendSystem 写入群系统提示（明文 ciphertext，不经 E2EE）。
+// 仅由会话 membership 钩子调用；sender 可能刚退群，故不校验仍为活跃成员。
+func (s *Service) SendSystem(ctx context.Context, conversationID, senderID, text string) (*Message, error) {
+	return s.SendSystemAtEpoch(ctx, conversationID, senderID, text, -1)
+}
+
+// SendSystemAtEpoch 写入指定 epoch 的系统提示；epoch < 0 时使用当前会话 epoch。
+func (s *Service) SendSystemAtEpoch(
+	ctx context.Context,
+	conversationID, senderID, text string,
+	epoch int,
+) (*Message, error) {
+	text = strings.TrimSpace(text)
+	if text == "" || senderID == "" {
+		return nil, ErrInvalidInput
+	}
+
+	if epoch < 0 {
+		conv, err := s.conv.GetByID(ctx, conversationID)
+		if err != nil {
+			return nil, err
+		}
+		epoch = 0
+		if conv.Type == "group" {
+			epoch = conv.Epoch
+		}
+	}
+
+	return s.messages.Create(ctx, conversationID, senderID, "system", text, epoch)
 }

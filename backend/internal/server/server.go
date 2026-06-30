@@ -73,6 +73,13 @@ func (s *Server) Router() http.Handler {
 	if s.conversations != nil {
 		mux.Handle("GET /api/conversations", authRequired(http.HandlerFunc(s.conversations.List)))
 		mux.Handle("POST /api/conversations", authRequired(http.HandlerFunc(s.conversations.Create)))
+		mux.Handle("POST /api/conversations/{id}/members", authRequired(http.HandlerFunc(s.conversations.AddMembers)))
+		mux.Handle("DELETE /api/conversations/{id}/members/{userId}", authRequired(http.HandlerFunc(s.conversations.RemoveMember)))
+		mux.Handle("DELETE /api/conversations/{id}", authRequired(http.HandlerFunc(s.conversations.Delete)))
+		mux.Handle("PATCH /api/conversations/{id}", authRequired(http.HandlerFunc(s.conversations.Patch)))
+		mux.Handle("POST /api/conversations/{id}/avatar", authRequired(http.HandlerFunc(s.conversations.UploadAvatar)))
+		mux.Handle("GET /api/conversations/{id}/key-bundles", authRequired(http.HandlerFunc(s.conversations.ListKeyBundles)))
+		mux.Handle("POST /api/conversations/{id}/key-bundles", authRequired(http.HandlerFunc(s.conversations.UploadKeyBundles)))
 	}
 	if s.messages != nil {
 		mux.Handle("GET /api/conversations/{id}/messages", authRequired(http.HandlerFunc(s.messages.List)))

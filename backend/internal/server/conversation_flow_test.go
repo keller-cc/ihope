@@ -90,6 +90,68 @@ func TestConversationFlowIntegration(t *testing.T) {
 	if groupRec.Code != http.StatusCreated {
 		t.Fatalf("create group status = %d body = %s", groupRec.Code, groupRec.Body.String())
 	}
+
+	var groupResp struct {
+		Conversation struct {
+			ID      string `json:"id"`
+			Epoch   int    `json:"epoch"`
+			Members []struct {
+				UserID string `json:"user_id"`
+			} `json:"members"`
+		} `json:"conversation"`
+	}
+	decodeBody(t, groupRec.Body, &groupResp)
+	groupID := groupResp.Conversation.ID
+	if groupID == "" {
+		t.Fatal("missing group id")
+	}
+	if groupResp.Conversation.Epoch != 0 {
+		t.Fatalf("expected initial epoch 0, got %d", groupResp.Conversation.Epoch)
+	}
+	if len(groupResp.Conversation.Members) != 2 {
+		t.Fatalf("expected owner+b in group, got %d members", len(groupResp.Conversation.Members))
+	}
+
+	sendGroupRec := doJSON(t, handler, http.MethodPost, "/api/conversations/"+groupID+"/messages", map[string]string{
+		"type":       "text",
+		"ciphertext": "before invite",
+	}, aToken)
+	if sendGroupRec.Code != http.StatusCreated {
+		t.Fatalf("send group message status = %d", sendGroupRec.Code)
+	}
+
+	cEmail := fmt.Sprintf("conv_c_%d@example.com", time.Now().UnixNano())
+	cUser := registerUser(t, handler, cEmail, fmt.Sprintf("user_c_%d", time.Now().UnixNano()%1_000_000_000), password)
+	cToken := loginToken(t, handler, cEmail, password, deviceID+"-c")
+
+	addRec := doJSON(t, handler, http.MethodPost, "/api/conversations/"+groupID+"/members", map[string]any{
+		"member_ids": []string{cUser.ID},
+	}, aToken)
+	if addRec.Code != http.StatusOK {
+		t.Fatalf("add member status = %d body = %s", addRec.Code, addRec.Body.String())
+	}
+
+	sendAfterRec := doJSON(t, handler, http.MethodPost, "/api/conversations/"+groupID+"/messages", map[string]string{
+		"type":       "text",
+		"ciphertext": "after invite",
+	}, aToken)
+	if sendAfterRec.Code != http.StatusCreated {
+		t.Fatalf("send after invite status = %d", sendAfterRec.Code)
+	}
+
+	cListRec := doJSON(t, handler, http.MethodGet, "/api/conversations/"+groupID+"/messages", nil, cToken)
+	if cListRec.Code != http.StatusOK {
+		t.Fatalf("new member list status = %d body = %s", cListRec.Code, cListRec.Body.String())
+	}
+	var cList struct {
+		Messages []struct {
+			Ciphertext string `json:"ciphertext"`
+		} `json:"messages"`
+	}
+	decodeBody(t, cListRec.Body, &cList)
+	if len(cList.Messages) != 1 || cList.Messages[0].Ciphertext != "after invite" {
+		t.Fatalf("new member should only see post-join messages, got %+v", cList.Messages)
+	}
 }
 
 func registerUser(t *testing.T, handler http.Handler, email, username, password string) struct{ ID string } {

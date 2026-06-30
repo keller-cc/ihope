@@ -20,6 +20,7 @@ class UserAvatar extends StatelessWidget {
     final initial = name.isNotEmpty ? name[0].toUpperCase() : '?';
 
     return CircleAvatar(
+      key: ValueKey(resolved ?? name),
       radius: radius,
       backgroundImage:
           resolved != null ? NetworkImage(resolved) : null,

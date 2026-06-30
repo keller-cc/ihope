@@ -19,6 +19,11 @@ scripts:
         login_password: 'password123',
         peer_user_id: '',
         conversation_id: '',
+        member_user_id: '',
+        my_user_id: '',
+        group_epoch: '',
+        message_before_epoch: '',
+        message_after_epoch: '',
       };
 
       const profiles = {
@@ -64,6 +69,11 @@ scripts:
         pm.expect(pm.environment.get('refresh_token')).to.eql('');
         pm.expect(pm.environment.get('peer_user_id')).to.eql('');
         pm.expect(pm.environment.get('conversation_id')).to.eql('');
+        pm.expect(pm.environment.get('member_user_id')).to.eql('');
+        pm.expect(pm.environment.get('my_user_id')).to.eql('');
+        pm.expect(pm.environment.get('group_epoch')).to.eql('');
+        pm.expect(pm.environment.get('message_before_epoch')).to.eql('');
+        pm.expect(pm.environment.get('message_after_epoch')).to.eql('');
         pm.expect(pm.environment.get('baseUrl')).to.eql('http://localhost:8080');
         pm.expect(pm.environment.get('ws_base_url')).to.eql('ws://localhost:8080');
         if (expectedKeys[envName]) {

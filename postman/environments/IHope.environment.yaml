@@ -28,3 +28,13 @@ values:
     value: ''
   - key: conversation_id
     value: ''
+  - key: member_user_id
+    value: ''
+  - key: my_user_id
+    value: ''
+  - key: group_epoch
+    value: ''
+  - key: message_before_epoch
+    value: ''
+  - key: message_after_epoch
+    value: ''

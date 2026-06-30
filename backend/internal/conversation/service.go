@@ -118,6 +118,217 @@ func (s *Service) MemberUserIDs(ctx context.Context, conversationID string) ([]s
 	return s.conv.ListMemberUserIDs(ctx, conversationID)
 }
 
+func (s *Service) IsActiveMember(ctx context.Context, conversationID, userID string) (bool, error) {
+	return s.conv.IsActiveMember(ctx, conversationID, userID)
+}
+
+func (s *Service) GetMemberJoinedEpoch(ctx context.Context, conversationID, userID string) (int, error) {
+	return s.conv.GetMemberJoinedEpoch(ctx, conversationID, userID)
+}
+
+func (s *Service) AddMembers(ctx context.Context, actorID, conversationID string, memberIDs []string) (*ListItem, int, error) {
+	for _, id := range memberIDs {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		exists, err := s.users.ExistsByID(ctx, id)
+		if err != nil {
+			return nil, 0, err
+		}
+		if !exists {
+			return nil, 0, ErrPeerNotFound
+		}
+	}
+
+	newEpoch, err := s.conv.AddMembers(ctx, conversationID, actorID, memberIDs)
+	if err != nil {
+		return nil, 0, err
+	}
+	conv, err := s.conv.GetByID(ctx, conversationID)
+	if err != nil {
+		return nil, 0, err
+	}
+	item, err := s.toListItem(ctx, conv)
+	return item, newEpoch, err
+}
+
+func (s *Service) RemoveMember(ctx context.Context, actorID, conversationID, targetID string) (*ListItem, int, error) {
+	newEpoch, err := s.conv.RemoveMember(ctx, conversationID, actorID, targetID)
+	if err != nil {
+		return nil, 0, err
+	}
+	conv, err := s.conv.GetByID(ctx, conversationID)
+	if err != nil {
+		return nil, 0, err
+	}
+	item, err := s.toListItem(ctx, conv)
+	return item, newEpoch, err
+}
+
+func (s *Service) TouchMemberLeftAt(ctx context.Context, conversationID, userID string) error {
+	return s.conv.TouchMemberLeftAt(ctx, conversationID, userID)
+}
+
+func (s *Service) DissolveGroup(ctx context.Context, actorID, conversationID string) error {
+	return s.conv.DissolveGroup(ctx, conversationID, actorID)
+}
+
+func (s *Service) assertGroupOwner(ctx context.Context, conversationID, actorID string) error {
+	conv, err := s.GetIfMember(ctx, conversationID, actorID)
+	if err != nil {
+		return err
+	}
+	if conv.Type != "group" {
+		return ErrNotGroup
+	}
+	if conv.OwnerID == nil || *conv.OwnerID != actorID {
+		return ErrNotOwner
+	}
+	return nil
+}
+
+func (s *Service) UpdateGroupName(ctx context.Context, actorID, conversationID, name string) (*ListItem, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil, ErrInvalidInput
+	}
+	if err := s.assertGroupOwner(ctx, conversationID, actorID); err != nil {
+		return nil, err
+	}
+	conv, err := s.conv.UpdateGroupName(ctx, conversationID, name)
+	if err != nil {
+		return nil, err
+	}
+	return s.toListItem(ctx, conv)
+}
+
+func (s *Service) UpdateGroupAvatarURL(ctx context.Context, actorID, conversationID, avatarURL string) (*ListItem, error) {
+	if err := s.assertGroupOwner(ctx, conversationID, actorID); err != nil {
+		return nil, err
+	}
+	conv, err := s.conv.UpdateGroupAvatarURL(ctx, conversationID, avatarURL)
+	if err != nil {
+		return nil, err
+	}
+	return s.toListItem(ctx, conv)
+}
+
+func (s *Service) UploadKeyBundles(
+	ctx context.Context,
+	senderID, conversationID string,
+	bundles []KeyBundleInput,
+) error {
+	conv, err := s.GetIfMember(ctx, conversationID, senderID)
+	if err != nil {
+		return err
+	}
+	if conv.Type != "group" {
+		return ErrNotGroup
+	}
+
+	for _, b := range bundles {
+		recipientID := strings.TrimSpace(b.RecipientUserID)
+		ciphertext := strings.TrimSpace(b.Ciphertext)
+		if recipientID == "" || b.Epoch < 0 || !validWelcomeCiphertext(ciphertext) {
+			return ErrInvalidInput
+		}
+		ok, err := s.conv.IsActiveMember(ctx, conversationID, recipientID)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return ErrNotMember
+		}
+		if err := s.conv.UpsertKeyBundle(ctx, conversationID, senderID, recipientID, b.Epoch, ciphertext); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Service) ListKeyBundles(
+	ctx context.Context,
+	userID, conversationID string,
+	epochs []int,
+) ([]KeyBundle, error) {
+	ok, err := s.conv.IsActiveMember(ctx, conversationID, userID)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, ErrNotMember
+	}
+	conv, err := s.conv.GetByID(ctx, conversationID)
+	if err != nil {
+		return nil, err
+	}
+	if conv.Type != "group" {
+		return nil, ErrNotGroup
+	}
+
+	joinedEpoch, err := s.conv.GetMemberJoinedEpoch(ctx, conversationID, userID)
+	if err != nil {
+		return nil, err
+	}
+
+	bundles, err := s.conv.ListKeyBundlesForRecipient(ctx, conversationID, userID, epochs)
+	if err != nil {
+		return nil, err
+	}
+
+	filtered := make([]KeyBundle, 0, len(bundles))
+	for _, b := range bundles {
+		if b.Epoch >= joinedEpoch {
+			filtered = append(filtered, b)
+		}
+	}
+	return filtered, nil
+}
+
+func (s *Service) ListItemForUser(ctx context.Context, userID, conversationID string) (*ListItem, error) {
+	ok, err := s.conv.IsActiveMember(ctx, conversationID, userID)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, ErrNotMember
+	}
+	conv, err := s.conv.GetByID(ctx, conversationID)
+	if err != nil {
+		return nil, err
+	}
+	members, err := s.conv.listMembers(ctx, conversationID)
+	if err != nil {
+		return nil, err
+	}
+	preview, err := s.conv.lastMessageForUser(ctx, conversationID, userID)
+	if err != nil {
+		return nil, err
+	}
+	return &ListItem{
+		Conversation: *conv,
+		Members:      members,
+		LastMessage:  preview,
+	}, nil
+}
+
+func (s *Service) DisplayName(ctx context.Context, userID string) string {
+	u, err := s.users.GetByID(ctx, userID)
+	if err != nil || u == nil {
+		return "用户"
+	}
+	return u.Username
+}
+
+func (s *Service) DisplayNames(ctx context.Context, userIDs []string) []string {
+	names := make([]string, 0, len(userIDs))
+	for _, id := range userIDs {
+		names = append(names, s.DisplayName(ctx, id))
+	}
+	return names
+}
+
 func (s *Service) toListItem(ctx context.Context, conv *Conversation) (*ListItem, error) {
 	members, err := s.conv.listMembers(ctx, conv.ID)
 	if err != nil {

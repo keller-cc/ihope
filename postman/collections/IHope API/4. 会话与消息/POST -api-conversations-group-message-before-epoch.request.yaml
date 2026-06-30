@@ -1,0 +1,27 @@
+$kind: http-request
+name: POST group message (before member change)
+url: "{{baseUrl}}/api/conversations/{{conversation_id}}/messages"
+method: POST
+headers:
+  Content-Type: application/json
+  Authorization: Bearer {{access_token}}
+body:
+  type: json
+  content: |-
+    {
+      "type": "text",
+      "ciphertext": "group message before epoch change (postman plaintext)"
+    }
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      pm.test('group message sent at current epoch', function () {
+        pm.response.to.have.status(201);
+        const msg = pm.response.json().message;
+        pm.expect(msg.epoch).to.be.a('number');
+        if (pm.environment.name) {
+          pm.environment.set('message_before_epoch', msg.ciphertext);
+        }
+      });
+order: 3200

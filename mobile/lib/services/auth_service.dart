@@ -1,3 +1,7 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:typed_data';
+
 import '../crypto/chat_crypto.dart';
 import '../crypto/e2ee_exception.dart';
 import '../crypto/identity.dart';
@@ -13,7 +17,10 @@ class AuthService {
   AuthService({ApiClient? api, AuthStorage? storage, WsService? ws})
       : api = api ?? ApiClient(),
         storage = storage ?? AuthStorage(),
-        ws = ws ?? WsService();
+        ws = ws ?? WsService() {
+    this.api.onUnauthorized = _tryRefreshTokens;
+    this.ws.resolveToken = ensureValidAccessToken;
+  }
 
   final ApiClient api;
   final AuthStorage storage;
@@ -22,6 +29,17 @@ class AuthService {
 
   User? currentUser;
   ChatCrypto? _crypto;
+  StreamSubscription<KeyRelayFrame>? _keyRelaySub;
+  StreamSubscription<GmkRequestFrame>? _gmkRequestSub;
+  StreamSubscription<EpochUpdatedFrame>? _epochSub;
+  final Map<String, ConversationItem> _conversationCache = {};
+  final Map<String, List<Completer<void>>> _gmkWaiters = {};
+  final Map<String, DateTime> _removalUiClaimed = {};
+
+  DateTime? _accessExpiresAt;
+  Future<bool>? _refreshInFlight;
+
+  static const _refreshSkew = Duration(minutes: 2);
 
   ChatCrypto get chatCrypto {
     final user = currentUser;
@@ -37,8 +55,18 @@ class AuthService {
       readIdentitySeed: () => storage.readIdentitySeedForUser(user.id),
       writeIdentitySeed: (seed) => storage.writeIdentitySeedForUser(user.id, seed),
       readSession: (peer) => storage.readSessionKey(user.id, peer),
-      writeSession: (peer, bytes) =>
-          storage.writeSessionKey(user.id, peer, bytes),
+      readSessionPeerKey: (peer) => storage.readSessionPeerKey(user.id, peer),
+      writeSession: (peer, bytes, peerPub) => storage.writeSessionKey(
+        user.id,
+        peer,
+        bytes,
+        peerPublicKey: peerPub,
+      ),
+      clearSession: (peer) => storage.clearSessionKey(user.id, peer),
+      readGroupGmk: (convId, epoch) =>
+          storage.readGroupGmk(user.id, convId, epoch),
+      writeGroupGmk: (convId, epoch, bytes) =>
+          storage.writeGroupGmk(user.id, convId, epoch, bytes),
     );
   }
 
@@ -48,8 +76,21 @@ class AuthService {
       return false;
     }
     api.setAccessToken(token);
+    _accessExpiresAt = _expiryFromJwt(token);
     try {
       await refreshCurrentUser();
+    } catch (_) {
+      if (!await _tryRefreshTokens()) {
+        await _disconnectRealtime();
+        await storage.clear();
+        api.setAccessToken(null);
+        _crypto = null;
+        _accessExpiresAt = null;
+        return false;
+      }
+      await refreshCurrentUser();
+    }
+    try {
       await _bindIdentityForUser();
       await _connectRealtime();
       return true;
@@ -58,6 +99,7 @@ class AuthService {
       await storage.clear();
       api.setAccessToken(null);
       _crypto = null;
+      _accessExpiresAt = null;
       return false;
     }
   }
@@ -124,6 +166,29 @@ class AuthService {
     return currentUser!;
   }
 
+  Future<ConversationItem> updateGroupName(
+    ConversationItem conversation,
+    String name,
+  ) async {
+    final conv = await conversations.updateGroupName(conversation.id, name);
+    _cacheConversation(conv);
+    return conv;
+  }
+
+  Future<ConversationItem> uploadGroupAvatar(
+    ConversationItem conversation,
+    List<int> bytes, {
+    String filename = 'avatar.jpg',
+  }) async {
+    final conv = await conversations.uploadGroupAvatar(
+      conversation.id,
+      bytes,
+      filename: filename,
+    );
+    _cacheConversation(conv);
+    return conv;
+  }
+
   Future<void> changePassword({
     required String currentPassword,
     required String newPassword,
@@ -158,83 +223,882 @@ class AuthService {
     api.setAccessToken(null);
     currentUser = null;
     _crypto = null;
+    _conversationCache.clear();
+    _accessExpiresAt = null;
   }
 
-  Future<String?> accessToken() => storage.accessToken();
-
-  Future<ChatMessage> sendChatMessage(
-    ConversationItem conversation,
-    String plaintext,
-  ) async {
-    final me = currentUser;
-    if (me == null || !isValidIdentityPublicKey(me.identityPublicKey)) {
-      throw E2eeException('本机加密密钥未就绪，请退出后重新登录');
+  /// 供 WS 重连与 API 401 拦截器使用：必要时 refresh 后返回有效 token。
+  Future<String?> ensureValidAccessToken() async {
+    if (_shouldRefreshProactively()) {
+      final ok = await _tryRefreshTokens();
+      if (!ok) return null;
     }
-    final fresh = await _refreshConversation(conversation);
-    final payload = await chatCrypto.encryptOutgoing(fresh, plaintext);
-    if (!payload.startsWith('e2ee:v1:')) {
-      throw E2eeException('消息未能加密，已取消发送');
-    }
-    final msg = await conversations.sendMessage(fresh.id, payload);
-    return msg.copyWith(plaintext: plaintext);
+    return storage.accessToken();
   }
 
-  Future<ConversationItem> _refreshConversation(ConversationItem conversation) async {
+  Future<bool> _tryRefreshTokens() async {
+    if (_refreshInFlight != null) {
+      return _refreshInFlight!;
+    }
+
+    final refresh = await storage.refreshToken();
+    if (refresh == null || refresh.isEmpty) {
+      return false;
+    }
+
+    _refreshInFlight = _doRefreshTokens(refresh);
     try {
-      final items = await conversations.listConversations();
-      return items.firstWhere(
-        (c) => c.id == conversation.id,
-        orElse: () => conversation,
-      );
-    } catch (_) {
-      return conversation;
+      return await _refreshInFlight!;
+    } finally {
+      _refreshInFlight = null;
     }
   }
 
-  Future<ChatMessage> decryptMessage(
-    ConversationItem conversation,
-    ChatMessage message,
-  ) {
-    return chatCrypto.decryptMessage(conversation, message);
+  Future<bool> _doRefreshTokens(String refreshToken) async {
+    try {
+      final deviceId = await storage.deviceId();
+      final data = await api.postJsonPublic('/api/auth/refresh', body: {
+        'refresh_token': refreshToken,
+        'device_id': deviceId,
+      });
+      await _saveTokenResponse(data);
+      final access = await storage.accessToken();
+      if (access != null && access.isNotEmpty) {
+        await ws.reconnect(access);
+      }
+      return true;
+    } on ApiException catch (e) {
+      if (e.statusCode == 401) {
+        await logout();
+      }
+      return false;
+    } catch (_) {
+      return false;
+    }
   }
 
-  Future<List<ChatMessage>> decryptMessages(
-    ConversationItem conversation,
-    List<ChatMessage> messages,
-  ) {
-    return chatCrypto.decryptMessages(conversation, messages);
+  bool _shouldRefreshProactively() {
+    if (_accessExpiresAt == null) return false;
+    return DateTime.now().isAfter(_accessExpiresAt!.subtract(_refreshSkew));
   }
 
-  Future<String> decryptPreview(
-    ConversationItem conversation,
-    ChatMessage message,
-  ) {
-    return chatCrypto.decryptIncoming(conversation, message.ciphertext);
+  DateTime? _expiryFromJwt(String token) {
+    final parts = token.split('.');
+    if (parts.length != 3) return null;
+    try {
+      final payload = utf8.decode(
+        base64Url.decode(base64Url.normalize(parts[1])),
+      );
+      final map = jsonDecode(payload) as Map<String, dynamic>;
+      final exp = map['exp'];
+      if (exp is int) {
+        return DateTime.fromMillisecondsSinceEpoch(exp * 1000);
+      }
+    } catch (_) {}
+    return null;
   }
 
-  Future<void> reconnectRealtime() async {
-    final token = await storage.accessToken();
-    if (token == null || token.isEmpty) return;
-    await ws.reconnect(token);
-  }
-
-  Future<void> _connectRealtime() async {
-    final token = await storage.accessToken();
-    if (token == null || token.isEmpty) return;
-    await ws.connect(token);
-  }
-
-  Future<void> _disconnectRealtime() async {
-    await ws.disconnect();
-  }
-
-  Future<void> _applyTokenResponse(Map<String, dynamic> data) async {
+  Future<void> _saveTokenResponse(Map<String, dynamic> data) async {
     final access = data['access_token'] as String;
     final refresh = data['refresh_token'] as String;
     await storage.saveTokens(accessToken: access, refreshToken: refresh);
     api.setAccessToken(access);
     currentUser = User.fromJson(data['user'] as Map<String, dynamic>);
     _crypto = null;
+    _accessExpiresAt = _expiryFromJwt(access);
+    final expiresIn = data['expires_in'];
+    if (expiresIn is int) {
+      _accessExpiresAt = DateTime.now().add(Duration(seconds: expiresIn));
+    }
+  }
+
+  Future<String?> accessToken() => storage.accessToken();
+
+  Future<List<String>> pinnedConversationIds() async {
+    final user = currentUser;
+    if (user == null) return [];
+    return storage.readPinnedConversations(user.id);
+  }
+
+  Future<bool> isConversationPinned(String conversationId) async {
+    final ids = await pinnedConversationIds();
+    return ids.contains(conversationId);
+  }
+
+  Future<void> setConversationPinned(
+    String conversationId, {
+    required bool pinned,
+  }) async {
+    final user = currentUser;
+    if (user == null) return;
+    var ids = await storage.readPinnedConversations(user.id);
+    if (pinned) {
+      ids.remove(conversationId);
+      ids.insert(0, conversationId);
+    } else {
+      ids.remove(conversationId);
+    }
+    await storage.writePinnedConversations(user.id, ids);
+  }
+
+  Future<ChatMessage> sendChatMessage(
+    ConversationItem conversation,
+    String plaintext,
+  ) async {
+    if (conversation.isArchived) {
+      throw StateError('已退出群聊，无法发送消息');
+    }
+    final me = currentUser;
+    if (me == null || !isValidIdentityPublicKey(me.identityPublicKey)) {
+      throw E2eeException('本机加密密钥未就绪，请退出后重新登录');
+    }
+    final fresh = await _refreshConversation(conversation);
+    if (fresh.type == 'group') {
+      await ensureGroupKeys(fresh, epochs: [fresh.epoch]);
+    }
+    final payload = await chatCrypto.encryptOutgoing(fresh, plaintext);
+    if (!chatCrypto.isEncryptedPayload(payload)) {
+      throw E2eeException('消息未能加密，已取消发送');
+    }
+    final msg = await conversations.sendMessage(fresh.id, payload);
+    return msg.copyWith(plaintext: plaintext);
+  }
+
+  Future<ConversationItem> createGroupChat({
+    required String name,
+    required List<String> memberIds,
+  }) async {
+    final me = currentUser;
+    if (me == null || !isValidIdentityPublicKey(me.identityPublicKey)) {
+      throw E2eeException('本机加密密钥未就绪，请退出后重新登录');
+    }
+    final conv = await conversations.createGroupChat(
+      name: name,
+      memberIds: memberIds,
+    );
+    _cacheConversation(conv);
+    final gmk = await chatCrypto.initGroupEpoch(conv.id, conv.epoch);
+    await _relayGroupWelcome(conv, gmk);
+    return conv;
+  }
+
+  Future<ConversationItem> addGroupMembers(
+    ConversationItem conversation,
+    List<String> memberIds,
+  ) async {
+    final result = await conversations.addMembers(conversation.id, memberIds);
+    final updated = result.conversation.copyWith(epoch: result.epoch);
+    _cacheConversation(updated);
+    final gmk = await chatCrypto.rotateGroupEpoch(updated.id, result.epoch);
+    await _relayGroupWelcome(updated, gmk);
+    return updated;
+  }
+
+  Future<ConversationItem> removeGroupMember(
+    ConversationItem conversation,
+    String targetUserId,
+  ) async {
+    final result =
+        await conversations.removeMember(conversation.id, targetUserId);
+    final updated = result.conversation.copyWith(epoch: result.epoch);
+    _cacheConversation(updated);
+    final me = currentUser!;
+    if (updated.isOwner(me.id)) {
+      final gmk = await chatCrypto.rotateGroupEpoch(updated.id, result.epoch);
+      await _relayGroupWelcome(updated, gmk);
+    }
+    return updated;
+  }
+
+  ChatMessage _asSystemMessage(ChatMessage msg) {
+    return msg.copyWith(plaintext: msg.ciphertext);
+  }
+
+  Future<void> leaveGroup(ConversationItem conversation) async {
+    final me = currentUser!;
+    var messages = await loadCachedMessages(conversation.id);
+    final result = await conversations.removeMember(conversation.id, me.id);
+    final sys = result.systemMessage;
+    if (sys != null && !messages.any((m) => m.id == sys.id)) {
+      messages = [...messages, _asSystemMessage(sys)];
+    }
+    await archiveConversation(
+      conversation,
+      messages: messages.isEmpty ? null : messages,
+    );
+  }
+
+  Future<void> dissolveGroup(ConversationItem conversation) async {
+    await conversations.dissolveGroup(conversation.id);
+    await archiveConversation(conversation.copyWith(isArchived: true));
+  }
+
+  /// 退群/被踢后保留本地会话与消息，仅标记为只读归档。
+  Future<void> archiveConversation(
+    ConversationItem conversation, {
+    List<ChatMessage>? messages,
+  }) async {
+    final me = currentUser;
+    if (me == null) return;
+
+    final archived = conversation.copyWith(isArchived: true);
+    await storage.saveArchivedConversation(me.id, archived.toJson());
+    _cacheConversation(archived);
+    await setConversationPinned(conversation.id, pinned: false);
+
+    if (messages != null && messages.isNotEmpty) {
+      await cacheMessages(conversation.id, messages);
+    }
+  }
+
+  /// 重新加入群聊时取消归档，恢复为活跃会话。
+  Future<ConversationItem> reactivateConversation(ConversationItem conv) async {
+    final me = currentUser;
+    if (me == null) return conv;
+    await storage.removeArchivedConversation(me.id, conv.id);
+    final active = conv.copyWith(isArchived: false);
+    _cacheConversation(active);
+    return active;
+  }
+
+  /// 合并 WS/API 推送的会话元数据，避免空 members 覆盖本地完整数据。
+  ConversationItem mergeConversationUpdate(
+    ConversationItem existing,
+    ConversationItem incoming,
+  ) {
+    final merged = existing.copyWith(
+      name: incoming.name ?? existing.name,
+      avatarUrl: incoming.avatarUrl?.isNotEmpty == true
+          ? incoming.avatarUrl
+          : existing.avatarUrl,
+      epoch: incoming.epoch,
+      members: incoming.members.isNotEmpty ? incoming.members : existing.members,
+      lastMessage: incoming.lastMessage ?? existing.lastMessage,
+      isArchived: false,
+    );
+    _cacheConversation(merged);
+    return merged;
+  }
+
+  /// 若会话已重新出现在服务端列表中，则取消归档。
+  Future<ConversationItem?> tryReactivateConversation(
+    ConversationItem conversation,
+  ) async {
+    if (!conversation.isArchived) return conversation;
+    try {
+      final items = await conversations.listConversations();
+      for (final c in items) {
+        if (c.id == conversation.id) {
+          return reactivateConversation(c);
+        }
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  Future<List<ConversationItem>> listAllConversations() async {
+    final me = currentUser!;
+    final active = await conversations.listConversations();
+    final activeIds = active.map((c) => c.id).toSet();
+    for (final c in active) {
+      await storage.removeArchivedConversation(me.id, c.id);
+      _cacheConversation(c.copyWith(isArchived: false));
+    }
+
+    final archivedRaw = await storage.readArchivedConversationsRaw(me.id);
+    final merged = List<ConversationItem>.from(active);
+    for (final raw in archivedRaw) {
+      final item = ConversationItem.fromJson(raw);
+      if (!activeIds.contains(item.id)) {
+        merged.add(item);
+        _cacheConversation(item);
+      }
+    }
+    return merged;
+  }
+
+  Future<void> cacheMessages(
+    String conversationId,
+    List<ChatMessage> messages,
+  ) async {
+    final me = currentUser;
+    if (me == null || messages.isEmpty) return;
+    await storage.saveMessageCache(
+      me.id,
+      conversationId,
+      messages.map((m) => m.toJson()).toList(),
+    );
+  }
+
+  Future<List<ChatMessage>> loadCachedMessages(String conversationId) async {
+    final me = currentUser;
+    if (me == null) return [];
+    final raw = await storage.readMessageCache(me.id, conversationId);
+    return raw.map((e) => ChatMessage.fromJson(e)).toList()
+      ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+  }
+
+  /// 群聊解散后归档本地记录（仍可在本地查看历史）。
+  Future<void> handleGroupDissolved(String conversationId) async {
+    final conv = _conversationCache[conversationId];
+    if (conv != null) {
+      await archiveConversation(conv);
+    }
+  }
+
+  /// 同一退群事件只展示一次 UI（会话列表与聊天页都会收到 WS）。
+  bool claimRemovalUi(String conversationId) {
+    final now = DateTime.now();
+    final prev = _removalUiClaimed[conversationId];
+    if (prev != null && now.difference(prev) < const Duration(seconds: 5)) {
+      return false;
+    }
+    _removalUiClaimed[conversationId] = now;
+    return true;
+  }
+
+  /// 被移出群聊后归档，不从本地列表移除。
+  Future<void> handleConversationRemoved(
+    String conversationId, {
+    ConversationItem? snapshot,
+    List<ChatMessage>? messages,
+  }) async {
+    final conv = snapshot ?? _conversationCache[conversationId];
+    if (conv != null) {
+      await archiveConversation(conv, messages: messages);
+      return;
+    }
+    await archiveConversation(
+      ConversationItem(
+        id: conversationId,
+        type: 'group',
+        members: const [],
+        isArchived: true,
+      ),
+      messages: messages,
+    );
+  }
+
+  /// 确保本地有所需 epoch 的群 GMK（优先 REST 拉取服务端密文包，其次 WS 向在线群主补发）。
+  Future<void> ensureGroupKeys(
+    ConversationItem conversation, {
+    List<int>? epochs,
+  }) async {
+    if (conversation.type != 'group') return;
+    final me = currentUser;
+    if (me == null) return;
+
+    var conv = conversation;
+    if (conv.members.isEmpty) {
+      conv = await _refreshConversation(conversation);
+    }
+
+    final needed = <int>{conv.epoch, ...?epochs};
+    for (final epoch in needed) {
+      if (await _hasGroupGmk(conv.id, epoch)) continue;
+
+      if (conv.isOwner(me.id)) {
+        if (await _fetchOwnerSelfBundle(conv, epoch)) continue;
+        await _backfillKeyBundlesForOwner(conv, epochs: {epoch});
+        continue;
+      }
+
+      final fromServer = await _fetchKeyBundlesFromServer(conv, epoch);
+      if (fromServer || await _hasGroupGmk(conv.id, epoch)) continue;
+
+      await _requestGmkAndWait(conv.id, epoch);
+    }
+  }
+
+  /// 群主换设备后，从服务端自备份拉取历史 epoch 的 GMK。
+  Future<void> ensureOwnerGroupKeys(ConversationItem conversation) async {
+    if (conversation.type != 'group') return;
+    final me = currentUser;
+    if (me == null || !conversation.isOwner(me.id)) return;
+
+    var conv = conversation;
+    if (conv.members.isEmpty) {
+      conv = await _refreshConversation(conversation);
+    }
+
+    try {
+      final bundles = await conversations.fetchKeyBundles(conv.id);
+      final epochs = <int>{conv.epoch};
+      for (final b in bundles) {
+        epochs.add(b.epoch);
+      }
+      for (var e = 0; e <= conv.epoch; e++) {
+        epochs.add(e);
+      }
+      await ensureGroupKeys(conv, epochs: epochs.toList());
+    } catch (_) {
+      await ensureGroupKeys(conv);
+    }
+  }
+
+  Future<void> ensureGroupKeysForMessages(
+    ConversationItem conversation,
+    List<ChatMessage> messages,
+  ) async {
+    if (conversation.type != 'group') return;
+    final epochs = messages.map((m) => m.epoch).toSet().toList();
+    await ensureGroupKeys(conversation, epochs: epochs);
+  }
+
+  Future<bool> _hasGroupGmk(String conversationId, int epoch) async {
+    final me = currentUser;
+    if (me == null) return false;
+    final raw = await storage.readGroupGmk(me.id, conversationId, epoch);
+    return raw != null && raw.length == 32;
+  }
+
+  Future<bool> _fetchOwnerSelfBundle(
+    ConversationItem conv,
+    int epoch,
+  ) async {
+    final me = currentUser;
+    if (me == null || !conv.isOwner(me.id)) return false;
+
+    ConversationMember? owner;
+    for (final m in conv.members) {
+      if (m.userId == me.id) {
+        owner = m;
+        break;
+      }
+    }
+    if (owner == null || !canUseE2EEWithPeer(owner.identityPublicKey)) {
+      return false;
+    }
+
+    try {
+      final bundles = await conversations.fetchKeyBundles(
+        conv.id,
+        epochs: [epoch],
+      );
+      for (final bundle in bundles) {
+        if (bundle.epoch != epoch || bundle.senderId != me.id) continue;
+        if (await _hasGroupGmk(conv.id, epoch)) return true;
+        try {
+          final stored = await chatCrypto.absorbGroupWelcome(
+            senderUserId: me.id,
+            senderPublicKeyBase64: owner.identityPublicKey,
+            ciphertext: bundle.ciphertext,
+          );
+          _signalGmkReceived(stored.conversationId, stored.epoch);
+        } catch (_) {}
+      }
+    } catch (_) {}
+    return await _hasGroupGmk(conv.id, epoch);
+  }
+
+  Future<bool> _fetchKeyBundlesFromServer(
+    ConversationItem conv,
+    int epoch,
+  ) async {
+    try {
+      final bundles = await conversations.fetchKeyBundles(
+        conv.id,
+        epochs: [epoch],
+      );
+      for (final bundle in bundles) {
+        if (bundle.epoch != epoch) continue;
+        if (await _hasGroupGmk(conv.id, epoch)) return true;
+
+        ConversationMember? sender;
+        for (final m in conv.members) {
+          if (m.userId == bundle.senderId) {
+            sender = m;
+            break;
+          }
+        }
+        if (sender == null || !canUseE2EEWithPeer(sender.identityPublicKey)) {
+          continue;
+        }
+
+        try {
+          final stored = await chatCrypto.absorbGroupWelcome(
+            senderUserId: sender.userId,
+            senderPublicKeyBase64: sender.identityPublicKey,
+            ciphertext: bundle.ciphertext,
+          );
+          _signalGmkReceived(stored.conversationId, stored.epoch);
+        } catch (_) {}
+      }
+    } catch (_) {}
+    return await _hasGroupGmk(conv.id, epoch);
+  }
+
+  Future<void> _backfillKeyBundlesForOwner(
+    ConversationItem conv, {
+    required Set<int> epochs,
+  }) async {
+    final me = currentUser;
+    if (me == null || !conv.isOwner(me.id)) return;
+
+    final uploads = <Map<String, dynamic>>[];
+    for (final epoch in epochs) {
+      final raw = await storage.readGroupGmk(me.id, conv.id, epoch);
+      if (raw == null || raw.length != 32) continue;
+      final gmk = Uint8List.fromList(raw);
+
+      for (final member in conv.members) {
+        if (!canUseE2EEWithPeer(member.identityPublicKey)) continue;
+        try {
+          final cipher = await chatCrypto.buildGroupWelcome(
+            recipient: member,
+            conversationId: conv.id,
+            epoch: epoch,
+            gmk: gmk,
+          );
+          uploads.add({
+            'epoch': epoch,
+            'recipient_user_id': member.userId,
+            'ciphertext': cipher,
+          });
+        } catch (_) {}
+      }
+    }
+
+    if (uploads.isEmpty) return;
+    try {
+      await conversations.uploadKeyBundles(conv.id, uploads);
+    } catch (_) {}
+  }
+
+  Future<bool> _requestGmkAndWait(String conversationId, int epoch) async {
+    if (await _hasGroupGmk(conversationId, epoch)) return true;
+
+    final key = '$conversationId:$epoch';
+    final completer = Completer<void>();
+    _gmkWaiters.putIfAbsent(key, () => []).add(completer);
+    ws.sendGmkRequest(conversationId: conversationId, epoch: epoch);
+
+    try {
+      await completer.future.timeout(const Duration(seconds: 10));
+    } catch (_) {
+      _gmkWaiters[key]?.remove(completer);
+      if (_gmkWaiters[key]?.isEmpty ?? false) {
+        _gmkWaiters.remove(key);
+      }
+      return false;
+    }
+    return _hasGroupGmk(conversationId, epoch);
+  }
+
+  void _signalGmkReceived(String conversationId, int epoch) {
+    final key = '$conversationId:$epoch';
+    final waiters = _gmkWaiters.remove(key);
+    if (waiters == null) return;
+    for (final c in waiters) {
+      if (!c.isCompleted) c.complete();
+    }
+  }
+
+  Future<void> _syncGroupKeysInBackground() async {
+    final me = currentUser;
+    if (me == null) return;
+    for (final conv in _conversationCache.values) {
+      if (conv.type != 'group') continue;
+      if (conv.isOwner(me.id)) {
+        unawaited(ensureOwnerGroupKeys(conv));
+      } else {
+        unawaited(ensureGroupKeys(conv));
+      }
+    }
+  }
+
+  void _cacheConversation(ConversationItem conv) {
+    _conversationCache[conv.id] = conv;
+  }
+
+  Future<void> _relayGroupWelcome(
+    ConversationItem conv,
+    Uint8List gmk,
+  ) async {
+    final me = currentUser;
+    if (me == null) return;
+
+    final uploads = <Map<String, dynamic>>[];
+    for (final member in conv.members) {
+      if (!canUseE2EEWithPeer(member.identityPublicKey)) continue;
+      final cipher = await chatCrypto.buildGroupWelcome(
+        recipient: member,
+        conversationId: conv.id,
+        epoch: conv.epoch,
+        gmk: gmk,
+      );
+      if (member.userId != me.id) {
+        ws.sendKeyRelay(
+          conversationId: conv.id,
+          targetUserId: member.userId,
+          ciphertext: cipher,
+        );
+      }
+      uploads.add({
+        'epoch': conv.epoch,
+        'recipient_user_id': member.userId,
+        'ciphertext': cipher,
+      });
+    }
+
+    if (uploads.isNotEmpty) {
+      try {
+        await conversations.uploadKeyBundles(conv.id, uploads);
+      } catch (_) {}
+    }
+  }
+
+  Future<ConversationItem> _refreshConversation(ConversationItem conversation) async {
+    if (conversation.isArchived) {
+      final reactivated = await tryReactivateConversation(conversation);
+      if (reactivated != null) {
+        conversation = reactivated;
+      } else {
+        return _conversationCache[conversation.id] ?? conversation;
+      }
+    }
+    try {
+      final items = await conversations.listConversations();
+      final me = currentUser;
+      for (final c in items) {
+        if (c.id == conversation.id && me != null) {
+          await storage.removeArchivedConversation(me.id, c.id);
+        }
+        _cacheConversation(
+          c.id == conversation.id ? c.copyWith(isArchived: false) : c,
+        );
+      }
+      return items.firstWhere(
+        (c) => c.id == conversation.id,
+        orElse: () =>
+            _conversationCache[conversation.id]?.copyWith(isArchived: false) ??
+            conversation,
+      );
+    } catch (_) {
+      return _conversationCache[conversation.id] ?? conversation;
+    }
+  }
+
+  Future<ChatMessage> decryptMessage(
+    ConversationItem conversation,
+    ChatMessage message,
+  ) async {
+    if (message.type == 'system') {
+      return message.copyWith(plaintext: message.ciphertext);
+    }
+    final conv = await _refreshConversation(conversation);
+    return chatCrypto.decryptMessage(conv, message);
+  }
+
+  Future<List<ChatMessage>> decryptMessages(
+    ConversationItem conversation,
+    List<ChatMessage> messages,
+  ) async {
+    final conv = await _refreshConversation(conversation);
+    final out = <ChatMessage>[];
+    for (final msg in messages) {
+      if (msg.type == 'system') {
+        out.add(msg.copyWith(plaintext: msg.ciphertext));
+        continue;
+      }
+      if (msg.plaintext != null && msg.plaintext!.isNotEmpty) {
+        out.add(msg);
+        continue;
+      }
+      out.add(await chatCrypto.decryptMessage(conv, msg));
+    }
+    return out;
+  }
+
+  Future<ConversationItem> refreshConversation(ConversationItem conversation) {
+    return _refreshConversation(conversation);
+  }
+
+  Future<String> decryptPreview(
+    ConversationItem conversation,
+    ChatMessage message,
+  ) async {
+    if (message.type == 'system') {
+      return message.ciphertext;
+    }
+    final conv = await _refreshConversation(conversation);
+    if (conv.type == 'group') {
+      await ensureGroupKeys(conv, epochs: [message.epoch]);
+    }
+    return chatCrypto.decryptIncoming(
+      conv,
+      message.ciphertext,
+      messageEpoch: message.epoch,
+    );
+  }
+
+  Future<void> reconnectRealtime() async {
+    final token = await ensureValidAccessToken();
+    if (token == null || token.isEmpty) return;
+    await ws.reconnect(token);
+  }
+
+  Future<void> _connectRealtime() async {
+    final token = await ensureValidAccessToken();
+    if (token == null || token.isEmpty) return;
+    await ws.connect(token);
+    _attachWsHandlers();
+    try {
+      final items = await conversations.listConversations();
+      for (final c in items) {
+        _cacheConversation(c);
+      }
+      unawaited(_syncGroupKeysInBackground());
+    } catch (_) {}
+  }
+
+  Future<void> _disconnectRealtime() async {
+    await _keyRelaySub?.cancel();
+    _keyRelaySub = null;
+    await _gmkRequestSub?.cancel();
+    _gmkRequestSub = null;
+    await _epochSub?.cancel();
+    _epochSub = null;
+    await ws.disconnect();
+  }
+
+  void _attachWsHandlers() {
+    _keyRelaySub?.cancel();
+    _epochSub?.cancel();
+    _keyRelaySub = ws.onKeyRelay.listen((frame) {
+      unawaited(_handleKeyRelay(frame));
+    });
+    _gmkRequestSub = ws.onGmkRequest.listen((frame) {
+      unawaited(_handleGmkRequest(frame));
+    });
+    _epochSub = ws.onEpochUpdated.listen((frame) {
+      unawaited(_handleEpochUpdated(frame));
+    });
+  }
+
+  Future<void> _handleEpochUpdated(EpochUpdatedFrame frame) async {
+    final me = currentUser;
+    if (me == null) return;
+
+    var conv = _conversationCache[frame.conversationId];
+    if (conv != null) {
+      conv = conv.copyWith(epoch: frame.epoch);
+      _cacheConversation(conv);
+    } else {
+      conv = ConversationItem(
+        id: frame.conversationId,
+        type: 'group',
+        members: [],
+        epoch: frame.epoch,
+      );
+      _cacheConversation(conv);
+    }
+
+    if (!conv.isOwner(me.id)) return;
+
+    final existing =
+        await storage.readGroupGmk(me.id, conv.id, frame.epoch);
+    if (existing != null) return;
+
+    try {
+      final gmk = await chatCrypto.rotateGroupEpoch(conv.id, frame.epoch);
+      await _relayGroupWelcome(conv, gmk);
+    } catch (_) {}
+  }
+
+  Future<void> _handleKeyRelay(KeyRelayFrame frame) async {
+    final me = currentUser;
+    if (me == null || frame.targetUserId != me.id) return;
+
+    var conv = _conversationCache[frame.conversationId];
+    if (conv == null) {
+      conv = await _refreshConversation(
+        ConversationItem(
+          id: frame.conversationId,
+          type: 'group',
+          members: [],
+        ),
+      );
+    }
+
+    ConversationMember? sender;
+    for (final m in conv.members) {
+      if (m.userId == frame.fromUserId) {
+        sender = m;
+        break;
+      }
+    }
+    if (sender == null || !canUseE2EEWithPeer(sender.identityPublicKey)) {
+      return;
+    }
+
+    try {
+      final stored = await chatCrypto.absorbGroupWelcome(
+        senderUserId: sender.userId,
+        senderPublicKeyBase64: sender.identityPublicKey,
+        ciphertext: frame.ciphertext,
+      );
+      _signalGmkReceived(stored.conversationId, stored.epoch);
+    } catch (_) {}
+  }
+
+  Future<void> _handleGmkRequest(GmkRequestFrame frame) async {
+    final me = currentUser;
+    if (me == null) return;
+
+    var conv = _conversationCache[frame.conversationId];
+    if (conv == null || conv.members.isEmpty) {
+      conv = await _refreshConversation(
+        ConversationItem(
+          id: frame.conversationId,
+          type: 'group',
+          members: [],
+        ),
+      );
+    }
+    if (!conv.isOwner(me.id)) return;
+
+    ConversationMember? requester;
+    for (final m in conv.members) {
+      if (m.userId == frame.requesterUserId) {
+        requester = m;
+        break;
+      }
+    }
+    if (requester == null || !canUseE2EEWithPeer(requester.identityPublicKey)) {
+      return;
+    }
+
+    for (final epoch in frame.epochs) {
+      final raw = await storage.readGroupGmk(me.id, conv.id, epoch);
+      if (raw == null || raw.length != 32) continue;
+      try {
+        final cipher = await chatCrypto.buildGroupWelcome(
+          recipient: requester,
+          conversationId: conv.id,
+          epoch: epoch,
+          gmk: Uint8List.fromList(raw),
+        );
+        ws.sendKeyRelay(
+          conversationId: conv.id,
+          targetUserId: requester.userId,
+          ciphertext: cipher,
+        );
+        try {
+          await conversations.uploadKeyBundles(conv.id, [
+            {
+              'epoch': epoch,
+              'recipient_user_id': requester.userId,
+              'ciphertext': cipher,
+            },
+          ]);
+        } catch (_) {}
+      } catch (_) {}
+    }
+  }
+
+  Future<void> _applyTokenResponse(Map<String, dynamic> data) async {
+    await _saveTokenResponse(data);
     await _connectRealtime();
   }
 

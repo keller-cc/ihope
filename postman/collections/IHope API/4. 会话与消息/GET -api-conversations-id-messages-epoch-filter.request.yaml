@@ -1,0 +1,33 @@
+$kind: http-request
+name: GET /api/conversations/{id}/messages (epoch filter)
+url: "{{baseUrl}}/api/conversations/{{conversation_id}}/messages?limit=50"
+method: GET
+headers:
+  Authorization: Bearer {{access_token}}
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      pm.test('messages listed with joined_epoch filter', function () {
+        pm.response.to.have.status(200);
+        const json = pm.response.json();
+        pm.expect(json.messages).to.be.an('array');
+      });
+
+      const after = pm.environment.get('message_after_epoch');
+      const before = pm.environment.get('message_before_epoch');
+      if (after) {
+        pm.test('includes post-join message when set', function () {
+          const texts = pm.response.json().messages.map((m) => m.ciphertext);
+          pm.expect(texts).to.include(after);
+        });
+      }
+      if (before && after) {
+        pm.test('excludes pre-join message for re-joined member', function () {
+          const texts = pm.response.json().messages.map((m) => m.ciphertext);
+          if (texts.includes(after) && texts.length === 1) {
+            pm.expect(texts).to.not.include(before);
+          }
+        });
+      }
+order: 4100
