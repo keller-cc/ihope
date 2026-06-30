@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../services/auth_service.dart';
 import '../widgets/auth_form.dart';
+import 'forgot_password_screen.dart';
 import 'register_screen.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -80,6 +81,18 @@ class _LoginScreenState extends State<LoginScreen> {
             loading: _loading,
             label: '登录',
             onPressed: _submit,
+          ),
+          TextButton(
+            onPressed: _loading
+                ? null
+                : () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => ForgotPasswordScreen(auth: widget.auth),
+                      ),
+                    );
+                  },
+            child: const Text('忘记密码？'),
           ),
           TextButton(
             onPressed: _loading

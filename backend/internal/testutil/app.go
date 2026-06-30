@@ -59,6 +59,8 @@ func TestConfig() config.Config {
 		LoginRateLimit:  5,
 		LoginRateWindow: time.Minute,
 		ResetTokenTTL:   30 * time.Minute,
+		UploadDir:       "uploads",
+		MaxAvatarBytes:  2 * 1024 * 1024,
 	}
 }
 
@@ -83,7 +85,7 @@ func NewTestServer(t *testing.T) *server.Server {
 	return server.New(
 		cfg,
 		auth.NewHandler(authSvc),
-		user.NewHandler(userRepo),
+		user.NewHandler(userRepo, cfg),
 		userRepo,
 		jwtMgr,
 		conversation.NewHandler(convSvc),

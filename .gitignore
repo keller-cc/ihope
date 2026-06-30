@@ -54,6 +54,8 @@ Desktop.ini
 # Docker 数据卷（本地）
 deploy/data/
 deploy/uploads/
+backend/uploads/
+uploads/
 *.log
 
 # 测试与临时

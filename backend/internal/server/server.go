@@ -65,6 +65,9 @@ func (s *Server) Router() http.Handler {
 	authRequired := middleware.Auth(s.jwt, s.userRepo)
 	mux.Handle("POST /api/auth/change-password", authRequired(http.HandlerFunc(s.auth.ChangePassword)))
 	mux.Handle("GET /api/users/me", authRequired(http.HandlerFunc(s.users.Me)))
+	mux.Handle("PATCH /api/users/me", authRequired(http.HandlerFunc(s.users.UpdateMe)))
+	mux.Handle("POST /api/users/me/avatar", authRequired(http.HandlerFunc(s.users.UploadAvatar)))
+	mux.HandleFunc("GET /api/avatars/{filename}", s.users.ServeAvatar)
 	mux.Handle("GET /api/users", authRequired(http.HandlerFunc(s.users.List)))
 
 	if s.conversations != nil {

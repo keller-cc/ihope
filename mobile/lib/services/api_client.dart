@@ -61,6 +61,40 @@ class ApiClient {
     }
   }
 
+  Future<Map<String, dynamic>> patchJson(
+    String path, {
+    Map<String, dynamic>? body,
+  }) async {
+    try {
+      final res =
+          await _dio.patch<Map<String, dynamic>>(path, data: body ?? {});
+      return res.data ?? {};
+    } on DioException catch (e) {
+      throw _mapError(e);
+    }
+  }
+
+  Future<Map<String, dynamic>> postMultipart(
+    String path, {
+    required String field,
+    required String filename,
+    required List<int> bytes,
+  }) async {
+    try {
+      final form = FormData.fromMap({
+        field: MultipartFile.fromBytes(bytes, filename: filename),
+      });
+      final res = await _dio.post<Map<String, dynamic>>(
+        path,
+        data: form,
+        options: Options(contentType: 'multipart/form-data'),
+      );
+      return res.data ?? {};
+    } on DioException catch (e) {
+      throw _mapError(e);
+    }
+  }
+
   ApiException _mapError(DioException e) {
     final data = e.response?.data;
     if (data is Map<String, dynamic>) {

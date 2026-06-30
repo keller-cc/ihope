@@ -158,6 +158,40 @@ func (r *Repository) GetTokenVersion(ctx context.Context, userID string) (int, e
 	return version, err
 }
 
+func (r *Repository) UpdateUsername(ctx context.Context, userID, username string) (*User, error) {
+	row := r.pool.QueryRow(ctx, `
+		UPDATE users SET username = $2, updated_at = now()
+		WHERE id = $1
+		RETURNING id, email, username, avatar_url, identity_public_key, email_verified_at, created_at, updated_at`,
+		userID, username,
+	)
+	u, err := scanUser(row)
+	if err != nil {
+		if isUniqueViolation(err) && containsConstraint(err, "users_username_key") {
+			return nil, ErrUsernameTaken
+		}
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	return u, nil
+}
+
+func (r *Repository) UpdateAvatarURL(ctx context.Context, userID string, avatarURL string) (*User, error) {
+	row := r.pool.QueryRow(ctx, `
+		UPDATE users SET avatar_url = $2, updated_at = now()
+		WHERE id = $1
+		RETURNING id, email, username, avatar_url, identity_public_key, email_verified_at, created_at, updated_at`,
+		userID, avatarURL,
+	)
+	u, err := scanUser(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	return u, err
+}
+
 func (r *Repository) UpdatePassword(ctx context.Context, userID, passwordHash string) error {
 	tag, err := r.pool.Exec(ctx, `
 		UPDATE users SET password_hash = $2, updated_at = now() WHERE id = $1`,

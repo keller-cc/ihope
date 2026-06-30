@@ -4,6 +4,7 @@ import '../models/conversation.dart';
 import '../services/auth_service.dart';
 import 'chat_screen.dart';
 import 'new_chat_screen.dart';
+import 'profile_screen.dart';
 
 class ConversationsScreen extends StatefulWidget {
   const ConversationsScreen({
@@ -55,6 +56,22 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
     await _load();
   }
 
+  Future<void> _openProfile() async {
+    final result = await Navigator.of(context).push<Object?>(
+      MaterialPageRoute(
+        builder: (_) => ProfileScreen(
+          auth: widget.auth,
+          onProfileUpdated: () => setState(() {}),
+        ),
+      ),
+    );
+    if (result == 'logout' && mounted) {
+      await widget.onLogout();
+    } else if (mounted) {
+      setState(() {});
+    }
+  }
+
   Future<void> _openNewChat() async {
     final conv = await Navigator.of(context).push<ConversationItem>(
       MaterialPageRoute(
@@ -75,6 +92,11 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
       appBar: AppBar(
         title: Text('你好，${me.username}'),
         actions: [
+          IconButton(
+            tooltip: '个人资料',
+            onPressed: _openProfile,
+            icon: const Icon(Icons.person),
+          ),
           IconButton(
             tooltip: '退出',
             onPressed: widget.onLogout,

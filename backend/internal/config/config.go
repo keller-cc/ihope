@@ -29,6 +29,8 @@ type Config struct {
 	LoginRateLimit  int
 	LoginRateWindow time.Duration
 	ResetTokenTTL   time.Duration
+	UploadDir       string
+	MaxAvatarBytes  int64
 }
 
 // Load 读取 .env 与环境变量。
@@ -58,6 +60,8 @@ func Load() Config {
 		LoginRateLimit:  envInt("LOGIN_RATE_LIMIT", 5),
 		LoginRateWindow: envDurationSeconds("LOGIN_RATE_WINDOW_SEC", 60),
 		ResetTokenTTL:   envDurationMinutes("RESET_TOKEN_TTL_MIN", 30),
+		UploadDir:       env("UPLOAD_DIR", "uploads"),
+		MaxAvatarBytes:  int64(envInt("MAX_AVATAR_BYTES", 2*1024*1024)),
 	}
 }
 

@@ -50,7 +50,7 @@ func main() {
 	srv := server.New(
 		cfg,
 		auth.NewHandler(authSvc),
-		user.NewHandler(userRepo),
+		user.NewHandler(userRepo, cfg),
 		userRepo,
 		jwtMgr,
 		conversation.NewHandler(convSvc),
