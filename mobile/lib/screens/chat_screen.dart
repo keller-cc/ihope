@@ -1,16 +1,25 @@
 import 'dart:async';
+import 'dart:io';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:record/record.dart';
 
 import '../models/conversation.dart';
 import '../models/message.dart';
 import '../models/user.dart';
 import '../services/auth_service.dart';
 import '../services/ws_service.dart';
+import '../utils/media_payload.dart';
 import '../utils/message_time.dart';
 import '../widgets/chat_bubble.dart';
-import '../widgets/realtime_indicator.dart';
+import '../widgets/chat_input_bar.dart';
+import '../widgets/marquee_text.dart';
+import '../widgets/offline_banner.dart';
 import '../widgets/user_avatar.dart';
+import 'chat_settings_screen.dart';
 import 'group_manage_screen.dart';
 import 'user_detail_screen.dart';
 
@@ -35,7 +44,6 @@ class _ChatScreenState extends State<ChatScreen> {
   late ConversationItem _conversation;
   List<ChatMessage> _messages = [];
   bool _loading = true;
-  bool _pinned = false;
   String? _error;
   int _historyEpoch = 0;
   bool _tailPinned = true;
@@ -46,11 +54,19 @@ class _ChatScreenState extends State<ChatScreen> {
   StreamSubscription<ConversationRemovedFrame>? _removedSub;
   StreamSubscription<ConversationUpdatedFrame>? _updatedSub;
   StreamSubscription<ConversationAddedFrame>? _addedSub;
+  final _recorder = AudioRecorder();
+  bool _recording = false;
+  bool _voiceStartInProgress = false;
+  bool _voiceCancelOnStart = false;
+  bool _sending = false;
+  DateTime? _recordStartedAt;
+  Timer? _voiceLimitTimer;
 
   @override
   void initState() {
     super.initState();
     _conversation = widget.conversation;
+    widget.auth.setOpenConversation(_conversation.id);
     _msgSub = widget.auth.ws.onMessage.listen((msg) {
       unawaited(_onIncomingMessage(msg));
     });
@@ -65,7 +81,6 @@ class _ChatScreenState extends State<ChatScreen> {
       widget.auth.ws.joinConversation(_conversation.id);
     }
     _scroll.addListener(() => _tailPinned = _isNearBottom());
-    _loadPinState();
     _bootstrap();
     _dissolvedSub = widget.auth.ws.onGroupDissolved.listen(_onGroupDissolved);
     _epochSub = widget.auth.ws.onEpochUpdated.listen(_onEpochUpdated);
@@ -79,6 +94,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   void dispose() {
+    widget.auth.setOpenConversation(null);
     _msgSub?.cancel();
     _connSub?.cancel();
     _dissolvedSub?.cancel();
@@ -86,6 +102,14 @@ class _ChatScreenState extends State<ChatScreen> {
     _removedSub?.cancel();
     _updatedSub?.cancel();
     _addedSub?.cancel();
+    _voiceLimitTimer?.cancel();
+    if (_recording || _voiceStartInProgress) {
+      unawaited(_recorder.stop());
+      _recording = false;
+      _voiceStartInProgress = false;
+      _voiceCancelOnStart = true;
+    }
+    unawaited(_recorder.dispose());
     _input.dispose();
     _scroll.dispose();
     super.dispose();
@@ -149,7 +173,7 @@ class _ChatScreenState extends State<ChatScreen> {
       if (animated) {
         _scroll.animateTo(
           0,
-          duration: const Duration(milliseconds: 200),
+          duration: const Duration(milliseconds: 150),
           curve: Curves.easeOut,
         );
       } else {
@@ -175,6 +199,79 @@ class _ChatScreenState extends State<ChatScreen> {
       if (!mounted || _conversation.isArchived) return;
       setState(() => _conversation = fresh);
     } catch (_) {}
+  }
+
+  Future<void> _markRead() async {
+    if (_messages.isEmpty) return;
+    await widget.auth.markConversationRead(
+      _conversation.id,
+      upTo: _messages.last.createdAt,
+    );
+  }
+
+  Widget _buildMessageList({
+    required BuildContext context,
+    required User me,
+    required bool isGroup,
+    required bool isArchived,
+  }) {
+    if (_loading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (_error != null) {
+      return Center(child: Text(_error!));
+    }
+    if (_messages.isEmpty) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(32),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.chat_bubble_outline,
+                size: 48,
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+              const SizedBox(height: 12),
+              Text(
+                '暂无消息',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              const SizedBox(height: 6),
+              Text(
+                isArchived
+                    ? '此会话暂无历史消息'
+                    : '下方输入内容，发送第一条消息',
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return ListView.builder(
+      reverse: true,
+      controller: _scroll,
+      padding: const EdgeInsets.all(12),
+      itemCount: _messages.length,
+      itemBuilder: (context, index) {
+        final msgIndex = _messages.length - 1 - index;
+        final msg = _messages[msgIndex];
+        final prev = msgIndex > 0 ? _messages[msgIndex - 1] : null;
+        return _buildMessageItem(
+          context: context,
+          me: me,
+          msg: msg,
+          prev: prev,
+          isGroup: isGroup,
+        );
+      },
+    );
   }
 
   Future<void> _loadHistory() async {
@@ -224,7 +321,9 @@ class _ChatScreenState extends State<ChatScreen> {
       if (_isStale(epoch)) return;
 
       final tailChanged = _tailChanged(before, decrypted);
-      setState(() => _messages = decrypted);
+      setState(() {
+        _messages = decrypted;
+      });
       await widget.auth.cacheMessages(_conversation.id, decrypted);
       if ((_tailPinned || before.isEmpty) && tailChanged) {
         _scrollToBottom(animated: _tailPinned && before.isNotEmpty);
@@ -248,6 +347,7 @@ class _ChatScreenState extends State<ChatScreen> {
     } finally {
       if (!_isStale(epoch)) {
         setState(() => _loading = false);
+        unawaited(_markRead());
       }
     }
   }
@@ -343,27 +443,35 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  Future<void> _loadPinState() async {
-    final pinned =
-        await widget.auth.isConversationPinned(_conversation.id);
-    if (mounted) setState(() => _pinned = pinned);
-  }
-
   Future<void> _onIncomingMessage(ChatMessage msg) async {
     if (_conversation.isArchived) return;
     if (msg.conversationId != _conversation.id) return;
     if (!mounted) return;
+
     if (msg.type == 'system') {
       setState(
         () => _addMessage(msg.copyWith(plaintext: msg.ciphertext)),
       );
     } else {
+      setState(() => _addMessage(msg.copyWith(plaintext: '…')));
       final decrypted =
           await widget.auth.decryptMessage(_conversation, msg);
       if (!mounted) return;
-      setState(() => _addMessage(decrypted));
+      setState(() {
+        final i = _messages.indexWhere((m) => m.id == msg.id);
+        if (i >= 0) {
+          _messages = [
+            ..._messages.sublist(0, i),
+            decrypted,
+            ..._messages.sublist(i + 1),
+          ];
+        } else {
+          _addMessage(decrypted);
+        }
+      });
     }
-    if (_tailPinned) _scrollToBottom(animated: true);
+    if (_tailPinned) _scrollToBottom();
+    unawaited(_markRead());
   }
 
   String? _avatarUrlFor(String userId) {
@@ -406,15 +514,193 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  Future<void> _togglePin() async {
-    await widget.auth.setConversationPinned(
-      _conversation.id,
-      pinned: !_pinned,
+  Future<void> _openChatSettings() async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => ChatSettingsScreen(
+          auth: widget.auth,
+          conversation: _conversation,
+        ),
+      ),
     );
-    if (!mounted) return;
-    setState(() => _pinned = !_pinned);
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(_pinned ? '已置顶' : '已取消置顶')),
+  }
+
+  Future<void> _openConversationMenu() async {
+    if (_conversation.type == 'group') {
+      await _openGroupManage();
+    } else {
+      await _openChatSettings();
+    }
+  }
+
+  Future<void> _sendMedia({
+    required String type,
+    required MediaPayload media,
+    bool blockInput = true,
+  }) async {
+    final maxBytes = type == 'audio' ? kMaxAudioBytes : kMaxMediaBytes;
+    if (media.bytes.length > maxBytes) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            type == 'audio'
+                ? '语音过大，请控制在 ${kMaxVoiceDuration.inSeconds} 秒以内'
+                : '文件过大，请选择 8MB 以内的内容',
+          ),
+        ),
+      );
+      return;
+    }
+    if (blockInput) setState(() => _sending = true);
+    try {
+      final msg = await widget.auth.sendChatMessage(
+        _conversation,
+        media.encodePlaintext(),
+        type: type,
+      );
+      if (!mounted) return;
+      setState(() => _addMessage(msg));
+      _tailPinned = true;
+      _scrollToBottom(animated: true);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e.toString())),
+      );
+    } finally {
+      if (blockInput && mounted) setState(() => _sending = false);
+    }
+  }
+
+  Future<void> _pickImage() async {
+    final file = await ImagePicker().pickImage(
+      source: ImageSource.gallery,
+      maxWidth: 1920,
+      maxHeight: 1920,
+      imageQuality: 85,
+    );
+    if (file == null) return;
+    final bytes = await file.readAsBytes();
+    await _sendMedia(
+      type: 'image',
+      media: MediaPayload(
+        kind: 'image',
+        mime: 'image/jpeg',
+        name: file.name.isNotEmpty ? file.name : 'image.jpg',
+        bytes: bytes,
+      ),
+    );
+  }
+
+  Future<void> _pickFile() async {
+    final result = await FilePicker.platform.pickFiles(withData: true);
+    if (result == null || result.files.isEmpty) return;
+    final file = result.files.single;
+    final bytes = file.bytes;
+    if (bytes == null) return;
+    await _sendMedia(
+      type: 'file',
+      media: MediaPayload(
+        kind: 'file',
+        mime: file.extension != null ? 'application/${file.extension}' : 'application/octet-stream',
+        name: file.name,
+        bytes: bytes,
+      ),
+    );
+  }
+
+  Future<bool> _startVoiceRecord() async {
+    if (_recording || _voiceStartInProgress) return false;
+    _voiceStartInProgress = true;
+    try {
+      if (_voiceCancelOnStart) {
+        _voiceCancelOnStart = false;
+        return false;
+      }
+      if (!await _recorder.hasPermission()) {
+        if (!mounted) return false;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('需要麦克风权限才能发送语音')),
+        );
+        return false;
+      }
+      final dir = await getTemporaryDirectory();
+      final path =
+          '${dir.path}/voice_${DateTime.now().millisecondsSinceEpoch}.m4a';
+      await _recorder.start(
+        RecordConfig(encoder: AudioEncoder.aacLc),
+        path: path,
+      );
+      if (!mounted) return false;
+      if (_voiceCancelOnStart) {
+        _voiceCancelOnStart = false;
+        await _recorder.stop();
+        return false;
+      }
+      setState(() {
+        _recording = true;
+        _recordStartedAt = DateTime.now();
+      });
+      _voiceLimitTimer?.cancel();
+      _voiceLimitTimer = Timer(kMaxVoiceDuration, () {
+        if (_recording && mounted) {
+          unawaited(_finishVoiceRecord(cancel: false));
+        }
+      });
+      return true;
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('无法开始录音：$e')),
+        );
+      }
+      return false;
+    } finally {
+      _voiceStartInProgress = false;
+    }
+  }
+
+  Future<void> _finishVoiceRecord({required bool cancel}) async {
+    if (!_recording) {
+      if (_voiceStartInProgress) {
+        _voiceCancelOnStart = true;
+      }
+      return;
+    }
+    _voiceLimitTimer?.cancel();
+    _voiceLimitTimer = null;
+    final path = await _recorder.stop();
+    final started = _recordStartedAt;
+    if (mounted) {
+      setState(() {
+        _recording = false;
+        _recordStartedAt = null;
+      });
+    }
+    if (cancel || path == null) return;
+    final durationMs = started == null
+        ? null
+        : DateTime.now().difference(started).inMilliseconds;
+    if ((durationMs ?? 0) < 800) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('说话时间太短')),
+        );
+      }
+      return;
+    }
+    final bytes = await File(path).readAsBytes();
+    await _sendMedia(
+      type: 'audio',
+      blockInput: false,
+      media: MediaPayload(
+        kind: 'audio',
+        mime: 'audio/m4a',
+        name: 'voice.m4a',
+        bytes: bytes,
+        durationMs: durationMs,
+      ),
     );
   }
 
@@ -445,7 +731,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _send() async {
     final text = _input.text.trim();
-    if (text.isEmpty) return;
+    if (text.isEmpty || _sending) return;
     _input.clear();
     try {
       final msg = await widget.auth.sendChatMessage(
@@ -465,6 +751,27 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+  void _showEmojiPlaceholder() {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('表情功能即将上线')),
+    );
+  }
+
+  Widget _buildInputBar(BuildContext context, bool isArchived) {
+    if (isArchived) return const SizedBox.shrink();
+
+    return ChatInputBar(
+      controller: _input,
+      sending: _sending,
+      onSend: _send,
+      onVoiceHoldStart: _startVoiceRecord,
+      onVoiceHoldEnd: _finishVoiceRecord,
+      onImage: () => unawaited(_pickImage()),
+      onFile: () => unawaited(_pickFile()),
+      onEmoji: _showEmojiPlaceholder,
+    );
+  }
+
   Widget _buildMessageItem({
     required BuildContext context,
     required User me,
@@ -482,25 +789,27 @@ class _ChatScreenState extends State<ChatScreen> {
           )
         : null;
 
+    Widget content;
     if (msg.type == 'system') {
-      return Column(
-        key: ValueKey(msg.id),
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          if (timeDivider != null) timeDivider,
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 8),
-            child: Center(
-              child: Text(
-                msg.displayText,
-                textAlign: TextAlign.center,
-                style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
+      content = Center(
+        child: Text(
+          msg.displayText,
+          textAlign: TextAlign.center,
+          style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
               ),
-            ),
-          ),
-        ],
+        ),
+      );
+    } else {
+      content = ChatBubble(
+        msg: msg,
+        mine: msg.senderId == me.id,
+        isGroup: isGroup,
+        me: me,
+        senderTitle: _conversation.memberTitle(msg.senderId),
+        nameFor: _nameFor,
+        avatarUrlFor: _avatarUrlFor,
+        onPeerTap: _openUserDetail,
       );
     }
 
@@ -509,19 +818,16 @@ class _ChatScreenState extends State<ChatScreen> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         if (timeDivider != null) timeDivider,
-        Padding(
-          padding: const EdgeInsets.only(bottom: 4),
-          child: ChatBubble(
-            msg: msg,
-            mine: msg.senderId == me.id,
-            isGroup: isGroup,
-            me: me,
-            senderTitle: _conversation.memberTitle(msg.senderId),
-            nameFor: _nameFor,
-            avatarUrlFor: _avatarUrlFor,
-            onPeerTap: _openUserDetail,
+        if (msg.type == 'system')
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            child: content,
+          )
+        else
+          Padding(
+            padding: const EdgeInsets.only(bottom: 4),
+            child: content,
           ),
-        ),
       ],
     );
   }
@@ -572,9 +878,9 @@ class _ChatScreenState extends State<ChatScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        title,
-                        overflow: TextOverflow.ellipsis,
+                      MarqueeText(
+                        text: title,
+                        style: Theme.of(context).textTheme.titleMedium,
                       ),
                       if (isGroup && !isArchived)
                         Text(
@@ -597,32 +903,21 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
           ),
           actions: [
-            IconButton(
-              tooltip: _pinned ? '取消置顶' : '置顶会话',
-              icon: Icon(
-                _pinned ? Icons.push_pin : Icons.push_pin_outlined,
-                color: _pinned
-                    ? Theme.of(context).colorScheme.primary
-                    : null,
-              ),
-              onPressed: _togglePin,
-            ),
-            if (isGroup && !isArchived)
+            if (!isArchived)
               IconButton(
-                tooltip: '群管理',
-                icon: const Icon(Icons.settings),
-                onPressed: _openGroupManage,
+                tooltip: '更多',
+                icon: const Icon(Icons.menu),
+                onPressed: _openConversationMenu,
               ),
-            RealtimeIndicator(
-              connected: widget.auth.ws.isConnected,
-              onReconnect: widget.auth.ws.isConnected
-                  ? null
-                  : () => widget.auth.reconnectRealtime(),
-            ),
           ],
         ),
         body: Column(
           children: [
+            if (!widget.auth.ws.isConnected)
+              OfflineBanner(
+                message: '网络已断开，消息可能无法收发',
+                onRetry: () => unawaited(widget.auth.reconnectRealtime()),
+              ),
             if (isArchived)
               Container(
                 width: double.infinity,
@@ -644,98 +939,15 @@ class _ChatScreenState extends State<ChatScreen> {
                 ),
               ),
             Expanded(
-              child: _loading
-                  ? const Center(child: CircularProgressIndicator())
-                  : _error != null
-                      ? Center(child: Text(_error!))
-                      : _messages.isEmpty
-                          ? Center(
-                              child: Padding(
-                                padding: const EdgeInsets.all(32),
-                                child: Column(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Icon(
-                                      Icons.chat_bubble_outline,
-                                      size: 48,
-                                      color: Theme.of(context)
-                                          .colorScheme
-                                          .onSurfaceVariant,
-                                    ),
-                                    const SizedBox(height: 12),
-                                    Text(
-                                      '暂无消息',
-                                      style: Theme.of(context)
-                                          .textTheme
-                                          .titleMedium,
-                                    ),
-                                    const SizedBox(height: 6),
-                                    Text(
-                                      isArchived
-                                          ? '此会话暂无历史消息'
-                                          : '下方输入内容，发送第一条消息',
-                                      textAlign: TextAlign.center,
-                                      style: Theme.of(context)
-                                          .textTheme
-                                          .bodyMedium
-                                          ?.copyWith(
-                                            color: Theme.of(context)
-                                                .colorScheme
-                                                .onSurfaceVariant,
-                                          ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            )
-                          : ListView.builder(
-                              reverse: true,
-                              controller: _scroll,
-                              padding: const EdgeInsets.all(12),
-                              itemCount: _messages.length,
-                              itemBuilder: (context, index) {
-                                final msgIndex =
-                                    _messages.length - 1 - index;
-                                final msg = _messages[msgIndex];
-                                final prev = msgIndex > 0
-                                    ? _messages[msgIndex - 1]
-                                    : null;
-                                return _buildMessageItem(
-                                  context: context,
-                                  me: me,
-                                  msg: msg,
-                                  prev: prev,
-                                  isGroup: isGroup,
-                                );
-                              },
-                            ),
+              child: _buildMessageList(
+                context: context,
+                me: me,
+                isGroup: isGroup,
+                isArchived: isArchived,
+              ),
             ),
             if (!isArchived)
-              SafeArea(
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: TextField(
-                          controller: _input,
-                          decoration: const InputDecoration(
-                            hintText: '输入消息…',
-                            border: OutlineInputBorder(),
-                          ),
-                          textInputAction: TextInputAction.send,
-                          onSubmitted: (_) => _send(),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      IconButton.filled(
-                        onPressed: _send,
-                        icon: const Icon(Icons.send),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
+              _buildInputBar(context, isArchived),
           ],
         ),
       ),

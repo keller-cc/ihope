@@ -231,8 +231,97 @@ class AuthStorage {
     }
   }
 
+  Future<void> saveConversationListSnapshot(
+    String userId,
+    List<Map<String, dynamic>> conversations,
+  ) async {
+    await _storage.write(
+      key: _conversationListKey(userId),
+      value: jsonEncode(conversations),
+    );
+  }
+
+  Future<List<Map<String, dynamic>>> readConversationListSnapshot(
+    String userId,
+  ) async {
+    final raw = await _storage.read(key: _conversationListKey(userId));
+    if (raw == null || raw.isEmpty) return [];
+    try {
+      final list = jsonDecode(raw) as List<dynamic>;
+      return list.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  Future<DateTime?> readConversationReadAt(
+    String userId,
+    String conversationId,
+  ) async {
+    final raw = await _storage.read(
+      key: _readCursorKey(userId, conversationId),
+    );
+    if (raw == null || raw.isEmpty) return null;
+    return DateTime.tryParse(raw);
+  }
+
+  Future<void> writeConversationReadAt(
+    String userId,
+    String conversationId,
+    DateTime readAt,
+  ) async {
+    await _storage.write(
+      key: _readCursorKey(userId, conversationId),
+      value: readAt.toUtc().toIso8601String(),
+    );
+  }
+
+  Future<Set<String>> readHiddenConversations(String userId) async {
+    final raw = await _storage.read(key: _hiddenConversationsKey(userId));
+    if (raw == null || raw.isEmpty) return {};
+    try {
+      final list = jsonDecode(raw) as List<dynamic>;
+      return list.map((e) => e as String).toSet();
+    } catch (_) {
+      return {};
+    }
+  }
+
+  Future<void> addHiddenConversation(
+    String userId,
+    String conversationId,
+  ) async {
+    final hidden = await readHiddenConversations(userId);
+    if (hidden.contains(conversationId)) return;
+    hidden.add(conversationId);
+    await _storage.write(
+      key: _hiddenConversationsKey(userId),
+      value: jsonEncode(hidden.toList()),
+    );
+  }
+
+  Future<void> removeHiddenConversation(
+    String userId,
+    String conversationId,
+  ) async {
+    final hidden = await readHiddenConversations(userId);
+    if (!hidden.remove(conversationId)) return;
+    await _storage.write(
+      key: _hiddenConversationsKey(userId),
+      value: jsonEncode(hidden.toList()),
+    );
+  }
+
   String _archivedConversationsKey(String userId) =>
       'archived_conversations_$userId';
+
+  String _conversationListKey(String userId) => 'conversation_list_$userId';
+
+  String _hiddenConversationsKey(String userId) =>
+      'hidden_conversations_$userId';
+
+  String _readCursorKey(String userId, String conversationId) =>
+      'read_cursor_${userId}_$conversationId';
 
   String _messageCacheKey(String userId, String conversationId) =>
       'message_cache_${userId}_$conversationId';

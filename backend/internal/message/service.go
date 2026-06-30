@@ -101,7 +101,7 @@ func (s *Service) List(ctx context.Context, conversationID, userID string, befor
 
 func isAllowedType(t string) bool {
 	switch t {
-	case "text", "image", "file", "announcement", "system":
+	case "text", "image", "file", "audio", "announcement", "system":
 		return true
 	default:
 		return false

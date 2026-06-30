@@ -84,6 +84,8 @@ class WsService {
   String? _accessToken;
   bool _manualClose = false;
   int _reconnectAttempt = 0;
+  bool _opening = false;
+  Future<void>? _openFuture;
 
   /// 重连前获取最新 access token（含 refresh）。
   Future<String?> Function()? resolveToken;
@@ -127,6 +129,13 @@ class WsService {
   }
 
   /// 手动触发重连（如下拉刷新）。
+  /// 更新 token（如 refresh 后），不断开已有连接。
+  void updateAccessToken(String accessToken) {
+    if (accessToken.isNotEmpty) {
+      _accessToken = accessToken;
+    }
+  }
+
   Future<void> reconnect([String? accessToken]) async {
     if (accessToken != null && accessToken.isNotEmpty) {
       _accessToken = accessToken;
@@ -135,7 +144,7 @@ class WsService {
     _manualClose = false;
     _reconnectAttempt = 0;
     _cancelReconnect();
-    await _openChannel();
+    await _openChannel(swapExisting: _connected);
   }
 
   Future<void> disconnect() async {
@@ -182,14 +191,30 @@ class WsService {
     });
   }
 
-  Future<void> _openChannel() async {
+  Future<void> _openChannel({bool swapExisting = false}) async {
+    if (_manualClose) return;
+    if (_opening) {
+      await _openFuture;
+      return;
+    }
+    _opening = true;
+    _openFuture = _openChannelImpl(swapExisting: swapExisting);
+    try {
+      await _openFuture;
+    } finally {
+      _opening = false;
+      _openFuture = null;
+    }
+  }
+
+  Future<void> _openChannelImpl({bool swapExisting = false}) async {
     if (_manualClose) return;
 
     if (resolveToken != null) {
       final fresh = await resolveToken!();
       if (fresh == null || fresh.isEmpty) {
-        _manualClose = true;
-        _setConnected(false);
+        if (!swapExisting) _setConnected(false);
+        _scheduleReconnect();
         return;
       }
       _accessToken = fresh;
@@ -198,17 +223,54 @@ class WsService {
     final token = _accessToken;
     if (token == null || token.isEmpty) return;
 
-    await _closeChannel();
-    _setConnected(false);
+    final previousChannel = _channel;
+    final previousSub = _sub;
+    _channel = null;
+    _sub = null;
 
-    final uri = Uri.parse('${Env.wsBase}/ws?token=$token');
+    if (!swapExisting) {
+      await previousSub?.cancel();
+      try {
+        await previousChannel?.sink.close();
+      } catch (_) {}
+      _setConnected(false);
+    }
+
+    final base = Uri.parse(Env.wsBase);
+    final uri = Uri(
+      scheme: base.scheme,
+      host: base.host,
+      port: base.hasPort ? base.port : null,
+      path: '/ws',
+      queryParameters: {'token': token},
+    );
+
+    WebSocketChannel? nextChannel;
     try {
-      _channel = WebSocketChannel.connect(uri);
+      nextChannel = WebSocketChannel.connect(uri);
+      await nextChannel.ready.timeout(const Duration(seconds: 12));
     } catch (_) {
-      _handleDisconnect();
+      if (swapExisting && previousChannel != null) {
+        _channel = previousChannel;
+        _sub = previousSub;
+      } else {
+        await previousSub?.cancel();
+        try {
+          await previousChannel?.sink.close();
+        } catch (_) {}
+        _handleDisconnect();
+      }
       return;
     }
 
+    if (swapExisting) {
+      await previousSub?.cancel();
+      try {
+        await previousChannel?.sink.close();
+      } catch (_) {}
+    }
+
+    _channel = nextChannel;
     _sub = _channel!.stream.listen(
       (event) {
         if (event is! String) return;
@@ -230,7 +292,7 @@ class WsService {
     if (event == 'message') {
       final msg = parseIncomingMessage(frame);
       if (msg != null) {
-        _messageController.add(msg);
+        _safeAdd(_messageController, msg);
       }
       return;
     }
@@ -240,7 +302,7 @@ class WsService {
       final target = frame['target_user_id'] as String?;
       final cipher = frame['ciphertext'] as String?;
       if (convId != null && from != null && target != null && cipher != null) {
-        _keyRelayController.add(KeyRelayFrame(
+        _safeAdd(_keyRelayController, KeyRelayFrame(
           conversationId: convId,
           fromUserId: from,
           targetUserId: target,
@@ -261,7 +323,7 @@ class WsService {
             if (e is int) epochs.add(e);
           }
         }
-        _gmkRequestController.add(GmkRequestFrame(
+        _safeAdd(_gmkRequestController, GmkRequestFrame(
           conversationId: convId,
           requesterUserId: requester,
           epochs: epochs,
@@ -273,7 +335,7 @@ class WsService {
       final convId = frame['conversation_id'] as String?;
       final epoch = frame['epoch'];
       if (convId != null && epoch is int) {
-        _epochController.add(EpochUpdatedFrame(
+        _safeAdd(_epochController, EpochUpdatedFrame(
           conversationId: convId,
           epoch: epoch,
         ));
@@ -283,7 +345,7 @@ class WsService {
     if (event == 'group_dissolved') {
       final convId = frame['conversation_id'] as String?;
       if (convId != null) {
-        _groupDissolvedController.add(GroupDissolvedFrame(
+        _safeAdd(_groupDissolvedController, GroupDissolvedFrame(
           conversationId: convId,
           groupName: frame['group_name'] as String? ?? '',
           dissolvedBy: frame['dissolved_by'] as String? ?? '',
@@ -294,7 +356,8 @@ class WsService {
     if (event == 'conversation_added') {
       final conv = frame['conversation'];
       if (conv is Map<String, dynamic>) {
-        _conversationAddedController.add(
+        _safeAdd(
+          _conversationAddedController,
           ConversationAddedFrame(conversation: conv),
         );
       }
@@ -303,7 +366,8 @@ class WsService {
     if (event == 'conversation_removed') {
       final convId = frame['conversation_id'] as String?;
       if (convId != null) {
-        _conversationRemovedController.add(
+        _safeAdd(
+          _conversationRemovedController,
           ConversationRemovedFrame(conversationId: convId),
         );
       }
@@ -312,7 +376,8 @@ class WsService {
     if (event == 'conversation_updated') {
       final conv = frame['conversation'];
       if (conv is Map<String, dynamic>) {
-        _conversationUpdatedController.add(
+        _safeAdd(
+          _conversationUpdatedController,
           ConversationUpdatedFrame(conversation: conv),
         );
       }
@@ -359,8 +424,12 @@ class WsService {
   void _setConnected(bool value) {
     if (_connected == value) return;
     _connected = value;
-    if (!_connectionController.isClosed) {
-      _connectionController.add(value);
+    _safeAdd(_connectionController, value);
+  }
+
+  void _safeAdd<T>(StreamController<T> controller, T event) {
+    if (!controller.isClosed) {
+      controller.add(event);
     }
   }
 

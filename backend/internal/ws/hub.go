@@ -70,9 +70,19 @@ func (c *Conn) writePump() {
 }
 
 func (h *Hub) NotifyMessage(memberUserIDs []string, msg *message.Message) {
+	const wsCipherLimit = 24 * 1024
+	wireMsg := any(msg)
+	fetchRequired := false
+	if len(msg.Ciphertext) > wsCipherLimit {
+		light := *msg
+		light.Ciphertext = ""
+		wireMsg = &light
+		fetchRequired = true
+	}
 	payload, err := json.Marshal(map[string]any{
-		"event":   "message",
-		"message": msg,
+		"event":          "message",
+		"message":        wireMsg,
+		"fetch_required": fetchRequired,
 	})
 	if err != nil {
 		return

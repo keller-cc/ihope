@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/material.dart';
 
 import '../models/conversation.dart';
@@ -7,7 +8,12 @@ import '../models/message.dart';
 import '../services/auth_service.dart';
 import '../services/ws_service.dart';
 import '../utils/conversation_sort.dart';
-import '../widgets/realtime_indicator.dart';
+import '../utils/media_payload.dart';
+import '../utils/message_time.dart';
+import '../utils/text_search.dart';
+import '../widgets/home_connection_status.dart';
+import '../widgets/offline_banner.dart';
+import '../widgets/swipe_action_tile.dart';
 import '../widgets/user_avatar.dart';
 import 'chat_screen.dart';
 import 'new_chat_screen.dart';
@@ -32,22 +38,44 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
   List<ConversationItem> _items = [];
   List<String> _pinnedIds = [];
   final Map<String, String> _previews = {};
+  final Map<String, List<ChatMessage>> _messageCache = {};
+  final Map<String, int> _unreadCounts = {};
+  Set<String> _hiddenIds = {};
+  final _search = TextEditingController();
   bool _loading = true;
+  bool _refreshing = false;
   String? _error;
+  String? _offlineNotice;
   StreamSubscription<ChatMessage>? _msgSub;
   StreamSubscription<bool>? _connSub;
   StreamSubscription<GroupDissolvedFrame>? _dissolvedSub;
   StreamSubscription<ConversationAddedFrame>? _addedSub;
   StreamSubscription<ConversationRemovedFrame>? _removedSub;
   StreamSubscription<ConversationUpdatedFrame>? _updatedSub;
+  StreamSubscription<List<ConnectivityResult>>? _connectivitySub;
+
+  void _syncOfflineNotice() {
+    _offlineNotice = widget.auth.ws.isConnected
+        ? null
+        : '推送未连接，新消息需手动刷新';
+  }
 
   @override
   void initState() {
     super.initState();
+    _search.addListener(() => setState(() {}));
     _load();
+    unawaited(widget.auth.ensureRealtimeConnected());
     _msgSub = widget.auth.ws.onMessage.listen(_onIncomingMessage);
-    _connSub = widget.auth.ws.onConnectionChanged.listen((_) {
-      if (mounted) setState(() {});
+    _connSub = widget.auth.ws.onConnectionChanged.listen((connected) {
+      if (!mounted) return;
+      setState(_syncOfflineNotice);
+    });
+    _connectivitySub = Connectivity().onConnectivityChanged.listen((results) {
+      if (!mounted) return;
+      if (results.any((r) => r != ConnectivityResult.none)) {
+        unawaited(widget.auth.ensureRealtimeConnected());
+      }
     });
     _dissolvedSub = widget.auth.ws.onGroupDissolved.listen(_onGroupDissolved);
     _addedSub = widget.auth.ws.onConversationAdded.listen(_onConversationAdded);
@@ -74,12 +102,15 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
 
   @override
   void dispose() {
+    _search.dispose();
     _msgSub?.cancel();
     _connSub?.cancel();
     _dissolvedSub?.cancel();
     _addedSub?.cancel();
     _removedSub?.cancel();
     _updatedSub?.cancel();
+    _connectivitySub?.cancel();
+    _connSub?.cancel();
     super.dispose();
   }
 
@@ -202,6 +233,19 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
     });
   }
 
+  String _quickPreview(
+    ConversationItem item,
+    String meId,
+    ChatMessage msg,
+  ) {
+    if (msg.type == 'system') return msg.ciphertext;
+    final body = msg.type == 'text'
+        ? '…'
+        : MediaPayload.previewLabel('', msg.type);
+    if (item.type != 'group') return body;
+    return '${_senderName(item, meId, msg.senderId)}: $body';
+  }
+
   void _onIncomingMessage(ChatMessage msg) {
     if (!mounted) return;
 
@@ -219,7 +263,23 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
       return;
     }
 
+    final quick = _quickPreview(conv, me.id, msg);
+    final updated = conv.copyWith(lastMessage: msg);
+    setState(() {
+      _previews[conv.id] = quick;
+      _appendCachedMessage(conv.id, msg, quick);
+      _items[index] = updated;
+      _items = sortConversationsByPin(_items, _pinnedIds);
+    });
+
     unawaited(_applyIncomingPreview(conv, msg));
+    unawaited(() async {
+      await widget.auth.noteIncomingMessage(msg);
+      if (!mounted) return;
+      final count = await widget.auth.unreadCountFor(msg.conversationId);
+      if (!mounted) return;
+      setState(() => _unreadCounts[msg.conversationId] = count);
+    }());
   }
 
   Future<void> _applyIncomingPreview(
@@ -231,8 +291,12 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
     final updated = conv.copyWith(lastMessage: msg);
     setState(() {
       _previews[conv.id] = preview;
-      final others = _items.where((c) => c.id != conv.id).toList();
-      _items = sortConversationsByPin([updated, ...others], _pinnedIds);
+      _appendCachedMessage(conv.id, msg, preview);
+      final idx = _items.indexWhere((c) => c.id == conv.id);
+      if (idx >= 0) {
+        _items[idx] = updated;
+      }
+      _items = sortConversationsByPin(_items, _pinnedIds);
     });
   }
 
@@ -244,15 +308,226 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
     });
   }
 
-  Future<void> _load() async {
+  Future<void> _loadMessageCaches(List<ConversationItem> items) async {
+    final cache = await widget.auth.loadLocalMessagesForConversations(items);
+    if (!mounted) return;
     setState(() {
-      _loading = true;
+      _messageCache
+        ..clear()
+        ..addAll(cache);
+    });
+  }
+
+  Future<void> _reloadMessageCache(String conversationId) async {
+    final msgs = await widget.auth.loadCachedMessages(conversationId);
+    if (!mounted) return;
+    setState(() {
+      if (msgs.isEmpty) {
+        _messageCache.remove(conversationId);
+      } else {
+        _messageCache[conversationId] = msgs;
+      }
+    });
+  }
+
+  void _appendCachedMessage(
+    String conversationId,
+    ChatMessage msg,
+    String preview,
+  ) {
+    final existing = _messageCache[conversationId] ?? [];
+    if (existing.any((m) => m.id == msg.id)) return;
+    final stored = msg.type == 'system'
+        ? msg.copyWith(plaintext: msg.ciphertext)
+        : msg.copyWith(plaintext: preview);
+    _messageCache[conversationId] = [...existing, stored];
+  }
+
+  Future<void> _refreshUnreadCounts() async {
+    final counts = await widget.auth.unreadCountsFor(
+      _items.map((c) => c.id),
+    );
+    if (!mounted) return;
+    setState(() => _unreadCounts..clear..addAll(counts));
+  }
+
+  List<ConversationItem> _visibleItems(String meId) {
+    final q = _search.text.trim();
+    final base = q.isEmpty
+        ? widget.auth.filterVisibleConversations(_items, _hiddenIds)
+        : _items;
+    if (q.isEmpty) return base;
+    return base.where((item) => _conversationMatchesQuery(item, meId, q)).toList();
+  }
+
+  Future<void> _pinConversation(ConversationItem item, bool pin) async {
+    await widget.auth.setConversationPinned(item.id, pinned: pin);
+    _pinnedIds = await widget.auth.pinnedConversationIds();
+    if (!mounted) return;
+    setState(() => _items = sortConversationsByPin(_items, _pinnedIds));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(pin ? '已置顶' : '已取消置顶')),
+    );
+  }
+
+  Future<void> _markConversationRead(ConversationItem item) async {
+    await widget.auth.markConversationRead(item.id);
+    if (!mounted) return;
+    setState(() => _unreadCounts[item.id] = 0);
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('已标记为已读')),
+    );
+  }
+
+  Future<void> _showConversationActionMenu(
+    BuildContext context,
+    ConversationItem item,
+    bool isPinned, {
+    Offset? anchor,
+  }) async {
+    final overlay =
+        Overlay.of(context).context.findRenderObject() as RenderBox;
+    final Offset menuAnchor;
+    if (anchor != null) {
+      menuAnchor = anchor;
+    } else {
+      final box = context.findRenderObject() as RenderBox?;
+      if (box == null || !box.hasSize) return;
+      menuAnchor = box.localToGlobal(box.size.center(Offset.zero));
+    }
+    final position = RelativeRect.fromRect(
+      Rect.fromCenter(center: menuAnchor, width: 0, height: 0),
+      Offset.zero & overlay.size,
+    );
+
+    final action = await showMenu<String>(
+      context: context,
+      position: position,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      items: [
+        PopupMenuItem(
+          value: 'pin',
+          child: _menuRow(
+            isPinned ? Icons.push_pin_outlined : Icons.push_pin,
+            isPinned ? '取消置顶' : '置顶',
+          ),
+        ),
+        PopupMenuItem(
+          value: 'read',
+          child: _menuRow(Icons.done_all, '标记已读'),
+        ),
+        PopupMenuItem(
+          value: 'delete',
+          child: _menuRow(Icons.delete_outline, '删除', color: Colors.red),
+        ),
+      ],
+    );
+    if (!mounted || action == null) return;
+    switch (action) {
+      case 'pin':
+        await _pinConversation(item, !isPinned);
+      case 'read':
+        await _markConversationRead(item);
+      case 'delete':
+        await _deleteConversation(item);
+    }
+  }
+
+  Widget _menuRow(IconData icon, String label, {Color? color}) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 20, color: color),
+        const SizedBox(width: 12),
+        Text(label, style: color != null ? TextStyle(color: color) : null),
+      ],
+    );
+  }
+
+  Future<void> _deleteConversation(ConversationItem item) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('删除会话'),
+        content: Text('从列表移除「${item.displayTitle(widget.auth.currentUser!.id)}」？本地消息仍会保留。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('删除'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    await widget.auth.hideConversationFromList(item.id);
+    if (!mounted) return;
+    setState(() {
+      _hiddenIds.add(item.id);
+      _unreadCounts.remove(item.id);
+    });
+  }
+
+  bool _conversationMatchesQuery(ConversationItem item, String meId, String q) {
+    if (textMatchesQuery(item.displayTitle(meId), q)) return true;
+    for (final m in item.members) {
+      if (textMatchesQuery(m.username, q)) return true;
+    }
+    if (item.isArchived && textMatchesQuery('已退出', q)) return true;
+    if (_hiddenIds.contains(item.id) && textMatchesQuery('已从列表移除', q)) {
+      return true;
+    }
+
+    final cached = _messageCache[item.id];
+    if (cached != null) {
+      for (final msg in cached) {
+        if (textMatchesQuery(msg.displayText, q)) return true;
+      }
+      return false;
+    }
+
+    final preview = _previews[item.id] ?? item.lastMessage?.displayText ?? '';
+    return textMatchesQuery(preview, q);
+  }
+
+  Future<void> _load() async {
+    final hadItems = _items.isNotEmpty;
+    if (!hadItems) {
+      final cached = await widget.auth.listCachedConversations();
+      if (cached.isNotEmpty && mounted) {
+        final pinned = await widget.auth.pinnedConversationIds();
+        _hiddenIds = await widget.auth.hiddenConversationIds();
+        setState(() {
+          _pinnedIds = pinned;
+          _items = sortConversationsByPin(cached, pinned);
+          _loading = false;
+        });
+        unawaited(_loadMessageCaches(cached));
+        unawaited(_refreshUnreadCounts());
+      }
+    }
+
+    final isInitial = _items.isEmpty;
+    setState(() {
+      if (isInitial) {
+        _loading = true;
+      } else {
+        _refreshing = true;
+      }
       _error = null;
     });
     try {
-      await widget.auth.reconnectRealtime();
+      _hiddenIds = await widget.auth.hiddenConversationIds();
+      final wsConnect = widget.auth.ensureRealtimeConnected();
+
       final pinned = await widget.auth.pinnedConversationIds();
-      final items = await widget.auth.listAllConversations();
+      final items = await widget.auth
+          .listAllConversations()
+          .timeout(const Duration(seconds: 12));
+      await wsConnect;
       final sorted = sortConversationsByPin(items, pinned);
       final previews = <String, String>{};
       for (final item in items) {
@@ -268,16 +543,50 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
         _items = sorted;
         _previews
           ..clear()
-        ..addAll(previews);
+          ..addAll(previews);
+        _syncOfflineNotice();
       });
+      unawaited(_loadMessageCaches(sorted));
+      unawaited(_refreshUnreadCounts());
     } catch (e) {
-      setState(() => _error = e.toString());
+      if (!mounted) return;
+      if (_items.isEmpty) {
+        final cached = await widget.auth.listCachedConversations();
+        final pinned = await widget.auth.pinnedConversationIds();
+        if (cached.isNotEmpty) {
+          setState(() {
+            _pinnedIds = pinned;
+            _items = sortConversationsByPin(cached, pinned);
+            _error = null;
+            _offlineNotice = '网络不可用，已显示本地缓存';
+          });
+          unawaited(_loadMessageCaches(cached));
+          unawaited(_refreshUnreadCounts());
+        } else {
+          setState(() => _error = e.toString());
+        }
+      } else {
+        setState(() {
+          _error = null;
+          _offlineNotice = '刷新失败，仍显示上次数据';
+        });
+      }
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _refreshing = false;
+        });
+      }
     }
   }
 
   Future<void> _openChat(ConversationItem conv) async {
+    if (_hiddenIds.contains(conv.id)) {
+      await widget.auth.restoreConversationToList(conv.id);
+      if (!mounted) return;
+      setState(() => _hiddenIds.remove(conv.id));
+    }
     var item = conv;
     if (conv.isArchived) {
       final reactivated = await widget.auth.tryReactivateConversation(conv);
@@ -305,6 +614,7 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
           _items[index] = _items[index].copyWith(isArchived: true);
         }
       });
+      await _reloadMessageCache(conv.id);
       return;
     }
     if (result == 'dissolved') {
@@ -316,6 +626,8 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
       });
       return;
     }
+    await _reloadMessageCache(conv.id);
+    await _refreshUnreadCounts();
     await _refreshPinOrder();
   }
 
@@ -335,7 +647,102 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
     }
   }
 
-  Future<void> _openNewChat() async {
+  Future<void> _confirmLogout() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('退出登录'),
+        content: const Text('确定要退出当前账号吗？'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('退出'),
+          ),
+        ],
+      ),
+    );
+    if (ok == true && mounted) {
+      await widget.onLogout();
+    }
+  }
+
+  Future<void> _showAccountMenu() async {
+    final me = widget.auth.currentUser!;
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+              child: Row(
+                children: [
+                  UserAvatar(
+                    name: me.username,
+                    imageUrl: me.avatarUrl,
+                    radius: 28,
+                  ),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          me.username,
+                          style: Theme.of(ctx).textTheme.titleMedium,
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          me.email,
+                          style: Theme.of(ctx).textTheme.bodySmall?.copyWith(
+                                color: Theme.of(ctx)
+                                    .colorScheme
+                                    .onSurfaceVariant,
+                              ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const Divider(height: 1),
+            ListTile(
+              leading: const Icon(Icons.person_outline),
+              title: const Text('个人资料'),
+              onTap: () => Navigator.pop(ctx, 'profile'),
+            ),
+            ListTile(
+              leading: Icon(
+                Icons.logout,
+                color: Theme.of(ctx).colorScheme.error,
+              ),
+              title: Text(
+                '退出登录',
+                style: TextStyle(color: Theme.of(ctx).colorScheme.error),
+              ),
+              onTap: () => Navigator.pop(ctx, 'logout'),
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+    if (!mounted || action == null) return;
+    switch (action) {
+      case 'profile':
+        await _openProfile();
+      case 'logout':
+        await _confirmLogout();
+    }
+  }
+
+  Future<void> _openCreateMenu() async {
     final choice = await showModalBottomSheet<String>(
       context: context,
       builder: (ctx) => SafeArea(
@@ -376,121 +783,339 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
     }
   }
 
+  List<ConversationItem> _filteredItems(String meId) => _visibleItems(meId);
+
+  String _senderName(ConversationItem item, String meId, String senderId) {
+    if (senderId == meId) return '我';
+    for (final m in item.members) {
+      if (m.userId == senderId) return m.username;
+    }
+    return '?';
+  }
+
+  String _formatLastMessagePreview(
+    ConversationItem item,
+    String meId,
+    String preview,
+    ChatMessage? last,
+  ) {
+    var text = preview;
+    if (last != null && last.type != 'system') {
+      text = MediaPayload.previewLabel(preview, last.type);
+    }
+    if (item.type != 'group' || last == null || last.type == 'system') {
+      return text;
+    }
+    return '${_senderName(item, meId, last.senderId)}: $text';
+  }
+
+  String _subtitleFor(
+    ConversationItem item,
+    String meId,
+    String preview,
+  ) {
+    final hidden = _hiddenIds.contains(item.id);
+    if (item.isArchived) {
+      final body = '已退出 · $preview';
+      return hidden ? '已从列表移除 · $body' : body;
+    }
+    if (hidden) return '已从列表移除 · $preview';
+    return preview;
+  }
+
+  Widget _buildSearchField() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+      child: TextField(
+        controller: _search,
+        decoration: InputDecoration(
+          hintText: '搜索会话、成员或本机聊天记录',
+          prefixIcon: const Icon(Icons.search),
+          suffixIcon: _search.text.isEmpty
+              ? null
+              : IconButton(
+                  tooltip: '清除',
+                  onPressed: _search.clear,
+                  icon: const Icon(Icons.clear),
+                ),
+          border: const OutlineInputBorder(),
+          isDense: true,
+        ),
+        textInputAction: TextInputAction.search,
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final me = widget.auth.currentUser!;
+    final visible = _filteredItems(me.id);
     return Scaffold(
       appBar: AppBar(
-        title: Row(
-          children: [
-            UserAvatar(
-              name: me.username,
-              imageUrl: me.avatarUrl,
-              radius: 18,
+        title: InkWell(
+          onTap: () => unawaited(_showAccountMenu()),
+          borderRadius: BorderRadius.circular(8),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            child: Row(
+              children: [
+                UserAvatar(
+                  name: me.username,
+                  imageUrl: me.avatarUrl,
+                  radius: 18,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        '你好，${me.username}',
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      HomeConnectionStatus(
+                        wsConnected: widget.auth.ws.isConnected,
+                        onReconnect: widget.auth.ws.isConnected
+                            ? null
+                            : () => unawaited(
+                                widget.auth.ensureRealtimeConnected(),
+                              ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
             ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Text(
-                '你好，${me.username}',
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-          ],
+          ),
         ),
         actions: [
-          RealtimeIndicator(
-            connected: widget.auth.ws.isConnected,
-            onReconnect: widget.auth.ws.isConnected
-                ? null
-                : () => widget.auth.reconnectRealtime(),
-          ),
           IconButton(
-            tooltip: '个人资料',
-            onPressed: _openProfile,
-            icon: const Icon(Icons.person),
-          ),
-          IconButton(
-            tooltip: '退出',
-            onPressed: widget.onLogout,
-            icon: const Icon(Icons.logout),
+            tooltip: '发起聊天',
+            onPressed: () => unawaited(_openCreateMenu()),
+            icon: const Icon(Icons.add),
           ),
         ],
       ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _openNewChat,
-        child: const Icon(Icons.chat),
-      ),
-      body: RefreshIndicator(
-        onRefresh: _load,
-        child: _loading
-            ? const Center(child: CircularProgressIndicator())
-            : _error != null
-                ? ListView(
-                    children: [
-                      Padding(
-                        padding: const EdgeInsets.all(24),
-                        child: Text(_error!),
-                      ),
-                    ],
-                  )
-                : _items.isEmpty
-                    ? ListView(
-                        children: const [
-                          SizedBox(height: 120),
-                          Center(child: Text('暂无会话，点右下角发起聊天')),
-                        ],
-                      )
-                    : ListView.separated(
-                        itemCount: _items.length,
-                        separatorBuilder: (_, __) => const Divider(height: 1),
-                        itemBuilder: (context, index) {
-                          final item = _items[index];
-                          final preview = item.lastMessage == null
-                              ? '暂无消息'
-                              : (_previews[item.id] ??
-                                  item.lastMessage!.displayText);
-                          final peerName = item.displayTitle(me.id);
-                          final isPinned = _pinnedIds.contains(item.id);
-                          return ListTile(
-                            leading: UserAvatar(
-                              name: peerName,
-                              imageUrl: item.displayAvatarUrl(me.id),
+      body: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (_offlineNotice != null)
+            OfflineBanner(
+              message: _offlineNotice!,
+              onRetry: () => unawaited(
+                widget.auth.ensureRealtimeConnected().then((_) {
+                  if (mounted) setState(_syncOfflineNotice);
+                }),
+              ),
+            ),
+          if (_refreshing)
+            const LinearProgressIndicator(minHeight: 2),
+          _buildSearchField(),
+          Expanded(
+            child: RefreshIndicator(
+              onRefresh: _load,
+              child: _loading && _items.isEmpty
+                  ? const Center(child: CircularProgressIndicator())
+                  : _error != null && _items.isEmpty
+                      ? ListView(
+                          children: [
+                            Padding(
+                              padding: const EdgeInsets.all(24),
+                              child: Text(_error!),
                             ),
-                            title: Row(
+                          ],
+                        )
+                      : visible.isEmpty
+                          ? ListView(
                               children: [
-                                if (isPinned)
-                                  Padding(
-                                    padding: const EdgeInsets.only(right: 4),
-                                    child: Icon(
-                                      Icons.push_pin,
-                                      size: 16,
-                                      color: Theme.of(context)
-                                          .colorScheme
-                                          .primary,
-                                    ),
-                                  ),
-                                Expanded(
+                                SizedBox(height: _items.isEmpty ? 120 : 80),
+                                Center(
                                   child: Text(
-                                    peerName,
-                                    overflow: TextOverflow.ellipsis,
+                                    _items.isEmpty
+                                        ? '暂无会话，点右上角 + 发起聊天'
+                                        : '无匹配的会话',
                                   ),
                                 ),
                               ],
+                            )
+                          : ListView.separated(
+                              itemCount: visible.length,
+                              separatorBuilder: (_, __) =>
+                                  const Divider(height: 1),
+                              itemBuilder: (context, index) {
+                                final item = visible[index];
+                                final last = item.lastMessage;
+                                final rawPreview = last == null
+                                    ? '暂无消息'
+                                    : (_previews[item.id] ?? last.displayText);
+                                final preview = _formatLastMessagePreview(
+                                  item,
+                                  me.id,
+                                  rawPreview,
+                                  last,
+                                );
+                                final peerName = item.displayTitle(me.id);
+                                final isPinned = _pinnedIds.contains(item.id);
+                                final unread = _unreadCounts[item.id] ?? 0;
+                                final subtitle = _subtitleFor(item, me.id, preview);
+                                return SwipeActionTile(
+                                  key: ValueKey(item.id),
+                                  onLongPress: (details) => unawaited(
+                                    _showConversationActionMenu(
+                                      context,
+                                      item,
+                                      isPinned,
+                                      anchor: details.globalPosition,
+                                    ),
+                                  ),
+                                  actions: [
+                                    SwipeAction(
+                                      icon: isPinned
+                                          ? Icons.push_pin_outlined
+                                          : Icons.push_pin,
+                                      label: isPinned ? '取消' : '置顶',
+                                      color: Colors.orange,
+                                      onTap: () => unawaited(
+                                        _pinConversation(item, !isPinned),
+                                      ),
+                                    ),
+                                    SwipeAction(
+                                      icon: Icons.done_all,
+                                      label: '已读',
+                                      color: Colors.blue,
+                                      onTap: () => unawaited(
+                                        _markConversationRead(item),
+                                      ),
+                                    ),
+                                    SwipeAction(
+                                      icon: Icons.delete_outline,
+                                      label: '删除',
+                                      color: Colors.red,
+                                      onTap: () => unawaited(
+                                        _deleteConversation(item),
+                                      ),
+                                    ),
+                                  ],
+                                  child: _ConversationRow(
+                                    lastMessageId: last?.id,
+                                    child: ListTile(
+                                      leading: UserAvatar(
+                                        name: peerName,
+                                        imageUrl: item.displayAvatarUrl(me.id),
+                                        badgeCount: unread,
+                                      ),
+                                      title: Row(
+                                        children: [
+                                          if (isPinned)
+                                            Padding(
+                                              padding:
+                                                  const EdgeInsets.only(right: 4),
+                                              child: Icon(
+                                                Icons.push_pin,
+                                                size: 16,
+                                                color: Theme.of(context)
+                                                    .colorScheme
+                                                    .primary,
+                                              ),
+                                            ),
+                                          Expanded(
+                                            child: Text(
+                                              peerName,
+                                              overflow: TextOverflow.ellipsis,
+                                            ),
+                                          ),
+                                          if (last != null) ...[
+                                            const SizedBox(width: 8),
+                                            Text(
+                                              MessageTimeFormat.formatList(
+                                                last.createdAt,
+                                              ),
+                                              style: Theme.of(context)
+                                                  .textTheme
+                                                  .labelSmall
+                                                  ?.copyWith(
+                                                    color: Theme.of(context)
+                                                        .colorScheme
+                                                        .onSurfaceVariant,
+                                                    fontSize: 12,
+                                                  ),
+                                            ),
+                                          ],
+                                        ],
+                                      ),
+                                      subtitle: Align(
+                                        alignment: Alignment.centerLeft,
+                                        child: Text(
+                                          subtitle,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ),
+                                      onTap: () => _openChat(item),
+                                    ),
+                                  ),
+                                );
+                              },
                             ),
-                            subtitle: Text(
-                              item.isArchived
-                                  ? '已退出 · $preview'
-                                  : item.type == 'group'
-                                      ? '${item.members.length} 人 · $preview'
-                                      : preview,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            onTap: () => _openChat(item),
-                          );
-                        },
-                      ),
+            ),
+          ),
+        ],
       ),
+    );
+  }
+}
+
+/// 新消息到达时短暂高亮会话行，避免列表更新过于生硬。
+class _ConversationRow extends StatefulWidget {
+  const _ConversationRow({
+    required this.lastMessageId,
+    required this.child,
+  });
+
+  final String? lastMessageId;
+  final Widget child;
+
+  @override
+  State<_ConversationRow> createState() => _ConversationRowState();
+}
+
+class _ConversationRowState extends State<_ConversationRow> {
+  String? _seenMessageId;
+  bool _highlight = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _seenMessageId = widget.lastMessageId;
+  }
+
+  @override
+  void didUpdateWidget(_ConversationRow oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final incoming = widget.lastMessageId;
+    if (incoming == null ||
+        incoming.isEmpty ||
+        incoming == _seenMessageId) {
+      return;
+    }
+    _seenMessageId = incoming;
+    setState(() => _highlight = true);
+    Future<void>.delayed(const Duration(milliseconds: 500), () {
+      if (mounted) setState(() => _highlight = false);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 350),
+      curve: Curves.easeOut,
+      color: _highlight
+          ? scheme.primaryContainer.withValues(alpha: 0.35)
+          : Colors.transparent,
+      child: widget.child,
     );
   }
 }

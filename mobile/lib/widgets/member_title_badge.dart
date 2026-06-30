@@ -23,6 +23,7 @@ class MemberTitleBadge extends StatelessWidget {
               color: scheme.primary,
               fontSize: 10,
               fontWeight: FontWeight.w600,
+              height: 1.0,
             ),
       ),
     );

@@ -66,5 +66,9 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>保存聊天图片到相册</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>保存聊天图片到相册</string>
 </dict>
 </plist>

@@ -169,14 +169,18 @@ class ConversationService {
 
   Future<ChatMessage> sendMessage(
     String conversationId,
-    String text,
-  ) async {
+    String ciphertext, {
+    String type = 'text',
+  }) async {
+    final isMedia = type == 'audio' || type == 'image' || type == 'file';
     final data = await api.postJson(
       '/api/conversations/$conversationId/messages',
       body: {
-        'type': 'text',
-        'ciphertext': text,
+        'type': type,
+        'ciphertext': ciphertext,
       },
+      receiveTimeout: isMedia ? const Duration(seconds: 120) : null,
+      sendTimeout: isMedia ? const Duration(seconds: 120) : null,
     );
     return ChatMessage.fromJson(data['message'] as Map<String, dynamic>);
   }

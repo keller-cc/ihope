@@ -78,10 +78,18 @@ class ApiClient {
   Future<Map<String, dynamic>> postJson(
     String path, {
     Map<String, dynamic>? body,
+    Duration? receiveTimeout,
+    Duration? sendTimeout,
   }) async {
     try {
-      final res =
-          await _dio.post<Map<String, dynamic>>(path, data: body ?? {});
+      final res = await _dio.post<Map<String, dynamic>>(
+        path,
+        data: body ?? {},
+        options: Options(
+          receiveTimeout: receiveTimeout,
+          sendTimeout: sendTimeout,
+        ),
+      );
       return res.data ?? {};
     } on DioException catch (e) {
       throw _mapError(e);

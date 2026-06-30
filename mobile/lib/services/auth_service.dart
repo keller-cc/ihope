@@ -33,6 +33,8 @@ class AuthService {
   StreamSubscription<GmkRequestFrame>? _gmkRequestSub;
   StreamSubscription<EpochUpdatedFrame>? _epochSub;
   final Map<String, ConversationItem> _conversationCache = {};
+  String? _openConversationId;
+  final Map<String, int> _unreadCounts = {};
   final Map<String, List<Completer<void>>> _gmkWaiters = {};
   final Map<String, DateTime> _removalUiClaimed = {};
 
@@ -264,7 +266,11 @@ class AuthService {
       await _saveTokenResponse(data);
       final access = await storage.accessToken();
       if (access != null && access.isNotEmpty) {
-        await ws.reconnect(access);
+        if (ws.isConnected) {
+          ws.updateAccessToken(access);
+        } else {
+          await ws.reconnect(access);
+        }
       }
       return true;
     } on ApiException catch (e) {
@@ -341,10 +347,103 @@ class AuthService {
     await storage.writePinnedConversations(user.id, ids);
   }
 
+  void setOpenConversation(String? conversationId) {
+    _openConversationId = conversationId;
+  }
+
+  Future<void> markConversationRead(
+    String conversationId, {
+    DateTime? upTo,
+  }) async {
+    final me = currentUser;
+    if (me == null) return;
+    final at = upTo ?? DateTime.now();
+    await storage.writeConversationReadAt(me.id, conversationId, at);
+    _unreadCounts[conversationId] = 0;
+  }
+
+  Future<int> unreadCountFor(String conversationId) async {
+    if (_unreadCounts.containsKey(conversationId)) {
+      return _unreadCounts[conversationId]!;
+    }
+    final me = currentUser;
+    if (me == null) return 0;
+    final readAt = await storage.readConversationReadAt(me.id, conversationId);
+    final messages = await loadCachedMessages(conversationId);
+    final count = _countUnread(messages, me.id, readAt);
+    _unreadCounts[conversationId] = count;
+    return count;
+  }
+
+  Future<Map<String, int>> unreadCountsFor(
+    Iterable<String> conversationIds,
+  ) async {
+    final out = <String, int>{};
+    for (final id in conversationIds) {
+      out[id] = await unreadCountFor(id);
+    }
+    return out;
+  }
+
+  int _countUnread(
+    List<ChatMessage> messages,
+    String meId,
+    DateTime? readAt,
+  ) {
+    var count = 0;
+    for (final m in messages) {
+      if (m.senderId == meId) continue;
+      if (readAt == null || m.createdAt.isAfter(readAt)) {
+        count++;
+      }
+    }
+    return count;
+  }
+
+  Future<void> noteIncomingMessage(ChatMessage msg) async {
+    if (_openConversationId == msg.conversationId) {
+      await markConversationRead(msg.conversationId, upTo: msg.createdAt);
+      return;
+    }
+    final me = currentUser;
+    if (me == null || msg.senderId == me.id) return;
+    _unreadCounts[msg.conversationId] =
+        (_unreadCounts[msg.conversationId] ?? 0) + 1;
+  }
+
+  Future<void> hideConversationFromList(String conversationId) async {
+    final me = currentUser;
+    if (me == null) return;
+    await setConversationPinned(conversationId, pinned: false);
+    await storage.addHiddenConversation(me.id, conversationId);
+    _unreadCounts.remove(conversationId);
+  }
+
+  Future<void> restoreConversationToList(String conversationId) async {
+    final me = currentUser;
+    if (me == null) return;
+    await storage.removeHiddenConversation(me.id, conversationId);
+  }
+
+  Future<Set<String>> hiddenConversationIds() async {
+    final me = currentUser;
+    if (me == null) return {};
+    return storage.readHiddenConversations(me.id);
+  }
+
+  List<ConversationItem> filterVisibleConversations(
+    List<ConversationItem> items,
+    Set<String> hiddenIds,
+  ) {
+    if (hiddenIds.isEmpty) return items;
+    return items.where((c) => !hiddenIds.contains(c.id)).toList();
+  }
+
   Future<ChatMessage> sendChatMessage(
     ConversationItem conversation,
-    String plaintext,
-  ) async {
+    String plaintext, {
+    String type = 'text',
+  }) async {
     if (conversation.isArchived) {
       throw StateError('已退出群聊，无法发送消息');
     }
@@ -360,7 +459,11 @@ class AuthService {
     if (!chatCrypto.isEncryptedPayload(payload)) {
       throw E2eeException('消息未能加密，已取消发送');
     }
-    final msg = await conversations.sendMessage(fresh.id, payload);
+    final msg = await conversations.sendMessage(
+      fresh.id,
+      payload,
+      type: type,
+    );
     return msg.copyWith(plaintext: plaintext);
   }
 
@@ -514,7 +617,35 @@ class AuthService {
         _cacheConversation(item);
       }
     }
+    await persistConversationList(merged);
     return merged;
+  }
+
+  Future<void> persistConversationList(List<ConversationItem> items) async {
+    final me = currentUser;
+    if (me == null) return;
+    for (final c in items) {
+      _cacheConversation(c);
+    }
+    await storage.saveConversationListSnapshot(
+      me.id,
+      items.map((c) => c.toJson()).toList(),
+    );
+  }
+
+  /// 离线或刷新失败时读取上次成功的会话列表快照。
+  Future<List<ConversationItem>> listCachedConversations() async {
+    final me = currentUser;
+    if (me == null) return [];
+    if (_conversationCache.isNotEmpty) {
+      return _conversationCache.values.toList();
+    }
+    final raw = await storage.readConversationListSnapshot(me.id);
+    final items = raw.map((e) => ConversationItem.fromJson(e)).toList();
+    for (final c in items) {
+      _cacheConversation(c);
+    }
+    return items;
   }
 
   Future<void> cacheMessages(
@@ -536,6 +667,72 @@ class AuthService {
     final raw = await storage.readMessageCache(me.id, conversationId);
     return raw.map((e) => ChatMessage.fromJson(e)).toList()
       ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+  }
+
+  /// 批量读取本地消息缓存，供首页跨 epoch 搜索历史。
+  Future<Map<String, List<ChatMessage>>> loadCachedMessagesForConversations(
+    Iterable<String> conversationIds,
+  ) async {
+    final entries = await Future.wait(
+      conversationIds.map(
+        (id) async => MapEntry(id, await loadCachedMessages(id)),
+      ),
+    );
+    return {
+      for (final e in entries)
+        if (e.value.isNotEmpty) e.key: e.value,
+    };
+  }
+
+  /// 读取本机持久化消息并尽力解密，供搜索使用（不拉取消息列表 API）。
+  Future<List<ChatMessage>> loadLocalMessagesForSearch(
+    ConversationItem conversation,
+  ) async {
+    final messages = await loadCachedMessages(conversation.id);
+    if (messages.isEmpty) return messages;
+    final conv = _conversationCache[conversation.id] ?? conversation;
+    if (conv.type == 'group') {
+      try {
+        await ensureGroupKeysForMessages(conv, messages);
+      } catch (_) {}
+    }
+    return decryptMessagesLocal(conv, messages);
+  }
+
+  Future<Map<String, List<ChatMessage>>> loadLocalMessagesForConversations(
+    Iterable<ConversationItem> conversations,
+  ) async {
+    final out = <String, List<ChatMessage>>{};
+    for (final conv in conversations) {
+      final msgs = await loadLocalMessagesForSearch(conv);
+      if (msgs.isNotEmpty) out[conv.id] = msgs;
+    }
+    return out;
+  }
+
+  /// 仅使用本机会话与密钥解密，不刷新服务端会话元数据。
+  Future<List<ChatMessage>> decryptMessagesLocal(
+    ConversationItem conversation,
+    List<ChatMessage> messages,
+  ) async {
+    final conv = _conversationCache[conversation.id] ?? conversation;
+    final out = <ChatMessage>[];
+    for (final msg in messages) {
+      if (msg.type == 'system') {
+        out.add(msg.copyWith(plaintext: msg.ciphertext));
+        continue;
+      }
+      if (msg.plaintext != null && msg.plaintext!.isNotEmpty) {
+        out.add(msg);
+        continue;
+      }
+      try {
+        out.add(await chatCrypto.decryptMessage(conv, msg));
+      } catch (_) {
+        out.add(msg);
+      }
+    }
+    return out;
   }
 
   /// 群聊解散后归档本地记录（仍可在本地查看历史）。
@@ -883,11 +1080,13 @@ class AuthService {
     ConversationItem conversation,
     ChatMessage message,
   ) async {
-    if (message.type == 'system') {
-      return message.copyWith(plaintext: message.ciphertext);
+    final hydrated =
+        await hydrateIncomingMessage(conversation.id, message);
+    if (hydrated.type == 'system') {
+      return hydrated.copyWith(plaintext: hydrated.ciphertext);
     }
     final conv = await _refreshConversation(conversation);
-    return chatCrypto.decryptMessage(conv, message);
+    return chatCrypto.decryptMessage(conv, hydrated);
   }
 
   Future<List<ChatMessage>> decryptMessages(
@@ -918,24 +1117,57 @@ class AuthService {
     ConversationItem conversation,
     ChatMessage message,
   ) async {
-    if (message.type == 'system') {
-      return message.ciphertext;
+    final hydrated =
+        await hydrateIncomingMessage(conversation.id, message);
+    if (hydrated.type == 'system') {
+      return hydrated.ciphertext;
     }
     final conv = await _refreshConversation(conversation);
     if (conv.type == 'group') {
-      await ensureGroupKeys(conv, epochs: [message.epoch]);
+      await ensureGroupKeys(conv, epochs: [hydrated.epoch]);
     }
     return chatCrypto.decryptIncoming(
       conv,
-      message.ciphertext,
-      messageEpoch: message.epoch,
+      hydrated.ciphertext,
+      messageEpoch: hydrated.epoch,
     );
+  }
+
+  /// WS 推送大消息时 ciphertext 可能被省略，需从 API 补全。
+  Future<ChatMessage> hydrateIncomingMessage(
+    String conversationId,
+    ChatMessage message,
+  ) async {
+    if (message.ciphertext.isNotEmpty) return message;
+    try {
+      final msgs =
+          await conversations.listMessages(conversationId, limit: 30);
+      for (final m in msgs) {
+        if (m.id == message.id) return m;
+      }
+    } catch (_) {}
+    return message;
   }
 
   Future<void> reconnectRealtime() async {
     final token = await ensureValidAccessToken();
     if (token == null || token.isEmpty) return;
     await ws.reconnect(token);
+  }
+
+  /// 登录/进首页时确保 WS 已连上；失败则指数退避重试。
+  Future<void> ensureRealtimeConnected({int maxAttempts = 4}) async {
+    if (ws.isConnected) return;
+    for (var attempt = 0; attempt < maxAttempts; attempt++) {
+      await reconnectRealtime();
+      for (var i = 0; i < 6; i++) {
+        if (ws.isConnected) return;
+        await Future<void>.delayed(const Duration(milliseconds: 250));
+      }
+      if (attempt + 1 < maxAttempts) {
+        await Future<void>.delayed(Duration(seconds: 1 << attempt));
+      }
+    }
   }
 
   Future<void> _connectRealtime() async {
