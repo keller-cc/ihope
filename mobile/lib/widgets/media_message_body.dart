@@ -7,24 +7,30 @@ import 'package:flutter/material.dart';
 import 'package:open_file/open_file.dart';
 
 import '../models/message.dart';
+import '../utils/media_local_cache.dart';
 import '../utils/media_download_index.dart';
 import '../utils/media_payload.dart';
 import '../utils/media_save.dart';
 import 'image_viewer_screen.dart';
+import 'voice_message_bubble.dart';
 
 enum _FileSaveState { idle, saving, saved }
+
+enum _MediaLoadState { loading, ready, failed }
 
 class MediaMessageBody extends StatefulWidget {
   const MediaMessageBody({
     super.key,
     required this.msg,
-    required this.media,
     required this.mine,
+    this.initialMedia,
+    this.onMediaRetry,
   });
 
   final ChatMessage msg;
-  final MediaPayload media;
   final bool mine;
+  final MediaPayload? initialMedia;
+  final Future<void> Function(String messageId)? onMediaRetry;
 
   @override
   State<MediaMessageBody> createState() => _MediaMessageBodyState();
@@ -33,20 +39,77 @@ class MediaMessageBody extends StatefulWidget {
 class _MediaMessageBodyState extends State<MediaMessageBody> {
   final _player = AudioPlayer();
   bool _playing = false;
+  bool _paused = false;
+  int _positionMs = 0;
   _FileSaveState _fileState = _FileSaveState.idle;
   double _saveProgress = 0;
   String? _savedPath;
   String? _savedLabel;
   StreamSubscription<void>? _completeSub;
+  StreamSubscription<Duration>? _positionSub;
+  MediaPayload? _media;
+  _MediaLoadState _loadState = _MediaLoadState.loading;
 
   @override
   void initState() {
     super.initState();
+    if (widget.initialMedia != null) {
+      _media = widget.initialMedia;
+      _loadState = _MediaLoadState.ready;
+    }
+    unawaited(_loadMedia());
     unawaited(_restoreSavedState());
   }
 
+  @override
+  void didUpdateWidget(MediaMessageBody oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.msg.id != widget.msg.id ||
+        oldWidget.msg.plaintext != widget.msg.plaintext) {
+      _media = widget.initialMedia;
+      _loadState =
+          _media != null ? _MediaLoadState.ready : _MediaLoadState.loading;
+      unawaited(_loadMedia());
+    }
+  }
+
+  Future<void> _retryLoadMedia() async {
+    if (_loadState == _MediaLoadState.failed &&
+        widget.onMediaRetry != null) {
+      await widget.onMediaRetry!(widget.msg.id);
+      if (!mounted) return;
+    }
+    await _loadMedia();
+  }
+
+  Future<void> _loadMedia() async {
+    if (!mounted) return;
+    if (_media == null) {
+      setState(() => _loadState = _MediaLoadState.loading);
+    }
+    final resolved = await MediaLocalCache.resolve(
+      widget.msg.id,
+      widget.msg.plaintext,
+    );
+    if (!mounted) return;
+    if (resolved != null && resolved.bytes.isNotEmpty) {
+      setState(() {
+        _media = resolved;
+        _loadState = _MediaLoadState.ready;
+      });
+    } else {
+      setState(() => _loadState = _MediaLoadState.failed);
+    }
+  }
+
+  int _durationSecondsFallback() {
+    final fromMedia = _media?.durationMs ??
+        MediaLocalCache.durationMsFromPlaintext(widget.msg.plaintext);
+    return math.max(1, ((fromMedia ?? 0) / 1000).round());
+  }
+
   Future<void> _restoreSavedState() async {
-    if (widget.media.kind != 'file') return;
+    if (_media?.kind != 'file') return;
     final record = await MediaDownloadIndex.lookup(widget.msg.id);
     if (!mounted || record == null) return;
     setState(() {
@@ -58,25 +121,89 @@ class _MediaMessageBodyState extends State<MediaMessageBody> {
 
   @override
   void dispose() {
+    VoicePlaybackHub.release(widget.msg.id);
     _completeSub?.cancel();
+    _positionSub?.cancel();
     unawaited(_player.dispose());
     super.dispose();
   }
 
-  Uint8List get _bytes => Uint8List.fromList(widget.media.bytes);
+  Uint8List get _bytes => Uint8List.fromList(_media?.bytes ?? const []);
 
-  Future<void> _toggleAudio() async {
-    if (_playing) {
-      await _player.stop();
-      if (mounted) setState(() => _playing = false);
-      return;
+  int get _totalSeconds => math.max(
+        1,
+        ((_media?.durationMs ?? 0) / 1000).round(),
+      );
+
+  Future<void> _stopPlayback({bool notifyHub = true}) async {
+    await _player.stop();
+    _completeSub?.cancel();
+    _completeSub = null;
+    _positionSub?.cancel();
+    _positionSub = null;
+    if (notifyHub) VoicePlaybackHub.release(widget.msg.id);
+    if (mounted) {
+      setState(() {
+        _playing = false;
+        _paused = false;
+        _positionMs = 0;
+      });
     }
-    await _player.play(BytesSource(_bytes));
+  }
+
+  void _attachPlayerListeners() {
     _completeSub?.cancel();
     _completeSub = _player.onPlayerComplete.listen((_) {
-      if (mounted) setState(() => _playing = false);
+      unawaited(_stopPlayback());
     });
-    if (mounted) setState(() => _playing = true);
+    _positionSub?.cancel();
+    _positionSub = _player.onPositionChanged.listen((pos) {
+      if (!mounted) return;
+      setState(() => _positionMs = pos.inMilliseconds);
+    });
+  }
+
+  Future<void> _toggleAudio() async {
+    if (_media == null || _loadState != _MediaLoadState.ready) {
+      await _loadMedia();
+      return;
+    }
+    if (_bytes.isEmpty) return;
+    if (_playing) {
+      await _player.pause();
+      if (mounted) {
+        setState(() {
+          _playing = false;
+          _paused = true;
+        });
+      }
+      return;
+    }
+    if (_paused) {
+      VoicePlaybackHub.claim(widget.msg.id, () {
+        unawaited(_stopPlayback());
+      });
+      await _player.resume();
+      if (mounted) {
+        setState(() {
+          _playing = true;
+          _paused = false;
+        });
+      }
+      return;
+    }
+    VoicePlaybackHub.claim(widget.msg.id, () {
+      unawaited(_stopPlayback());
+    });
+    await _player.play(BytesSource(_bytes));
+    _attachPlayerListeners();
+    if (mounted) {
+      setState(() {
+        _playing = true;
+        _paused = false;
+        _positionMs = 0;
+      });
+    }
   }
 
   Future<void> _openImage() async {
@@ -84,7 +211,7 @@ class _MediaMessageBodyState extends State<MediaMessageBody> {
       MaterialPageRoute(
         builder: (_) => ImageViewerScreen(
           bytes: _bytes,
-          name: widget.media.name,
+          name: _media?.name ?? 'image.jpg',
           messageId: widget.msg.id,
         ),
       ),
@@ -109,6 +236,8 @@ class _MediaMessageBodyState extends State<MediaMessageBody> {
   }
 
   Future<void> _saveFile() async {
+    final media = _media;
+    if (media == null) return;
     setState(() {
       _fileState = _FileSaveState.saving;
       _saveProgress = 0;
@@ -116,8 +245,8 @@ class _MediaMessageBodyState extends State<MediaMessageBody> {
     try {
       final result = await MediaDownloadIndex.saveForMessage(
         messageId: widget.msg.id,
-        bytes: widget.media.bytes,
-        name: widget.media.name,
+        bytes: media.bytes,
+        name: media.name,
         onProgress: (p) {
           if (mounted) setState(() => _saveProgress = p);
         },
@@ -153,7 +282,7 @@ class _MediaMessageBodyState extends State<MediaMessageBody> {
   }
 
   String _fileSubtitle() {
-    final size = _formatSize(widget.media.bytes.length);
+    final size = _formatSize(_media?.bytes.length ?? 0);
     switch (_fileState) {
       case _FileSaveState.idle:
         return '$size · 点击下载到本地';
@@ -168,7 +297,54 @@ class _MediaMessageBodyState extends State<MediaMessageBody> {
 
   @override
   Widget build(BuildContext context) {
-    final media = widget.media;
+    final media = _media;
+    if (_loadState == _MediaLoadState.loading && media == null) {
+      return const SizedBox(
+        width: 96,
+        height: 40,
+        child: Center(
+          child: SizedBox(
+            width: 18,
+            height: 18,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+        ),
+      );
+    }
+    if (media == null || _loadState == _MediaLoadState.failed) {
+      final kind = MediaLocalCache.localKind(widget.msg.plaintext) ??
+          widget.msg.type;
+      if (kind == 'audio') {
+        return Opacity(
+          opacity: 0.75,
+          child: VoiceMessageBubble(
+            messageId: widget.msg.id,
+            mine: widget.mine,
+            totalSeconds: _durationSecondsFallback(),
+            playing: false,
+            positionMs: 0,
+            onTap: () => unawaited(_retryLoadMedia()),
+          ),
+        );
+      }
+      return InkWell(
+        onTap: () => unawaited(_retryLoadMedia()),
+        borderRadius: BorderRadius.circular(6),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
+          child: Text(
+            MediaPayload.previewFromPlaintext(
+              widget.msg.plaintext,
+              widget.msg.type,
+            ),
+            style: TextStyle(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+              fontSize: 14,
+            ),
+          ),
+        ),
+      );
+    }
     switch (media.kind) {
       case 'image':
         return GestureDetector(
@@ -189,14 +365,13 @@ class _MediaMessageBodyState extends State<MediaMessageBody> {
           ),
         );
       case 'audio':
-        return _VoiceBubble(
+        return VoiceMessageBubble(
+          messageId: widget.msg.id,
           mine: widget.mine,
-          seconds: math.max(
-            1,
-            ((media.durationMs ?? 0) / 1000).round(),
-          ),
+          totalSeconds: _totalSeconds,
           playing: _playing,
-          onTap: _toggleAudio,
+          positionMs: _positionMs,
+          onTap: () => unawaited(_toggleAudio()),
         );
       case 'file':
       default:
@@ -255,143 +430,3 @@ class _MediaMessageBodyState extends State<MediaMessageBody> {
   }
 }
 
-/// 微信风格语音条：宽度随秒数变化，显示 N″。
-class _VoiceBubble extends StatelessWidget {
-  const _VoiceBubble({
-    required this.mine,
-    required this.seconds,
-    required this.playing,
-    required this.onTap,
-  });
-
-  final bool mine;
-  final int seconds;
-  final bool playing;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    const minW = 72.0;
-    const maxW = 200.0;
-    final width = minW + (maxW - minW) * (seconds.clamp(1, 60) / 60.0);
-
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(8),
-        child: SizedBox(
-          width: width,
-          height: 36,
-          child: Row(
-            mainAxisAlignment:
-                mine ? MainAxisAlignment.end : MainAxisAlignment.start,
-            children: [
-              if (!mine) ...[
-                _VoiceWaveIcon(playing: playing, mine: mine),
-                const SizedBox(width: 8),
-              ],
-              Text(
-                '$seconds″',
-                style: const TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-              if (mine) ...[
-                const SizedBox(width: 8),
-                _VoiceWaveIcon(playing: playing, mine: mine),
-              ],
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// 微信风格 WiFi 形声波图标。
-class _VoiceWaveIcon extends StatelessWidget {
-  const _VoiceWaveIcon({required this.playing, required this.mine});
-
-  final bool playing;
-  final bool mine;
-
-  @override
-  Widget build(BuildContext context) {
-    return CustomPaint(
-      size: const Size(18, 18),
-      painter: _VoiceWavePainter(
-        playing: playing,
-        flip: mine,
-        color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.75),
-      ),
-    );
-  }
-}
-
-class _VoiceWavePainter extends CustomPainter {
-  _VoiceWavePainter({
-    required this.playing,
-    required this.flip,
-    required this.color,
-  });
-
-  final bool playing;
-  final bool flip;
-  final Color color;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = color
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.8
-      ..strokeCap = StrokeCap.round;
-
-    canvas.save();
-    if (flip) {
-      canvas.translate(size.width, 0);
-      canvas.scale(-1, 1);
-    }
-
-    final ox = 2.0;
-    final oy = size.height / 2;
-
-    canvas.drawLine(Offset(ox, oy - 3), Offset(ox, oy + 3), paint);
-
-    if (playing) {
-      canvas.drawArc(
-        Rect.fromCircle(center: Offset(ox, oy), radius: 5),
-        -math.pi / 3,
-        math.pi * 2 / 3,
-        false,
-        paint,
-      );
-      canvas.drawArc(
-        Rect.fromCircle(center: Offset(ox, oy), radius: 9),
-        -math.pi / 3,
-        math.pi * 2 / 3,
-        false,
-        paint,
-      );
-    } else {
-      canvas.drawArc(
-        Rect.fromCircle(center: Offset(ox, oy), radius: 6),
-        -math.pi / 3,
-        math.pi * 2 / 3,
-        false,
-        paint,
-      );
-    }
-
-    canvas.restore();
-  }
-
-  @override
-  bool shouldRepaint(covariant _VoiceWavePainter oldDelegate) {
-    return oldDelegate.playing != playing ||
-        oldDelegate.flip != flip ||
-        oldDelegate.color != color;
-  }
-}

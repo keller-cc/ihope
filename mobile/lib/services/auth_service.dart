@@ -8,6 +8,8 @@ import '../crypto/identity.dart';
 import '../models/conversation.dart';
 import '../models/message.dart';
 import '../models/user.dart';
+import '../utils/media_local_cache.dart';
+import '../utils/media_payload.dart';
 import 'api_client.dart';
 import 'auth_storage.dart';
 import 'conversation_service.dart';
@@ -654,11 +656,42 @@ class AuthService {
   ) async {
     final me = currentUser;
     if (me == null || messages.isEmpty) return;
+    final stored = <ChatMessage>[];
+    for (final m in messages) {
+      stored.add(await _compactMessageForCache(m));
+    }
     await storage.saveMessageCache(
       me.id,
       conversationId,
-      messages.map((m) => m.toJson()).toList(),
+      stored.map((m) => m.toJson()).toList(),
     );
+  }
+
+  Future<ChatMessage> _compactMessageForCache(ChatMessage msg) async {
+    final pt = msg.plaintext;
+    if (pt == null || pt.isEmpty) return msg;
+    if (ChatMessage.isDecryptPlaceholder(pt)) return msg.forCacheWithoutPlaintext;
+    if (!_isMediaPlaintext(msg.type, pt)) return msg;
+    final compact = await MediaLocalCache.persistPlaintext(msg.id, pt);
+    if (compact == null) return msg;
+    if (!await MediaLocalCache.hasPayloadFile(msg.id)) return msg;
+    return msg.copyWith(plaintext: compact);
+  }
+
+  /// 本地缓存是否已含可展示内容（媒体须已落盘或仍带 inline 数据）。
+  Future<bool> cachedMessagesFullyAvailable(List<ChatMessage> messages) async {
+    if (messages.isEmpty) return false;
+    for (final m in messages) {
+      if (m.type == 'system') continue;
+      final pt = m.plaintext;
+      if (pt == null || pt.isEmpty) return false;
+      if (ChatMessage.isDecryptPlaceholder(pt)) return false;
+      if (_isMediaPlaintext(m.type, pt) &&
+          !await MediaLocalCache.isPlaintextAvailable(m.id, pt)) {
+        return false;
+      }
+    }
+    return true;
   }
 
   Future<List<ChatMessage>> loadCachedMessages(String conversationId) async {
@@ -710,24 +743,78 @@ class AuthService {
     return out;
   }
 
+  /// 媒体 plaintext 已损坏（local 引用但文件缺失等）时需重新解密。
+  Future<bool> messagePlaintextNeedsRepair(ChatMessage msg) async {
+    if (msg.type == 'system') return false;
+    final pt = msg.plaintext;
+    if (pt == null || pt.isEmpty) return true;
+    if (ChatMessage.isDecryptPlaceholder(pt)) return true;
+    if (!_isMediaPlaintext(msg.type, pt)) return false;
+    return !await MediaLocalCache.isPlaintextAvailable(msg.id, pt);
+  }
+
+  bool _isMediaPlaintext(String type, String? pt) =>
+      type == 'image' ||
+      type == 'audio' ||
+      type == 'file' ||
+      MediaLocalCache.isLocalRef(pt) ||
+      MediaPayload.tryParse(pt) != null;
+
+  Future<ChatMessage> _decryptOneLocal(
+    ConversationItem conversation,
+    ChatMessage msg,
+  ) async {
+    final conv = _conversationCache[conversation.id] ?? conversation;
+    var base = msg;
+    if (base.ciphertext.isEmpty) {
+      base = await hydrateIncomingMessage(conversation.id, msg);
+    }
+    final dec = await chatCrypto.decryptMessage(conv, base);
+    final pt = dec.plaintext;
+    if (pt != null && pt.isNotEmpty) {
+      await MediaLocalCache.resolve(dec.id, pt);
+    }
+    return dec;
+  }
+
+  /// 单条消息媒体修复（缓存 local 引用失效时重新解密并落盘）。
+  Future<ChatMessage?> repairMessageMedia(
+    ConversationItem conversation,
+    ChatMessage message,
+  ) async {
+    if (message.type == 'system') return message;
+    if (!await messagePlaintextNeedsRepair(message)) return message;
+    if (conversation.type == 'group') {
+      try {
+        await ensureGroupKeysForMessages(conversation, [message]);
+      } catch (_) {}
+    }
+    try {
+      return await _decryptOneLocal(conversation, message);
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// 仅使用本机会话与密钥解密，不刷新服务端会话元数据。
   Future<List<ChatMessage>> decryptMessagesLocal(
     ConversationItem conversation,
     List<ChatMessage> messages,
   ) async {
-    final conv = _conversationCache[conversation.id] ?? conversation;
     final out = <ChatMessage>[];
     for (final msg in messages) {
       if (msg.type == 'system') {
         out.add(msg.copyWith(plaintext: msg.ciphertext));
         continue;
       }
-      if (msg.plaintext != null && msg.plaintext!.isNotEmpty) {
+      if (msg.plaintext != null &&
+          msg.plaintext!.isNotEmpty &&
+          !await messagePlaintextNeedsRepair(msg)) {
         out.add(msg);
         continue;
       }
       try {
-        out.add(await chatCrypto.decryptMessage(conv, msg));
+        out.add(await _decryptOneLocal(conversation, msg));
       } catch (_) {
         out.add(msg);
       }
@@ -1093,20 +1180,7 @@ class AuthService {
     ConversationItem conversation,
     List<ChatMessage> messages,
   ) async {
-    final conv = await _refreshConversation(conversation);
-    final out = <ChatMessage>[];
-    for (final msg in messages) {
-      if (msg.type == 'system') {
-        out.add(msg.copyWith(plaintext: msg.ciphertext));
-        continue;
-      }
-      if (msg.plaintext != null && msg.plaintext!.isNotEmpty) {
-        out.add(msg);
-        continue;
-      }
-      out.add(await chatCrypto.decryptMessage(conv, msg));
-    }
-    return out;
+    return decryptMessagesLocal(conversation, messages);
   }
 
   Future<ConversationItem> refreshConversation(ConversationItem conversation) {
@@ -1133,12 +1207,16 @@ class AuthService {
     );
   }
 
-  /// WS 推送大消息时 ciphertext 可能被省略，需从 API 补全。
+  /// WS 推送大消息时 ciphertext 可能被省略；优先读本机缓存，再请求 API。
   Future<ChatMessage> hydrateIncomingMessage(
     String conversationId,
     ChatMessage message,
   ) async {
     if (message.ciphertext.isNotEmpty) return message;
+    final cached = await loadCachedMessages(conversationId);
+    for (final m in cached) {
+      if (m.id == message.id) return m;
+    }
     try {
       final msgs =
           await conversations.listMessages(conversationId, limit: 30);

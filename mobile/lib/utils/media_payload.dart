@@ -31,6 +31,7 @@ class MediaPayload {
     if (plaintext == null || plaintext.isEmpty) return null;
     try {
       final map = jsonDecode(plaintext) as Map<String, dynamic>;
+      if (map['local'] == true) return null;
       if (map['media'] is! String || map['b64'] is! String) return null;
       return MediaPayload(
         kind: map['media'] as String,
@@ -42,6 +43,29 @@ class MediaPayload {
     } catch (_) {
       return null;
     }
+  }
+
+  static String previewFromPlaintext(String? plaintext, String type) {
+    if (plaintext == null || plaintext.isEmpty) {
+      return previewLabel(null, type);
+    }
+    try {
+      final map = jsonDecode(plaintext) as Map<String, dynamic>;
+      if (map['local'] == true && map['media'] is String) {
+        switch (map['media'] as String) {
+          case 'image':
+            return '[图片]';
+          case 'audio':
+            final sec = ((map['duration_ms'] as int? ?? 0) / 1000).round();
+            return sec > 0 ? '[语音 ${sec}秒]' : '[语音]';
+          case 'file':
+            return '[文件] ${map['name'] ?? 'file'}';
+          default:
+            return '[${map['media']}]';
+        }
+      }
+    } catch (_) {}
+    return previewLabel(plaintext, type);
   }
 
   static String previewLabel(String? plaintext, String type) {

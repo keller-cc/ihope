@@ -39,9 +39,10 @@ class _MarqueeTextState extends State<MarqueeText>
   void _start(double textWidth, double viewWidth) {
     if (!mounted) return;
     final distance = textWidth + widget.gap;
-    if (_controller != null && (_distance - distance).abs() < 1) {
-      if (_controller!.isAnimating) return;
-      _controller!.repeat();
+    final existing = _controller;
+    if (existing != null && (_distance - distance).abs() < 1) {
+      if (existing.isAnimating) return;
+      existing.repeat();
       return;
     }
     _stop();

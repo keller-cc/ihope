@@ -61,10 +61,13 @@ class ConversationItem {
     final members = (json['members'] as List<dynamic>? ?? [])
         .map((e) => ConversationMember.fromJson(e as Map<String, dynamic>))
         .toList();
-    final convId = json['id'] as String;
+    final convId = json['id'] as String? ?? '';
+    if (convId.isEmpty) {
+      throw FormatException('conversation id missing');
+    }
     ChatMessage? last;
     final rawLast = json['last_message'];
-    if (rawLast is Map<String, dynamic>) {
+    if (rawLast is Map<String, dynamic> && rawLast['id'] is String) {
       last = ChatMessage.fromJson({
         ...rawLast,
         'conversation_id': rawLast['conversation_id'] ?? convId,

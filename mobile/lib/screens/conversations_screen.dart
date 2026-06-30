@@ -87,17 +87,19 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
 
   void _onConversationUpdated(ConversationUpdatedFrame frame) {
     if (!mounted) return;
-    final conv = ConversationItem.fromJson(frame.conversation);
-    final idx = _items.indexWhere((c) => c.id == conv.id);
-    if (idx < 0) return;
-    final wasArchived = _items[idx].isArchived;
-    setState(() {
-      _items[idx] = widget.auth.mergeConversationUpdate(_items[idx], conv);
-      _items = sortConversationsByPin(_items, _pinnedIds);
-    });
-    if (wasArchived) {
-      unawaited(widget.auth.reactivateConversation(_items[idx]));
-    }
+    try {
+      final conv = ConversationItem.fromJson(frame.conversation);
+      final idx = _items.indexWhere((c) => c.id == conv.id);
+      if (idx < 0) return;
+      final wasArchived = _items[idx].isArchived;
+      setState(() {
+        _items[idx] = widget.auth.mergeConversationUpdate(_items[idx], conv);
+        _items = sortConversationsByPin(_items, _pinnedIds);
+      });
+      if (wasArchived) {
+        unawaited(widget.auth.reactivateConversation(_items[idx]));
+      }
+    } catch (_) {}
   }
 
   @override
@@ -240,7 +242,7 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
   ) {
     if (msg.type == 'system') return msg.ciphertext;
     final body = msg.type == 'text'
-        ? '…'
+        ? ChatMessage.decryptPlaceholder
         : MediaPayload.previewLabel('', msg.type);
     if (item.type != 'group') return body;
     return '${_senderName(item, meId, msg.senderId)}: $body';
@@ -256,7 +258,8 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
     }
 
     final conv = _items[index];
-    final me = widget.auth.currentUser!;
+    final me = widget.auth.currentUser;
+    if (me == null) return;
     if (conv.type == 'group' &&
         msg.type != 'system' &&
         msg.epoch < conv.joinedEpochFor(me.id)) {
@@ -848,7 +851,12 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final me = widget.auth.currentUser!;
+    final me = widget.auth.currentUser;
+    if (me == null) {
+      return const Scaffold(
+        body: Center(child: Text('未登录')),
+      );
+    }
     final visible = _filteredItems(me.id);
     return Scaffold(
       appBar: AppBar(

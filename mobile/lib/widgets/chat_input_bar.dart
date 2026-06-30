@@ -379,6 +379,7 @@ class _HoldToTalkButtonState extends State<_HoldToTalkButton> {
   }
 
   void _insertOverlay() {
+    if (!mounted) return;
     _removeOverlay();
     _overlayWillCancel.value = _willCancel;
     _overlayElapsed.value = 0;
@@ -391,7 +392,8 @@ class _HoldToTalkButtonState extends State<_HoldToTalkButton> {
         ),
       ),
     );
-    Overlay.of(context, rootOverlay: true).insert(_overlayEntry!);
+    final overlay = Overlay.maybeOf(context, rootOverlay: true);
+    overlay?.insert(_overlayEntry!);
   }
 
   void _removeOverlay() {

@@ -136,8 +136,16 @@ class _ChatScreenState extends State<ChatScreen> {
     List<ChatMessage> secondary,
   ) {
     final byId = {for (final m in primary) m.id: m};
-    for (final m in secondary) {
-      byId.putIfAbsent(m.id, () => m);
+    for (final cached in secondary) {
+      final remote = byId[cached.id];
+      if (remote == null) {
+        byId[cached.id] = cached;
+      } else {
+        final pt = cached.plaintext;
+        if (pt != null && pt.isNotEmpty) {
+          byId[cached.id] = remote.copyWith(plaintext: pt);
+        }
+      }
     }
     return byId.values.toList()
       ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
@@ -289,27 +297,63 @@ class _ChatScreenState extends State<ChatScreen> {
       var msgs = await widget.auth.loadCachedMessages(_conversation.id);
       if (_isStale(epoch)) return;
 
-      if (_messages.isEmpty && msgs.isNotEmpty) {
-        setState(() {
-          _messages = _displayableMessages(msgs);
-          _loading = false;
-          _tailPinned = true;
-        });
+      if (_conversation.type == 'group' && msgs.isNotEmpty) {
+        try {
+          await widget.auth.ensureGroupKeysForMessages(_conversation, msgs);
+        } catch (_) {}
+      }
+      if (_isStale(epoch)) return;
+
+      final fullyLocal = msgs.isNotEmpty &&
+          await widget.auth.cachedMessagesFullyAvailable(msgs);
+
+      if (msgs.isNotEmpty) {
+        var local = await widget.auth.decryptMessagesLocal(_conversation, msgs);
+        if (_isStale(epoch)) return;
+        if (_messages.isEmpty) {
+          setState(() {
+            _messages = _displayableMessages(local);
+            _loading = false;
+            _tailPinned = true;
+          });
+        }
+        if (fullyLocal) {
+          setState(() {
+            _messages = local;
+            _error = null;
+          });
+          unawaited(widget.auth.cacheMessages(_conversation.id, local));
+          return;
+        }
+      }
+
+      if (archived) {
+        try {
+          msgs = await _fetchMergedMessages(msgs);
+          if (!_isStale(epoch)) {
+            final local =
+                await widget.auth.decryptMessagesLocal(_conversation, msgs);
+            setState(() {
+              _messages = local;
+              _error = null;
+            });
+            if (_messages.isNotEmpty) {
+              await widget.auth.cacheMessages(_conversation.id, _messages);
+            }
+          }
+        } catch (_) {
+          if (_messages.isEmpty && msgs.isNotEmpty) {
+            setState(() {
+              _messages = _displayableMessages(msgs);
+              _error = null;
+            });
+          }
+        }
+        return;
       }
 
       msgs = await _fetchMergedMessages(msgs);
       if (_isStale(epoch) || _conversation.isArchived != archived) return;
-
-      if (archived) {
-        setState(() {
-          _messages = _displayableMessages(msgs);
-          _error = null;
-        });
-        if (_messages.isNotEmpty) {
-          await widget.auth.cacheMessages(_conversation.id, _messages);
-        }
-        return;
-      }
 
       if (_conversation.type == 'group') {
         await widget.auth.ensureGroupKeysForMessages(_conversation, msgs);
@@ -317,7 +361,8 @@ class _ChatScreenState extends State<ChatScreen> {
       if (_isStale(epoch) || _conversation.isArchived) return;
 
       final before = _messages;
-      final decrypted = await widget.auth.decryptMessages(_conversation, msgs);
+      final decrypted =
+          await widget.auth.decryptMessagesLocal(_conversation, msgs);
       if (_isStale(epoch)) return;
 
       final tailChanged = _tailChanged(before, decrypted);
@@ -358,10 +403,18 @@ class _ChatScreenState extends State<ChatScreen> {
     await _loadHistory();
   }
 
-  void _addMessage(ChatMessage msg) {
-    if (_messages.any((m) => m.id == msg.id)) return;
-    _messages = [..._messages, msg];
-    unawaited(widget.auth.cacheMessages(_conversation.id, _messages));
+  void _upsertMessage(ChatMessage msg, {bool persist = true}) {
+    final i = _messages.indexWhere((m) => m.id == msg.id);
+    _messages = i >= 0
+        ? [
+            ..._messages.sublist(0, i),
+            msg,
+            ..._messages.sublist(i + 1),
+          ]
+        : [..._messages, msg];
+    if (persist && !ChatMessage.isDecryptPlaceholder(msg.plaintext)) {
+      unawaited(widget.auth.cacheMessages(_conversation.id, _messages));
+    }
   }
 
   Future<void> _onConversationAdded(ConversationAddedFrame frame) async {
@@ -376,12 +429,14 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   void _onConversationUpdated(ConversationUpdatedFrame frame) {
-    final conv = ConversationItem.fromJson(frame.conversation);
-    if (conv.id != _conversation.id) return;
     if (!mounted) return;
-    setState(() {
-      _conversation = widget.auth.mergeConversationUpdate(_conversation, conv);
-    });
+    try {
+      final conv = ConversationItem.fromJson(frame.conversation);
+      if (conv.id != _conversation.id) return;
+      setState(() {
+        _conversation = widget.auth.mergeConversationUpdate(_conversation, conv);
+      });
+    } catch (_) {}
   }
 
   Future<void> _onEpochUpdated(EpochUpdatedFrame frame) async {
@@ -413,7 +468,8 @@ class _ChatScreenState extends State<ChatScreen> {
     if (frame.conversationId != _conversation.id) return;
     if (!mounted) return;
 
-    final me = widget.auth.currentUser!;
+    final me = widget.auth.currentUser;
+    if (me == null) return;
     final isSelf = frame.dissolvedBy == me.id;
     await widget.auth.handleGroupDissolved(frame.conversationId);
 
@@ -443,6 +499,23 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+  Future<void> _repairMessageMedia(String messageId) async {
+    final i = _messages.indexWhere((m) => m.id == messageId);
+    if (i < 0) return;
+    final msg = _messages[i];
+    final repaired =
+        await widget.auth.repairMessageMedia(_conversation, msg);
+    if (repaired == null || !mounted) return;
+    setState(() {
+      _messages = [
+        ..._messages.sublist(0, i),
+        repaired,
+        ..._messages.sublist(i + 1),
+      ];
+    });
+    unawaited(widget.auth.cacheMessages(_conversation.id, _messages));
+  }
+
   Future<void> _onIncomingMessage(ChatMessage msg) async {
     if (_conversation.isArchived) return;
     if (msg.conversationId != _conversation.id) return;
@@ -450,32 +523,25 @@ class _ChatScreenState extends State<ChatScreen> {
 
     if (msg.type == 'system') {
       setState(
-        () => _addMessage(msg.copyWith(plaintext: msg.ciphertext)),
+        () => _upsertMessage(msg.copyWith(plaintext: msg.ciphertext)),
       );
     } else {
-      setState(() => _addMessage(msg.copyWith(plaintext: '…')));
+      setState(
+        () => _upsertMessage(
+          msg.copyWith(plaintext: ChatMessage.decryptPlaceholder),
+          persist: false,
+        ),
+      );
       final decrypted =
           await widget.auth.decryptMessage(_conversation, msg);
       if (!mounted) return;
-      setState(() {
-        final i = _messages.indexWhere((m) => m.id == msg.id);
-        if (i >= 0) {
-          _messages = [
-            ..._messages.sublist(0, i),
-            decrypted,
-            ..._messages.sublist(i + 1),
-          ];
-        } else {
-          _addMessage(decrypted);
-        }
-      });
+      setState(() => _upsertMessage(decrypted));
     }
     if (_tailPinned) _scrollToBottom();
     unawaited(_markRead());
   }
 
-  String? _avatarUrlFor(String userId) {
-    final me = widget.auth.currentUser!;
+  String? _avatarUrlFor(String userId, User me) {
     if (userId == me.id) return me.avatarUrl;
     for (final m in _conversation.members) {
       if (m.userId == userId) return m.avatarUrl;
@@ -483,8 +549,7 @@ class _ChatScreenState extends State<ChatScreen> {
     return null;
   }
 
-  String _nameFor(String userId) {
-    final me = widget.auth.currentUser!;
+  String _nameFor(String userId, User me) {
     if (userId == me.id) return me.username;
     for (final m in _conversation.members) {
       if (m.userId == userId) return m.username;
@@ -500,8 +565,8 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   void _openUserDetail(String userId) {
-    final me = widget.auth.currentUser!;
-    if (userId == me.id) return;
+    final me = widget.auth.currentUser;
+    if (me == null || userId == me.id) return;
 
     final member = _memberFor(userId);
     if (member != null) {
@@ -560,7 +625,7 @@ class _ChatScreenState extends State<ChatScreen> {
         type: type,
       );
       if (!mounted) return;
-      setState(() => _addMessage(msg));
+      setState(() => _upsertMessage(msg));
       _tailPinned = true;
       _scrollToBottom(animated: true);
     } catch (e) {
@@ -739,7 +804,7 @@ class _ChatScreenState extends State<ChatScreen> {
         text,
       );
       if (!mounted) return;
-      setState(() => _addMessage(msg));
+      setState(() => _upsertMessage(msg));
       _tailPinned = true;
       _scrollToBottom(animated: true);
     } catch (e) {
@@ -807,9 +872,10 @@ class _ChatScreenState extends State<ChatScreen> {
         isGroup: isGroup,
         me: me,
         senderTitle: _conversation.memberTitle(msg.senderId),
-        nameFor: _nameFor,
-        avatarUrlFor: _avatarUrlFor,
+        nameFor: (userId) => _nameFor(userId, me),
+        avatarUrlFor: (userId) => _avatarUrlFor(userId, me),
         onPeerTap: _openUserDetail,
+        onMediaRetry: _repairMessageMedia,
       );
     }
 

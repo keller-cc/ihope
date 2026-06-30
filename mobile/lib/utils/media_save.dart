@@ -162,13 +162,17 @@ class MediaSave {
       isImage: isImage,
     );
     onProgress?.call(1);
-    final openPath = saved['openPath']!;
+    final openPath = saved['openPath'] as String?;
+    final displayLabel = saved['displayLabel'] as String?;
+    if (openPath == null || displayLabel == null) {
+      throw StateError('保存失败：系统未返回文件路径');
+    }
     if (!await existsAt(openPath)) {
       throw StateError('文件已写入但系统未索引，请稍后重试');
     }
     return MediaSaveResult(
       openPath: openPath,
-      displayLabel: saved['displayLabel']!,
+      displayLabel: displayLabel,
     );
   }
 

@@ -1,4 +1,10 @@
 class ChatMessage {
+  /// 解密完成前 UI 占位，不可写入持久化缓存。
+  static const decryptPlaceholder = '…';
+
+  static bool isDecryptPlaceholder(String? plaintext) =>
+      plaintext == decryptPlaceholder;
+
   ChatMessage({
     required this.id,
     required this.conversationId,
@@ -57,4 +63,15 @@ class ChatMessage {
       plaintext: plaintext ?? this.plaintext,
     );
   }
+
+  /// 持久化缓存用：去掉本地明文，保留密文供下次解密。
+  ChatMessage get forCacheWithoutPlaintext => ChatMessage(
+        id: id,
+        conversationId: conversationId,
+        senderId: senderId,
+        type: type,
+        ciphertext: ciphertext,
+        createdAt: createdAt,
+        epoch: epoch,
+      );
 }
