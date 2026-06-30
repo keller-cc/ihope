@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../models/conversation.dart';
 import '../models/user.dart';
 import '../services/auth_service.dart';
+import '../widgets/user_avatar.dart';
 
 class NewChatScreen extends StatefulWidget {
   const NewChatScreen({super.key, required this.auth});
@@ -101,6 +102,10 @@ class _NewChatScreenState extends State<NewChatScreen> {
                             itemBuilder: (context, index) {
                               final u = visible[index];
                               return ListTile(
+                                leading: UserAvatar(
+                                  name: u.username,
+                                  imageUrl: u.avatarUrl,
+                                ),
                                 title: Text(u.username),
                                 trailing: const Icon(Icons.chevron_right),
                                 onTap: () => _startChat(u),

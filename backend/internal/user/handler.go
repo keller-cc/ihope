@@ -137,7 +137,7 @@ func (h *Handler) UploadAvatar(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	avatarURL := h.publicURL + "/api/avatars/" + filename
+  avatarURL := "/api/avatars/" + filename
 	u, err := h.repo.UpdateAvatarURL(r.Context(), userID, avatarURL)
 	if err != nil {
 		_ = os.Remove(destPath)

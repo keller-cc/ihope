@@ -2,14 +2,17 @@ import '../models/user.dart';
 import 'api_client.dart';
 import 'auth_storage.dart';
 import 'conversation_service.dart';
+import 'ws_service.dart';
 
 class AuthService {
-  AuthService({ApiClient? api, AuthStorage? storage})
+  AuthService({ApiClient? api, AuthStorage? storage, WsService? ws})
       : api = api ?? ApiClient(),
-        storage = storage ?? AuthStorage();
+        storage = storage ?? AuthStorage(),
+        ws = ws ?? WsService();
 
   final ApiClient api;
   final AuthStorage storage;
+  final WsService ws;
   late final ConversationService conversations = ConversationService(api);
 
   User? currentUser;
@@ -22,8 +25,10 @@ class AuthService {
     api.setAccessToken(token);
     try {
       await refreshCurrentUser();
+      await _connectRealtime();
       return true;
     } catch (_) {
+      await _disconnectRealtime();
       await storage.clear();
       api.setAccessToken(null);
       return false;
@@ -113,6 +118,7 @@ class AuthService {
   }
 
   Future<void> logout() async {
+    await _disconnectRealtime();
     await storage.clear();
     api.setAccessToken(null);
     currentUser = null;
@@ -120,11 +126,29 @@ class AuthService {
 
   Future<String?> accessToken() => storage.accessToken();
 
+  Future<void> _connectRealtime() async {
+    final token = await storage.accessToken();
+    if (token == null || token.isEmpty) return;
+    await ws.connect(token);
+  }
+
+  /// 下拉刷新或断线后手动重连实时推送。
+  Future<void> reconnectRealtime() async {
+    final token = await storage.accessToken();
+    if (token == null || token.isEmpty) return;
+    await ws.reconnect(token);
+  }
+
+  Future<void> _disconnectRealtime() async {
+    await ws.disconnect();
+  }
+
   Future<void> _applyTokenResponse(Map<String, dynamic> data) async {
     final access = data['access_token'] as String;
     final refresh = data['refresh_token'] as String;
     await storage.saveTokens(accessToken: access, refreshToken: refresh);
     api.setAccessToken(access);
     currentUser = User.fromJson(data['user'] as Map<String, dynamic>);
+    await _connectRealtime();
   }
 }

@@ -4,15 +4,18 @@ class ConversationMember {
   ConversationMember({
     required this.userId,
     required this.username,
+    this.avatarUrl,
   });
 
   final String userId;
   final String username;
+  final String? avatarUrl;
 
   factory ConversationMember.fromJson(Map<String, dynamic> json) {
     return ConversationMember(
       userId: json['user_id'] as String,
       username: json['username'] as String,
+      avatarUrl: json['avatar_url'] as String?,
     );
   }
 }
@@ -54,6 +57,16 @@ class ConversationItem {
     );
   }
 
+  ConversationItem copyWith({ChatMessage? lastMessage}) {
+    return ConversationItem(
+      id: id,
+      type: type,
+      name: name,
+      members: members,
+      lastMessage: lastMessage ?? this.lastMessage,
+    );
+  }
+
   String displayTitle(String currentUserId) {
     if (type == 'group' && name != null && name!.isNotEmpty) {
       return name!;
@@ -65,4 +78,17 @@ class ConversationItem {
     }
     return 'Chat';
   }
+
+  /// 单聊对方头像；群聊暂返回 null（后续可扩展群头像）。
+  String? peerAvatarUrl(String currentUserId) {
+    if (type == 'group') return null;
+    for (final m in members) {
+      if (m.userId != currentUserId) {
+        return m.avatarUrl;
+      }
+    }
+    return null;
+  }
+
+  String peerDisplayName(String currentUserId) => displayTitle(currentUserId);
 }

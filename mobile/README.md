@@ -122,3 +122,28 @@ flutter run -d android
 Android 构建报错 `non-ASCII characters` 时，已在 `android/gradle.properties` 加 `android.overridePathCheck=true`。
 
 更稳妥做法：把整个仓库 clone 到纯英文路径，例如 `D:\Dev\IHope`，再 `flutter run`。
+
+## Kotlin incremental cache 损坏（image_picker 等）
+
+报错含 `Could not close incremental caches`、`Storage ... is already registered` 时，多为 **中文路径 + Kotlin 增量编译缓存** 冲突（新增 `image_picker` 后常见）。
+
+**一键清理并重跑：**
+
+```powershell
+cd D:\施玮书房\IHope\mobile
+.\clean-and-run.ps1
+```
+
+**或手动：**
+
+```powershell
+cd D:\施玮书房\IHope\mobile\android
+.\gradlew.bat --stop
+cd ..
+Remove-Item -Recurse -Force build -ErrorAction SilentlyContinue
+flutter clean
+flutter pub get
+flutter run -d android
+```
+
+项目已在 `android/gradle.properties` 设置 `kotlin.incremental=false` 降低复发概率。若仍频繁失败，建议把项目移到 `D:\Dev\IHope` 等英文路径。

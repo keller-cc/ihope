@@ -3,6 +3,7 @@ import 'package:image_picker/image_picker.dart';
 
 import '../services/auth_service.dart';
 import '../widgets/auth_form.dart';
+import '../widgets/user_avatar.dart';
 import 'change_password_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
@@ -115,24 +116,18 @@ class _ProfileScreenState extends State<ProfileScreen> {
         children: [
           Center(
             child: Stack(
+              alignment: Alignment.center,
               children: [
-                CircleAvatar(
+                UserAvatar(
+                  name: user.username,
+                  imageUrl: user.avatarUrl,
                   radius: 48,
-                  backgroundImage: user.avatarUrl != null && user.avatarUrl!.isNotEmpty
-                      ? NetworkImage(user.avatarUrl!)
-                      : null,
-                  child: user.avatarUrl == null || user.avatarUrl!.isEmpty
-                      ? Text(
-                          user.username.isNotEmpty
-                              ? user.username[0].toUpperCase()
-                              : '?',
-                          style: const TextStyle(fontSize: 32),
-                        )
-                      : null,
                 ),
                 if (_uploadingAvatar)
-                  const Positioned.fill(
-                    child: CircularProgressIndicator(),
+                  const SizedBox(
+                    width: 96,
+                    height: 96,
+                    child: CircularProgressIndicator(strokeWidth: 2),
                   ),
               ],
             ),

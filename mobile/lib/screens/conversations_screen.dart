@@ -1,7 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../models/conversation.dart';
+import '../models/message.dart';
 import '../services/auth_service.dart';
+import '../widgets/realtime_indicator.dart';
+import '../widgets/user_avatar.dart';
 import 'chat_screen.dart';
 import 'new_chat_screen.dart';
 import 'profile_screen.dart';
@@ -24,11 +29,42 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
   List<ConversationItem> _items = [];
   bool _loading = true;
   String? _error;
+  StreamSubscription<ChatMessage>? _msgSub;
+  StreamSubscription<bool>? _connSub;
 
   @override
   void initState() {
     super.initState();
     _load();
+    _msgSub = widget.auth.ws.onMessage.listen(_onIncomingMessage);
+    _connSub = widget.auth.ws.onConnectionChanged.listen((_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _msgSub?.cancel();
+    _connSub?.cancel();
+    super.dispose();
+  }
+
+  void _onIncomingMessage(ChatMessage msg) {
+    if (!mounted) return;
+
+    final index = _items.indexWhere((c) => c.id == msg.conversationId);
+    if (index < 0) {
+      _load();
+      return;
+    }
+
+    final updated = _items[index].copyWith(lastMessage: msg);
+    setState(() {
+      _items = [
+        updated,
+        ..._items.where((c) => c.id != msg.conversationId),
+      ];
+    });
   }
 
   Future<void> _load() async {
@@ -37,6 +73,7 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
       _error = null;
     });
     try {
+      await widget.auth.reconnectRealtime();
       final items = await widget.auth.conversations.listConversations();
       if (!mounted) return;
       setState(() => _items = items);
@@ -53,7 +90,6 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
         builder: (_) => ChatScreen(auth: widget.auth, conversation: conv),
       ),
     );
-    await _load();
   }
 
   Future<void> _openProfile() async {
@@ -79,7 +115,11 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
       ),
     );
     if (conv != null && mounted) {
-      await _load();
+      setState(() {
+        if (!_items.any((c) => c.id == conv.id)) {
+          _items = [conv, ..._items];
+        }
+      });
       if (!mounted) return;
       await _openChat(conv);
     }
@@ -90,8 +130,29 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
     final me = widget.auth.currentUser!;
     return Scaffold(
       appBar: AppBar(
-        title: Text('你好，${me.username}'),
+        title: Row(
+          children: [
+            UserAvatar(
+              name: me.username,
+              imageUrl: me.avatarUrl,
+              radius: 18,
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                '你好，${me.username}',
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        ),
         actions: [
+          RealtimeIndicator(
+            connected: widget.auth.ws.isConnected,
+            onReconnect: widget.auth.ws.isConnected
+                ? null
+                : () => widget.auth.reconnectRealtime(),
+          ),
           IconButton(
             tooltip: '个人资料',
             onPressed: _openProfile,
@@ -135,8 +196,13 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
                           final item = _items[index];
                           final preview =
                               item.lastMessage?.ciphertext ?? '暂无消息';
+                          final peerName = item.peerDisplayName(me.id);
                           return ListTile(
-                            title: Text(item.displayTitle(me.id)),
+                            leading: UserAvatar(
+                              name: peerName,
+                              imageUrl: item.peerAvatarUrl(me.id),
+                            ),
+                            title: Text(peerName),
                             subtitle: Text(
                               preview,
                               maxLines: 1,
