@@ -54,14 +54,14 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _loading = true;
   String? _error;
   int _historyEpoch = 0;
-  String? _announcementReadId;
+  Set<String> _announcementReadIds = {};
   final Set<String> _dismissedAnnouncementBannerIds = {};
 
   bool get _isGroup => _conversation.type == 'group';
 
   bool get _announcementUnread => widget.auth.isAnnouncementUnread(
         _messages,
-        readMessageId: _announcementReadId,
+        readIds: _announcementReadIds,
       );
 
   List<ChatMessage> get _visibleUnreadAnnouncementBanners {
@@ -70,7 +70,7 @@ class _ChatScreenState extends State<ChatScreen> {
     // unreadList is newest-first; keep the 3 most recent, show oldest at top.
     final unread = AnnouncementRead.unreadList(
       _messages,
-      readMessageId: _announcementReadId,
+      readIds: _announcementReadIds,
       myUserId: me.id,
     ).where((a) => !_dismissedAnnouncementBannerIds.contains(a.id));
     return unread.take(3).toList(growable: false).reversed.toList(growable: false);
@@ -188,7 +188,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _presentMessages(List<ChatMessage> list, {DateTime? readAt}) async {
     final at = readAt ?? await widget.auth.readAtFor(_conversation.id);
-    final annReadId = await widget.auth.announcementReadIdFor(_conversation.id);
+    final annReadIds = await widget.auth.announcementReadIdsFor(_conversation.id);
     final me = widget.auth.currentUser;
     final unread = math.max(
       widget.auth.countUnreadInThread(list, readAt: at),
@@ -198,7 +198,7 @@ class _ChatScreenState extends State<ChatScreen> {
       _messages = ChatThreadLoader.preserveLocalOutgoing(list, _messages);
       _error = null;
       _loading = false;
-      _announcementReadId = annReadId;
+      _announcementReadIds = annReadIds;
       _scrollCoord.applyReadSnapshot(readAt: at, unread: unread);
     });
     if (me != null) {
@@ -357,9 +357,14 @@ class _ChatScreenState extends State<ChatScreen> {
     _applyAnnouncementRead(ann.id);
   }
 
-  void _applyAnnouncementRead(String? readMessageId) {
-    if (readMessageId == null) return;
-    setState(() => _announcementReadId = readMessageId);
+  void _applyAnnouncementRead(String messageId) {
+    setState(() => _announcementReadIds = {..._announcementReadIds, messageId});
+  }
+
+  Future<void> _reloadAnnouncementReadIds() async {
+    final ids = await widget.auth.announcementReadIdsFor(_conversation.id);
+    if (!mounted) return;
+    setState(() => _announcementReadIds = ids);
   }
 
   Future<void> _openAnnouncements() async {
@@ -372,8 +377,7 @@ class _ChatScreenState extends State<ChatScreen> {
       ),
     );
     if (!mounted) return;
-    final readId = await widget.auth.announcementReadIdFor(_conversation.id);
-    _applyAnnouncementRead(readId);
+    await _reloadAnnouncementReadIds();
   }
 
   Future<void> _openAnnouncementDetail(ChatMessage ann) async {
@@ -399,6 +403,10 @@ class _ChatScreenState extends State<ChatScreen> {
     final me = widget.auth.currentUser;
     final fromPeer = me == null || materialized.senderId != me.id;
     final atBottom = _scrollCoord.isAtBottom;
+    if (!atBottom) {
+      // TODO(scroll-lock): 浏览历史时尾部插入仍会顶掉视口，待后续实现。
+      _scrollCoord.beginScrollLockForTailInsert();
+    }
 
     setState(() {
       var list = _messages;
@@ -420,9 +428,16 @@ class _ChatScreenState extends State<ChatScreen> {
     _scrollCoord.handleTailAfterMessage(
       atBottom: atBottom,
       fromPeer: fromPeer,
+      messageId: materialized.id,
       messages: _messages,
       markRead: _markReadToLast,
     );
+    if (atBottom) {
+      _scrollCoord.tailPinned = true;
+      _scrollCoord.stickToTailIfPinned();
+    } else {
+      _scrollCoord.endScrollLockAfterTailInsert();
+    }
   }
 
   Future<void> _repairMessageMedia(String messageId) async {
@@ -660,18 +675,21 @@ class _ChatScreenState extends State<ChatScreen> {
                     onPeerTap: _openUserDetail,
                     onMediaRetry: _repairMessageMedia,
                     onSendRetry: (msg) => unawaited(_onSendRetry(msg)),
-                    announcementReadId: _announcementReadId,
+                    announcementReadIds: _announcementReadIds,
                     onAnnouncementTap: (msg) => unawaited(_openAnnouncementDetail(msg)),
                     onRefresh: _onPullRefresh,
                   ),
                   ChatFloatingChips(
                     showJumpToUnread: _scrollCoord.showJumpToUnread,
                     showJumpToBottom: _scrollCoord.showJumpToBottom,
+                    showScrollToLatestArrow: _scrollCoord.showScrollToLatestArrow,
+                    scrollToLatestArrowOpacity: _scrollCoord.scrollToLatestArrowOpacity,
                     enterUnreadCount: _scrollCoord.enterUnreadCount,
                     belowUnreadCount: _scrollCoord.belowUnreadCount,
                     onJumpToUnread: () => _scrollCoord.onJumpToUnread(_messages),
-                    onJumpToBottom: () =>
-                        _scrollCoord.onJumpToBottom(_messages, _markReadToLast),
+                    onJumpToNewMessages: () =>
+                        _scrollCoord.onJumpToNewMessages(_messages),
+                    onJumpToLatest: () => _scrollCoord.onJumpToLatest(_messages),
                   ),
                 ],
               ),

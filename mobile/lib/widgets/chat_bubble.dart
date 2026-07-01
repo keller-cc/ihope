@@ -56,6 +56,7 @@ class ChatBubble extends StatelessWidget {
     this.onPeerTap,
     this.onMediaRetry,
     this.onSendRetry,
+    this.showUnreadMarker = false,
   });
 
   final ChatMessage msg;
@@ -68,6 +69,7 @@ class ChatBubble extends StatelessWidget {
   final void Function(String userId)? onPeerTap;
   final Future<void> Function(String messageId)? onMediaRetry;
   final VoidCallback? onSendRetry;
+  final bool showUnreadMarker;
 
   bool get _isMedia =>
       msg.type == 'image' ||
@@ -92,6 +94,21 @@ class ChatBubble extends StatelessWidget {
       );
     }
     return Text(msg.displayText);
+  }
+
+  Widget _unreadMarkerDot(ColorScheme scheme) {
+    if (!showUnreadMarker || mine) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(right: 4, top: 14),
+      child: Container(
+        width: 7,
+        height: 7,
+        decoration: BoxDecoration(
+          color: scheme.error,
+          shape: BoxShape.circle,
+        ),
+      ),
+    );
   }
 
   Widget _sendStatusIndicator(ColorScheme scheme) {
@@ -235,6 +252,7 @@ class ChatBubble extends StatelessWidget {
                 avatarFor(userId),
               ]
             : [
+                _unreadMarkerDot(scheme),
                 avatarFor(
                   userId,
                   onTap: onPeerTap != null
@@ -268,6 +286,7 @@ class ChatBubble extends StatelessWidget {
           children: [
             if (mine) const Spacer(),
             if (!mine) ...[
+              _unreadMarkerDot(scheme),
               avatarFor(
                 msg.senderId,
                 onTap: onPeerTap != null

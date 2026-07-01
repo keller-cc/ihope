@@ -46,50 +46,81 @@ void main() {
       scroll.dispose();
     });
 
-    test('applyReadSnapshot sets unread bubble state', () {
+    test('applyReadSnapshot seeds enter unread bubble', () {
       final readAt = DateTime(2026, 1, 1, 10);
       coord.applyReadSnapshot(readAt: readAt, unread: 3);
 
       expect(coord.readAtSnapshot, readAt);
       expect(coord.enterUnreadCount, 3);
       expect(coord.showJumpToUnread, isTrue);
-      expect(coord.unreadDividerAtIndex, isNull);
       expect(coord.tailPinned, isTrue);
     });
 
-    test('maybeMarkReadWithLast clears unread when pinned and no bubble', () {
-      coord.applyReadSnapshot(readAt: null, unread: 0);
-      coord.tailPinned = true;
-      final last = _msg('m1', DateTime(2026, 1, 1, 12));
+    test('enter unread ids exclude tail new messages', () {
+      final t0 = DateTime(2026, 1, 1, 10);
+      final messages = [
+        _msg('read', t0),
+        _msg('unread1', t0.add(const Duration(minutes: 1))),
+      ];
+      coord.applyReadSnapshot(readAt: t0, unread: 1);
+      coord.bindThread(messages, 'me');
 
-      coord.maybeMarkReadWithLast(last);
+      expect(coord.enterUnreadIds, {'unread1'});
 
-      expect(coord.readAtSnapshot, last.createdAt);
-      expect(coord.enterUnreadCount, 0);
-      expect(coord.showJumpToUnread, isFalse);
+      coord.handleTailAfterMessage(
+        atBottom: false,
+        fromPeer: true,
+        messageId: 'tail-new',
+        messages: messages,
+        markRead: () async {},
+      );
+
+      expect(coord.enterUnreadIds, {'unread1'});
+      expect(coord.belowUnreadCount, 1);
+      expect(coord.showJumpToBottom, isTrue);
     });
 
-    test('maybeMarkReadWithLast keeps bubble while jump-to-unread visible', () {
-      coord.applyReadSnapshot(readAt: null, unread: 2);
-      final last = _msg('m1', DateTime(2026, 1, 1, 12));
+    test('enter unread count decreases when marked seen in viewport', () {
+      final t0 = DateTime(2026, 1, 1, 10);
+      final messages = [
+        _msg('read', t0),
+        _msg('unread1', t0.add(const Duration(minutes: 1))),
+        _msg('unread2', t0.add(const Duration(minutes: 2))),
+      ];
+      coord.applyReadSnapshot(readAt: t0, unread: 2);
+      coord.bindThread(messages, 'me');
 
-      coord.maybeMarkReadWithLast(last);
+      coord.markUnreadSeenInSession('unread2');
+      coord.updateUnreadVisibility();
 
-      expect(coord.enterUnreadCount, 2);
+      expect(coord.enterUnreadCount, 1);
+    });
+
+    test('tail new and enter unread bubbles can coexist', () {
+      final t0 = DateTime(2026, 1, 1, 10);
+      final messages = [
+        _msg('read', t0),
+        _msg('unread1', t0.add(const Duration(minutes: 1))),
+      ];
+      coord.applyReadSnapshot(readAt: t0, unread: 1);
+      coord.bindThread(messages, 'me');
+      coord.addTailNewMessageForTest('tail-1');
+
       expect(coord.showJumpToUnread, isTrue);
-      expect(coord.readAtSnapshot, isNull);
+      expect(coord.showJumpToBottom, isTrue);
+      expect(coord.enterUnreadCount, 1);
+      expect(coord.belowUnreadCount, 1);
     });
 
-    test('handleTailAfterMessage at bottom clears divider and marks read', () async {
+    test('handleTailAfterMessage at bottom marks read', () async {
       var marked = false;
-      coord.unreadDividerAtIndex = 1;
-      coord.belowUnreadCount = 2;
-      coord.showJumpToBottom = true;
+      coord.addTailNewMessageForTest('x');
       final messages = [_msg('a', DateTime(2026, 1, 1, 10))];
 
       coord.handleTailAfterMessage(
         atBottom: true,
         fromPeer: true,
+        messageId: 'b',
         messages: messages,
         markRead: () async {
           marked = true;
@@ -97,95 +128,76 @@ void main() {
       );
 
       expect(coord.tailPinned, isTrue);
-      expect(coord.belowUnreadCount, 0);
-      expect(coord.showJumpToBottom, isFalse);
-      expect(coord.unreadDividerAtIndex, isNull);
       expect(marked, isTrue);
     });
 
-    test('handleTailAfterMessage scrolled up increments new message count', () async {
-      coord.handleTailAfterMessage(
-        atBottom: false,
-        fromPeer: true,
-        messages: [_msg('a', DateTime(2026, 1, 1, 10))],
-        markRead: () async {},
-      );
-
-      expect(coord.belowUnreadCount, 1);
-      expect(coord.showJumpToBottom, isTrue);
-      expect(changed, greaterThan(0));
-    });
-
-    test('handleTailAfterMessage ignores own messages when scrolled up', () async {
-      coord.handleTailAfterMessage(
-        atBottom: false,
-        fromPeer: false,
-        messages: [_msg('a', DateTime(2026, 1, 1, 10), senderId: 'me')],
-        markRead: () async {},
-      );
-
-      expect(coord.belowUnreadCount, 0);
-      expect(coord.showJumpToBottom, isFalse);
-    });
-
-    test('onJumpToUnread hides chip and pins divider at first unread index', () {
+    test('unread divider stays fixed while enter count decreases', () {
       final t0 = DateTime(2026, 1, 1, 10);
       final messages = [
         _msg('read', t0),
-        _msg('unread', t0.add(const Duration(minutes: 1))),
+        _msg('unread1', t0.add(const Duration(minutes: 1))),
+        _msg('unread2', t0.add(const Duration(minutes: 2))),
+      ];
+      coord.applyReadSnapshot(readAt: t0, unread: 2);
+      coord.bindThread(messages, 'me');
+
+      expect(coord.unreadDividerIndex, 1);
+
+      coord.markUnreadSeenInSession('unread2');
+      coord.updateUnreadVisibility();
+
+      expect(coord.enterUnreadCount, 1);
+      expect(coord.unreadDividerIndex, 1);
+    });
+
+    test('onJumpToUnread dismisses enter bubble', () {
+      final t0 = DateTime(2026, 1, 1, 10);
+      final messages = [
+        _msg('read', t0),
+        _msg('unread1', t0.add(const Duration(minutes: 1))),
       ];
       coord.applyReadSnapshot(readAt: t0, unread: 1);
+      coord.bindThread(messages, 'me');
 
       coord.onJumpToUnread(messages);
 
       expect(coord.showJumpToUnread, isFalse);
-      expect(coord.enterUnreadCount, 0);
-      expect(coord.unreadDividerAtIndex, 1);
     });
 
-    test('countRemainingUnreadAboveViewport ignores below-viewport unreads', () {
+    test('onJumpToNewMessages clears tail bubble state and shows divider', () {
       final t0 = DateTime(2026, 1, 1, 10);
-      final messages = [
-        _msg('m0', t0),
-        _msg('m1', t0.add(const Duration(minutes: 1))),
-        _msg('m2', t0.add(const Duration(minutes: 2))),
-        _msg('m3', t0.add(const Duration(minutes: 3))),
-      ];
+      final read = _msg('read', t0);
+      final tail1 = _msg('tail1', t0.add(const Duration(minutes: 1)));
+      coord.applyReadSnapshot(readAt: t0, unread: 0);
+      coord.bindThread([read], 'me');
+      coord.addTailNewMessageForTest('tail1');
 
-      final remaining = ChatScrollCoordinator.countRemainingUnreadAboveViewport(
-        messages: messages,
-        meId: 'me',
-        readAt: null,
-        isVisibleInViewport: (id) => id == 'm2' || id == 'm3',
-      );
+      expect(coord.unreadDividerIndex, isNull);
 
-      expect(remaining, 2);
+      final withTail = [read, tail1];
+      coord.bindThread(withTail, 'me');
+      coord.onJumpToNewMessages(withTail);
+
+      expect(coord.showJumpToBottom, isFalse);
+      expect(coord.belowUnreadCount, 0);
+      expect(coord.unreadDividerIndex, 1);
     });
 
-    test('countRemainingUnreadAboveViewport drops as older unreads enter view', () {
+    test('tail new alone does not show divider until jump', () {
       final t0 = DateTime(2026, 1, 1, 10);
-      final messages = [
-        _msg('m0', t0),
-        _msg('m1', t0.add(const Duration(minutes: 1))),
-        _msg('m2', t0.add(const Duration(minutes: 2))),
-      ];
+      final messages = [_msg('read', t0)];
+      coord.applyReadSnapshot(readAt: t0, unread: 0);
+      coord.bindThread(messages, 'me');
 
-      final scrolledUp = ChatScrollCoordinator.countRemainingUnreadAboveViewport(
+      coord.handleTailAfterMessage(
+        atBottom: false,
+        fromPeer: true,
+        messageId: 'tail-1',
         messages: messages,
-        meId: 'me',
-        readAt: null,
-        isVisibleInViewport: (id) => id == 'm0' || id == 'm1' || id == 'm2',
-      );
-      final atBottom = ChatScrollCoordinator.countRemainingUnreadAboveViewport(
-        messages: messages,
-        meId: 'me',
-        readAt: null,
-        isVisibleInViewport: (id) => id == 'm2',
+        markRead: () async {},
       );
 
-      expect(atBottom, 2);
-      expect(scrolledUp, 0);
-      expect(scrolledUp, lessThan(atBottom));
+      expect(coord.unreadDividerIndex, isNull);
     });
   });
 }

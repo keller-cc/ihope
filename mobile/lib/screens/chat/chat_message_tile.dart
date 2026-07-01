@@ -18,13 +18,14 @@ class ChatMessageTile extends StatelessWidget {
     required this.conversation,
     required this.isGroup,
     required this.showUnreadDivider,
+    required this.isUnmarkedUnread,
     required this.focused,
     required this.nameFor,
     required this.avatarUrlFor,
     required this.onPeerTap,
     required this.onMediaRetry,
     required this.onSendRetry,
-    this.announcementReadId,
+    this.announcementReadIds = const {},
     this.onAnnouncementTap,
     this.allMessages = const [],
     this.itemKey,
@@ -36,13 +37,14 @@ class ChatMessageTile extends StatelessWidget {
   final ConversationItem conversation;
   final bool isGroup;
   final bool showUnreadDivider;
+  final bool isUnmarkedUnread;
   final bool focused;
   final String Function(String userId) nameFor;
   final String? Function(String userId) avatarUrlFor;
   final void Function(String userId) onPeerTap;
   final Future<void> Function(String messageId) onMediaRetry;
   final void Function(ChatMessage msg) onSendRetry;
-  final String? announcementReadId;
+  final Set<String> announcementReadIds;
   final void Function(ChatMessage msg)? onAnnouncementTap;
   final List<ChatMessage> allMessages;
   final Key? itemKey;
@@ -68,7 +70,7 @@ class ChatMessageTile extends StatelessWidget {
     } else if (msg.type == 'announcement') {
       final annUnread = AnnouncementRead.isUnread(
         announcement: msg,
-        readMessageId: announcementReadId,
+        readIds: announcementReadIds,
         myUserId: me.id,
         allMessages: allMessages,
       );
@@ -90,6 +92,7 @@ class ChatMessageTile extends StatelessWidget {
         avatarUrlFor: avatarUrlFor,
         onPeerTap: onPeerTap,
         onMediaRetry: onMediaRetry,
+        showUnreadMarker: isUnmarkedUnread,
         onSendRetry: msg.sendStatus == MessageSendStatus.failed &&
                 msg.isLocalOutgoing
             ? () => onSendRetry(msg)
@@ -140,37 +143,50 @@ class ChatMessageTile extends StatelessWidget {
   }
 }
 
+/// 右侧浮动条：上方「未读消息」，下方「新消息」；底部居中为快速下滑时的「回最新」箭头。
 class ChatFloatingChips extends StatelessWidget {
   const ChatFloatingChips({
     super.key,
     required this.showJumpToUnread,
     required this.showJumpToBottom,
+    required this.showScrollToLatestArrow,
+    required this.scrollToLatestArrowOpacity,
     required this.enterUnreadCount,
     required this.belowUnreadCount,
     required this.onJumpToUnread,
-    required this.onJumpToBottom,
+    required this.onJumpToNewMessages,
+    required this.onJumpToLatest,
   });
 
   final bool showJumpToUnread;
   final bool showJumpToBottom;
+  final bool showScrollToLatestArrow;
+  final double scrollToLatestArrowOpacity;
   final int enterUnreadCount;
   final int belowUnreadCount;
   final VoidCallback onJumpToUnread;
-  final VoidCallback onJumpToBottom;
+  final VoidCallback onJumpToNewMessages;
+  final VoidCallback onJumpToLatest;
 
   @override
   Widget build(BuildContext context) {
+    /// 新消息气泡在输入框上方；快速下滑箭头紧贴输入框上沿。
+    const newMessageChipBottom = 88.0;
+    const scrollToLatestArrowBottom = 8.0;
+    const unreadTop = 12.0;
+    final scheme = Theme.of(context).colorScheme;
+
     return Stack(
       clipBehavior: Clip.none,
       children: [
         if (showJumpToUnread)
           Positioned(
             right: 0,
-            top: 8,
+            top: unreadTop,
             child: ChatScrollChip(
               label: enterUnreadCount > 0
-                  ? '$enterUnreadCount条未读'
-                  : '直达未读',
+                  ? '$enterUnreadCount条未读消息'
+                  : '未读消息',
               icon: Icons.north_rounded,
               onTap: onJumpToUnread,
             ),
@@ -178,11 +194,44 @@ class ChatFloatingChips extends StatelessWidget {
         if (showJumpToBottom)
           Positioned(
             right: 0,
-            bottom: 12,
+            bottom: newMessageChipBottom,
             child: ChatScrollChip(
-              label: belowUnreadCount > 0 ? '$belowUnreadCount 条新消息' : '回到底部',
-              icon: Icons.arrow_downward_rounded,
-              onTap: onJumpToBottom,
+              label: belowUnreadCount > 0
+                  ? '$belowUnreadCount条新消息'
+                  : '新消息',
+              icon: Icons.south_rounded,
+              onTap: onJumpToNewMessages,
+            ),
+          ),
+        if (showScrollToLatestArrow && scrollToLatestArrowOpacity > 0.01)
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: scrollToLatestArrowBottom,
+            child: Center(
+              child: AnimatedOpacity(
+                opacity: scrollToLatestArrowOpacity.clamp(0.0, 1.0),
+                duration: const Duration(milliseconds: 120),
+                child: Material(
+                  color: scheme.surfaceContainerHighest.withValues(alpha: 0.95),
+                  elevation: 2,
+                  shadowColor: Colors.black26,
+                  shape: const CircleBorder(),
+                  clipBehavior: Clip.antiAlias,
+                  child: InkWell(
+                    onTap: onJumpToLatest,
+                    customBorder: const CircleBorder(),
+                    child: Padding(
+                      padding: const EdgeInsets.all(10),
+                      child: Icon(
+                        Icons.keyboard_arrow_down_rounded,
+                        color: scheme.primary,
+                        size: 28,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
             ),
           ),
       ],

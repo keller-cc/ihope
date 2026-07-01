@@ -24,7 +24,7 @@ class ChatMessageListView extends StatelessWidget {
     required this.onMediaRetry,
     required this.onSendRetry,
     required this.onRefresh,
-    this.announcementReadId,
+    this.announcementReadIds = const {},
     this.onAnnouncementTap,
   });
 
@@ -43,7 +43,7 @@ class ChatMessageListView extends StatelessWidget {
   final Future<void> Function(String messageId) onMediaRetry;
   final void Function(ChatMessage msg) onSendRetry;
   final Future<void> Function() onRefresh;
-  final String? announcementReadId;
+  final Set<String> announcementReadIds;
   final void Function(ChatMessage msg)? onAnnouncementTap;
 
   @override
@@ -93,12 +93,15 @@ class ChatMessageListView extends StatelessWidget {
       );
     }
 
-    final dividerIndex = scrollCoord.unreadDividerAtIndex;
+    final dividerIndex = scrollCoord.unreadDividerIndex;
     return NotificationListener<ScrollNotification>(
       onNotification: (notification) {
         if (notification is ScrollUpdateNotification ||
             notification is ScrollEndNotification) {
           scrollCoord.updateUnreadVisibility();
+        }
+        if (notification is ScrollEndNotification) {
+          scrollCoord.onScrollIdle();
         }
         return false;
       },
@@ -125,13 +128,14 @@ class ChatMessageListView extends StatelessWidget {
                       conversation: conversation,
                       isGroup: isGroup,
                       showUnreadDivider: dividerIndex == msgIndex,
+                      isUnmarkedUnread: scrollCoord.isUnmarkedPeerUnread(msg),
                       focused: scrollCoord.focusedMessageId == msg.id,
                       nameFor: nameFor,
                       avatarUrlFor: avatarUrlFor,
                       onPeerTap: onPeerTap,
                       onMediaRetry: onMediaRetry,
                       onSendRetry: onSendRetry,
-                      announcementReadId: announcementReadId,
+                      announcementReadIds: announcementReadIds,
                       onAnnouncementTap: onAnnouncementTap,
                       allMessages: messages,
                       itemKey: scrollCoord.keyForMessage(msg.id),
