@@ -58,6 +58,12 @@ class MessageTimeFormat {
     return '${t.year}/${t.month}/${t.day} $hm';
   }
 
+  /// 群公告卡片左下角：yyyy年M月d日 HH:mm。
+  static String formatAnnouncementCard(DateTime time) {
+    final t = time.toLocal();
+    return '${t.year}年${t.month}月${t.day}日 ${_hm(t)}';
+  }
+
   static DateTime _dateOnly(DateTime d) => DateTime(d.year, d.month, d.day);
 
   static String _hm(DateTime t) {

@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'voice_record_overlay.dart';
+import 'standard_emoji_panel.dart';
 
 /// QQ / 微信风格聊天输入区。
 class ChatInputBar extends StatefulWidget {
@@ -17,7 +18,6 @@ class ChatInputBar extends StatefulWidget {
     required this.onVoiceHoldEnd,
     required this.onImage,
     required this.onFile,
-    required this.onEmoji,
   });
 
   final TextEditingController controller;
@@ -27,7 +27,6 @@ class ChatInputBar extends StatefulWidget {
   final Future<void> Function({required bool cancel}) onVoiceHoldEnd;
   final VoidCallback onImage;
   final VoidCallback onFile;
-  final VoidCallback onEmoji;
 
   static const sendWidth = 58.0;
   static const sendHeight = 36.0;
@@ -39,6 +38,7 @@ class ChatInputBar extends StatefulWidget {
 class _ChatInputBarState extends State<ChatInputBar> {
   bool _voiceMode = false;
   bool _moreOpen = false;
+  bool _emojiOpen = false;
   bool _hasText = false;
   bool _voiceHolding = false;
 
@@ -67,7 +67,10 @@ class _ChatInputBarState extends State<ChatInputBar> {
     setState(() {
       _voiceMode = !_voiceMode;
       _voiceHolding = false;
-      if (_voiceMode) _moreOpen = false;
+      if (_voiceMode) {
+        _moreOpen = false;
+        _emojiOpen = false;
+      }
     });
     if (_voiceMode) {
       FocusManager.instance.primaryFocus?.unfocus();
@@ -80,14 +83,30 @@ class _ChatInputBarState extends State<ChatInputBar> {
       _moreOpen = !_moreOpen;
       if (_moreOpen) {
         _voiceMode = false;
+        _emojiOpen = false;
+        FocusManager.instance.primaryFocus?.unfocus();
+      }
+    });
+  }
+
+  void _toggleEmojiPanel() {
+    if (_textDisabled || _voiceHolding) return;
+    setState(() {
+      _emojiOpen = !_emojiOpen;
+      if (_emojiOpen) {
+        _voiceMode = false;
+        _moreOpen = false;
         FocusManager.instance.primaryFocus?.unfocus();
       }
     });
   }
 
   void _closePanels() {
-    if (!_moreOpen) return;
-    setState(() => _moreOpen = false);
+    if (!_moreOpen && !_emojiOpen) return;
+    setState(() {
+      _moreOpen = false;
+      _emojiOpen = false;
+    });
   }
 
   void _onPanelAction(VoidCallback action) {
@@ -149,7 +168,10 @@ class _ChatInputBarState extends State<ChatInputBar> {
                               onHoldingChanged: (holding) {
                                 setState(() {
                                   _voiceHolding = holding;
-                                  if (holding) _moreOpen = false;
+                                  if (holding) {
+                                    _moreOpen = false;
+                                    _emojiOpen = false;
+                                  }
                                 });
                               },
                               onHoldStart: widget.onVoiceHoldStart,
@@ -208,7 +230,8 @@ class _ChatInputBarState extends State<ChatInputBar> {
                             children: [
                               _RoundToolButton(
                                 icon: Icons.emoji_emotions_outlined,
-                                onTap: _textDisabled ? null : widget.onEmoji,
+                                color: _emojiOpen ? scheme.primary : null,
+                                onTap: _textDisabled ? null : _toggleEmojiPanel,
                               ),
                               _RoundToolButton(
                                 icon: _moreOpen
@@ -225,6 +248,10 @@ class _ChatInputBarState extends State<ChatInputBar> {
                   ],
                 ),
               ),
+              if (_emojiOpen)
+                StandardEmojiPanel(
+                  controller: widget.controller,
+                ),
               if (_moreOpen)
                 _MorePanel(
                   onImage: () => _onPanelAction(widget.onImage),

@@ -24,6 +24,8 @@ class ChatMessageListView extends StatelessWidget {
     required this.onMediaRetry,
     required this.onSendRetry,
     required this.onRefresh,
+    this.announcementReadId,
+    this.onAnnouncementTap,
   });
 
   final bool loading;
@@ -41,6 +43,8 @@ class ChatMessageListView extends StatelessWidget {
   final Future<void> Function(String messageId) onMediaRetry;
   final void Function(ChatMessage msg) onSendRetry;
   final Future<void> Function() onRefresh;
+  final String? announcementReadId;
+  final void Function(ChatMessage msg)? onAnnouncementTap;
 
   @override
   Widget build(BuildContext context) {
@@ -90,7 +94,15 @@ class ChatMessageListView extends StatelessWidget {
     }
 
     final dividerIndex = scrollCoord.unreadDividerAtIndex;
-    return RefreshIndicator(
+    return NotificationListener<ScrollNotification>(
+      onNotification: (notification) {
+        if (notification is ScrollUpdateNotification ||
+            notification is ScrollEndNotification) {
+          scrollCoord.updateUnreadVisibility();
+        }
+        return false;
+      },
+      child: RefreshIndicator(
       onRefresh: onRefresh,
       child: CustomScrollView(
         reverse: true,
@@ -119,6 +131,9 @@ class ChatMessageListView extends StatelessWidget {
                       onPeerTap: onPeerTap,
                       onMediaRetry: onMediaRetry,
                       onSendRetry: onSendRetry,
+                      announcementReadId: announcementReadId,
+                      onAnnouncementTap: onAnnouncementTap,
+                      allMessages: messages,
                       itemKey: scrollCoord.keyForMessage(msg.id),
                     ),
                   );
@@ -135,6 +150,7 @@ class ChatMessageListView extends StatelessWidget {
           ),
           const SliverFillRemaining(hasScrollBody: false, child: SizedBox.shrink()),
         ],
+      ),
       ),
     );
   }

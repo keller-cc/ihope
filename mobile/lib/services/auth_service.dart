@@ -8,6 +8,8 @@ import '../crypto/signal/signal_dm_service.dart';
 import '../models/conversation.dart';
 import '../models/message.dart';
 import '../models/user.dart';
+import '../utils/announcement_payload.dart';
+import '../utils/announcement_read.dart';
 import '../utils/media_local_cache.dart';
 import '../utils/media_payload.dart';
 import 'api_client.dart';
@@ -101,13 +103,22 @@ class AuthService {
     );
   }
 
-  Future<bool> restoreSession() async {
+  /// 从本地 token / 用户快照恢复，不访问网络（用于启动时立即进入首页）。
+  Future<bool> restoreLocalSession() async {
     final token = await storage.accessToken();
-    if (token == null || token.isEmpty) {
-      return false;
-    }
+    if (token == null || token.isEmpty) return false;
     api.setAccessToken(token);
     _accessExpiresAt = _expiryFromJwt(token);
+    final profile = await storage.readUserProfile();
+    if (profile != null) {
+      currentUser = User.fromJson(profile);
+    }
+    return true;
+  }
+
+  /// 联网校验会话并初始化加密与推送（启动后异步执行）。
+  Future<bool> restoreSession() async {
+    if (!await restoreLocalSession()) return false;
     try {
       await refreshCurrentUser();
     } catch (_) {
@@ -116,7 +127,8 @@ class AuthService {
         await storage.clear();
         api.setAccessToken(null);
         _crypto = null;
-    _signalDm = null;
+        _signalDm = null;
+        currentUser = null;
         _accessExpiresAt = null;
         return false;
       }
@@ -135,7 +147,8 @@ class AuthService {
       await storage.clear();
       api.setAccessToken(null);
       _crypto = null;
-    _signalDm = null;
+      _signalDm = null;
+      currentUser = null;
       _accessExpiresAt = null;
       return false;
     }
@@ -144,6 +157,7 @@ class AuthService {
   Future<User> refreshCurrentUser() async {
     final data = await api.getJson('/api/users/me');
     currentUser = User.fromJson(data);
+    await storage.saveUserProfile(currentUser!.toJson());
     return currentUser!;
   }
 
@@ -358,6 +372,7 @@ class AuthService {
     await storage.saveTokens(accessToken: access, refreshToken: refresh);
     api.setAccessToken(access);
     currentUser = User.fromJson(data['user'] as Map<String, dynamic>);
+    await storage.saveUserProfile(currentUser!.toJson());
     _crypto = null;
     _signalDm = null;
     _accessExpiresAt = _expiryFromJwt(access);
@@ -409,6 +424,48 @@ class AuthService {
     return storage.readConversationReadAt(me.id, conversationId);
   }
 
+  Future<Set<String>> announcementReadIdsFor(String conversationId) async {
+    final me = currentUser;
+    if (me == null) return {};
+    return storage.readAnnouncementReadIds(me.id, conversationId);
+  }
+
+  Future<void> markAnnouncementRead(
+    String conversationId,
+    String messageId,
+  ) async {
+    final me = currentUser;
+    if (me == null) return;
+    await storage.addAnnouncementReadId(me.id, conversationId, messageId);
+  }
+
+  bool isAnnouncementUnread(
+    List<ChatMessage> messages, {
+    Set<String> readIds = const {},
+  }) {
+    final me = currentUser;
+    if (me == null) return false;
+    return AnnouncementRead.isUnread(
+      announcement: AnnouncementRead.latestOf(messages),
+      readIds: readIds,
+      myUserId: me.id,
+      allMessages: messages,
+    );
+  }
+
+  Future<bool> hasUnreadAnnouncementFor(ConversationItem conv) async {
+    final me = currentUser;
+    if (me == null || conv.type != 'group') return false;
+    final readIds = await announcementReadIdsFor(conv.id);
+    final cached = await loadCachedMessages(conv.id);
+    return AnnouncementRead.countUnread(
+          cached,
+          readIds: readIds,
+          myUserId: me.id,
+        ) >
+        0;
+  }
+
   int countUnreadInThread(
     List<ChatMessage> messages, {
     DateTime? readAt,
@@ -427,6 +484,7 @@ class AuthService {
     for (var i = 0; i < messages.length; i++) {
       final m = messages[i];
       if (m.senderId == me.id) continue;
+      if (m.type == 'announcement' || m.type == 'system') continue;
       if (readAt == null || m.createdAt.isAfter(readAt)) return i;
     }
     return null;
@@ -474,6 +532,7 @@ class AuthService {
     var count = 0;
     for (final m in messages) {
       if (m.senderId == meId) continue;
+      if (m.type == 'announcement' || m.type == 'system') continue;
       if (readAt == null || m.createdAt.isAfter(readAt)) {
         count++;
       }
@@ -487,6 +546,7 @@ class AuthService {
     }
     final me = currentUser;
     if (me == null || msg.senderId == me.id) return;
+    if (msg.type == 'announcement' || msg.type == 'system') return;
     _unreadCounts[msg.conversationId] =
         (_unreadCounts[msg.conversationId] ?? 0) + 1;
   }
@@ -515,8 +575,9 @@ class AuthService {
       try {
         final remote = await convApi.listMessages(conv.id, limit: 100);
         final merged = _mergeMessageCaches(remote, cached);
-        if (merged.isNotEmpty) {
-          await cacheMessages(conv.id, merged);
+        final visible = conv.messagesVisibleToMember(me.id, merged);
+        if (visible.isNotEmpty) {
+          await cacheMessages(conv.id, visible);
           synced = true;
         }
       } catch (_) {}
@@ -710,6 +771,13 @@ class AuthService {
     await storage.removeArchivedConversation(me.id, conv.id);
     final active = conv.copyWith(isArchived: false);
     _cacheConversation(active);
+    if (active.type == 'group') {
+      final cached = await loadCachedMessages(active.id);
+      final pruned = active.messagesVisibleToMember(me.id, cached);
+      if (pruned.length != cached.length) {
+        await cacheMessages(active.id, pruned);
+      }
+    }
     return active;
   }
 
@@ -833,15 +901,21 @@ class AuthService {
     String conversationId,
     ChatMessage message,
   ) async {
-    if (!_isValidCachedPlaintext(message.plaintext)) return;
+    if (message.type != 'system' &&
+        !_isValidCachedPlaintext(message.plaintext)) {
+      return;
+    }
+    final stored = message.type == 'system'
+        ? message.copyWith(plaintext: message.plaintext ?? message.ciphertext)
+        : message;
     final list = List<ChatMessage>.from(
       _messagesMem[conversationId] ?? await loadCachedMessages(conversationId),
     );
     final i = list.indexWhere((m) => m.id == message.id);
     if (i >= 0) {
-      list[i] = message;
+      list[i] = stored;
     } else {
-      list.add(message);
+      list.add(stored);
     }
     list.sort((a, b) => a.createdAt.compareTo(b.createdAt));
     _messagesMem[conversationId] = list;
@@ -1315,7 +1389,7 @@ class AuthService {
     );
     if (stored != null) return _previewBody(hydrated, stored);
     if (conv.type == 'group') {
-      unawaited(ensureGroupKeys(conv, epochs: [hydrated.epoch]));
+      await ensureGroupKeys(conv, epochs: [hydrated.epoch]);
     }
     final text = await chatCrypto.decryptIncoming(
       conv,
@@ -1329,13 +1403,18 @@ class AuthService {
         thread: cachedThread,
       );
       if (retry != null) return _previewBody(hydrated, retry);
+      if (hydrated.type == 'announcement') {
+        return AnnouncementPayload.previewFromPlaintext(null);
+      }
       return text;
     }
     final preview = _previewBody(hydrated, text);
+    final storedPlaintext =
+        hydrated.type == 'announcement' ? text : preview;
     unawaited(
       upsertCachedMessage(
         conversation.id,
-        hydrated.copyWith(plaintext: preview),
+        hydrated.copyWith(plaintext: storedPlaintext),
       ),
     );
     return preview;
@@ -1343,6 +1422,9 @@ class AuthService {
 
   String _previewBody(ChatMessage message, String plaintext) {
     if (message.type == 'text') return plaintext;
+    if (message.type == 'announcement') {
+      return AnnouncementPayload.previewFromPlaintext(plaintext);
+    }
     return MediaPayload.previewLabel(plaintext, message.type);
   }
 

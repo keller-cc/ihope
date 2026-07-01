@@ -22,6 +22,14 @@ class User {
       identityPublicKey: json['identity_public_key'] as String? ?? '',
     );
   }
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'email': email,
+        'username': username,
+        if (avatarUrl != null) 'avatar_url': avatarUrl,
+        'identity_public_key': identityPublicKey,
+      };
 }
 
 class PublicUser {

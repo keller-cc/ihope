@@ -4,11 +4,15 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../models/conversation.dart';
+import '../models/message.dart';
 import '../models/user.dart';
 import '../services/auth_service.dart';
+import '../utils/announcement_read.dart';
 import '../widgets/member_title_badge.dart';
 import '../widgets/user_avatar.dart';
 import 'chat_search_screen.dart';
+import 'announcement_edit_screen.dart';
+import 'group_announcements_screen.dart';
 
 /// 群聊管理：成员列表、邀请、踢人、退群、解散。
 class GroupManageScreen extends StatefulWidget {
@@ -29,6 +33,8 @@ class _GroupManageScreenState extends State<GroupManageScreen> {
   late ConversationItem _conversation;
   bool _busy = false;
   bool _pinned = false;
+  bool _announcementUnread = false;
+  ChatMessage? _latestAnnouncement;
 
   @override
   void initState() {
@@ -36,6 +42,24 @@ class _GroupManageScreenState extends State<GroupManageScreen> {
     _conversation = widget.conversation;
     _reload();
     _loadPinState();
+    unawaited(_loadAnnouncementState());
+  }
+
+  Future<void> _loadAnnouncementState() async {
+    final cached = await widget.auth.loadCachedMessages(_conversation.id);
+    final latest = AnnouncementRead.latestOf(cached);
+    final readId = await widget.auth.announcementReadIdFor(_conversation.id);
+    final me = widget.auth.currentUser;
+    if (!mounted || me == null) return;
+    setState(() {
+      _latestAnnouncement = latest;
+      _announcementUnread = AnnouncementRead.isUnread(
+        announcement: latest,
+        readMessageId: readId,
+        myUserId: me.id,
+        allMessages: cached,
+      );
+    });
   }
 
   Future<void> _loadPinState() async {
@@ -75,6 +99,31 @@ class _GroupManageScreenState extends State<GroupManageScreen> {
   bool get _isOwner {
     final me = widget.auth.currentUser!;
     return _conversation.isOwner(me.id);
+  }
+
+  Future<void> _openAnnouncements() async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => GroupAnnouncementsScreen(
+          auth: widget.auth,
+          conversation: _conversation,
+        ),
+      ),
+    );
+    if (!mounted) return;
+    await _loadAnnouncementState();
+  }
+
+  Future<void> _publishAnnouncement() async {
+    final sent = await Navigator.of(context).push<ChatMessage>(
+      MaterialPageRoute(
+        builder: (_) => AnnouncementEditScreen(
+          auth: widget.auth,
+          conversation: _conversation,
+        ),
+      ),
+    );
+    if (sent != null) await _loadAnnouncementState();
   }
 
   Future<void> _renameGroup() async {
@@ -341,6 +390,44 @@ class _GroupManageScreenState extends State<GroupManageScreen> {
             subtitle: const Text('在本机已保存的聊天记录中搜索，不请求服务器'),
             onTap: _busy ? null : _openSearch,
           ),
+          if (_isOwner)
+            ListTile(
+              leading: Badge(
+                isLabelVisible: _announcementUnread,
+                backgroundColor: Theme.of(context).colorScheme.error,
+                smallSize: 8,
+                child: const Icon(Icons.campaign_outlined),
+              ),
+              title: const Text('群公告'),
+              subtitle: Text(
+                _latestAnnouncement == null
+                    ? '发布群公告（新成员看不到入群前的公告）'
+                    : _announcementUnread
+                        ? '有新公告未读 · 查看全部历史'
+                        : '查看全部历史公告或发布新公告',
+              ),
+              onTap: _busy ? null : () => unawaited(_openAnnouncements()),
+              trailing: _isOwner
+                  ? TextButton(
+                      onPressed: _busy ? null : () => unawaited(_publishAnnouncement()),
+                      child: const Text('发布'),
+                    )
+                  : null,
+            ),
+          if (!_isOwner)
+            ListTile(
+              leading: Badge(
+                isLabelVisible: _announcementUnread,
+                backgroundColor: Theme.of(context).colorScheme.error,
+                smallSize: 8,
+                child: const Icon(Icons.campaign_outlined),
+              ),
+              title: const Text('群公告'),
+              subtitle: Text(
+                _announcementUnread ? '有新公告未读' : '查看全部历史群公告',
+              ),
+              onTap: _busy ? null : () => unawaited(_openAnnouncements()),
+            ),
           const Divider(height: 1),
           ListTile(
             leading: const Icon(Icons.group),

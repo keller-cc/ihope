@@ -9,6 +9,7 @@ import '../crypto/megolm_rotation_meta.dart';
 const _kAccess = 'access_token';
 const _kRefresh = 'refresh_token';
 const _kDeviceId = 'device_id';
+const _kUserProfile = 'user_profile';
 
 class AuthStorage {
   AuthStorage({FlutterSecureStorage? storage})
@@ -42,6 +43,18 @@ class AuthStorage {
   Future<void> clear() async {
     await _storage.delete(key: _kAccess);
     await _storage.delete(key: _kRefresh);
+    await _storage.delete(key: _kUserProfile);
+  }
+
+  Future<void> saveUserProfile(Map<String, dynamic> json) async {
+    await _storage.write(key: _kUserProfile, value: jsonEncode(json));
+  }
+
+  Future<Map<String, dynamic>?> readUserProfile() async {
+    final raw = await _storage.read(key: _kUserProfile);
+    if (raw == null || raw.isEmpty) return null;
+    final json = jsonDecode(raw);
+    return json is Map<String, dynamic> ? json : null;
   }
 
   Future<Uint8List?> readIdentitySeedForUser(String userId) =>
@@ -357,6 +370,61 @@ class AuthStorage {
     );
   }
 
+  Future<String?> readAnnouncementReadId(
+    String userId,
+    String conversationId,
+  ) async {
+    return _storage.read(
+      key: _announcementReadKey(userId, conversationId),
+    );
+  }
+
+  Future<Set<String>> readAnnouncementReadIds(
+    String userId,
+    String conversationId,
+  ) async {
+    final raw = await _storage.read(
+      key: _announcementReadIdsKey(userId, conversationId),
+    );
+    if (raw != null && raw.isNotEmpty) {
+      try {
+        final list = jsonDecode(raw) as List<dynamic>;
+        return list.map((e) => e as String).toSet();
+      } catch (_) {}
+    }
+
+    final legacy = await readAnnouncementReadId(userId, conversationId);
+    if (legacy != null && legacy.isNotEmpty) {
+      final migrated = {legacy};
+      await writeAnnouncementReadIds(userId, conversationId, migrated);
+      await _storage.delete(key: _announcementReadKey(userId, conversationId));
+      return migrated;
+    }
+    return {};
+  }
+
+  Future<void> writeAnnouncementReadIds(
+    String userId,
+    String conversationId,
+    Set<String> messageIds,
+  ) async {
+    await _storage.write(
+      key: _announcementReadIdsKey(userId, conversationId),
+      value: jsonEncode(messageIds.toList()),
+    );
+  }
+
+  Future<void> addAnnouncementReadId(
+    String userId,
+    String conversationId,
+    String messageId,
+  ) async {
+    final ids = await readAnnouncementReadIds(userId, conversationId);
+    if (ids.contains(messageId)) return;
+    ids.add(messageId);
+    await writeAnnouncementReadIds(userId, conversationId, ids);
+  }
+
   Future<Set<String>> readHiddenConversations(String userId) async {
     final raw = await _storage.read(key: _hiddenConversationsKey(userId));
     if (raw == null || raw.isEmpty) return {};
@@ -403,6 +471,12 @@ class AuthStorage {
 
   String _readCursorKey(String userId, String conversationId) =>
       'read_cursor_${userId}_$conversationId';
+
+  String _announcementReadKey(String userId, String conversationId) =>
+      'announcement_read_${userId}_$conversationId';
+
+  String _announcementReadIdsKey(String userId, String conversationId) =>
+      'announcement_read_ids_${userId}_$conversationId';
 
   String _messageCacheKey(String userId, String conversationId) =>
       'message_cache_${userId}_$conversationId';

@@ -128,7 +128,7 @@ void main() {
       expect(coord.showJumpToBottom, isFalse);
     });
 
-    test('onJumpToUnread pins divider at first unread index', () {
+    test('onJumpToUnread hides chip and pins divider at first unread index', () {
       final t0 = DateTime(2026, 1, 1, 10);
       final messages = [
         _msg('read', t0),
@@ -139,7 +139,53 @@ void main() {
       coord.onJumpToUnread(messages);
 
       expect(coord.showJumpToUnread, isFalse);
+      expect(coord.enterUnreadCount, 0);
       expect(coord.unreadDividerAtIndex, 1);
+    });
+
+    test('countRemainingUnreadAboveViewport ignores below-viewport unreads', () {
+      final t0 = DateTime(2026, 1, 1, 10);
+      final messages = [
+        _msg('m0', t0),
+        _msg('m1', t0.add(const Duration(minutes: 1))),
+        _msg('m2', t0.add(const Duration(minutes: 2))),
+        _msg('m3', t0.add(const Duration(minutes: 3))),
+      ];
+
+      final remaining = ChatScrollCoordinator.countRemainingUnreadAboveViewport(
+        messages: messages,
+        meId: 'me',
+        readAt: null,
+        isVisibleInViewport: (id) => id == 'm2' || id == 'm3',
+      );
+
+      expect(remaining, 2);
+    });
+
+    test('countRemainingUnreadAboveViewport drops as older unreads enter view', () {
+      final t0 = DateTime(2026, 1, 1, 10);
+      final messages = [
+        _msg('m0', t0),
+        _msg('m1', t0.add(const Duration(minutes: 1))),
+        _msg('m2', t0.add(const Duration(minutes: 2))),
+      ];
+
+      final scrolledUp = ChatScrollCoordinator.countRemainingUnreadAboveViewport(
+        messages: messages,
+        meId: 'me',
+        readAt: null,
+        isVisibleInViewport: (id) => id == 'm0' || id == 'm1' || id == 'm2',
+      );
+      final atBottom = ChatScrollCoordinator.countRemainingUnreadAboveViewport(
+        messages: messages,
+        meId: 'me',
+        readAt: null,
+        isVisibleInViewport: (id) => id == 'm2',
+      );
+
+      expect(atBottom, 2);
+      expect(scrolledUp, 0);
+      expect(scrolledUp, lessThan(atBottom));
     });
   });
 }

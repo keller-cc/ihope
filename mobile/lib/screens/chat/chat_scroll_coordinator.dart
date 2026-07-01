@@ -36,12 +36,20 @@ class ChatScrollCoordinator {
   bool _suppressScrollHandling = false;
   final _messageItemKeys = <String, GlobalKey>{};
 
+  List<ChatMessage> _threadMessages = const [];
+  String? _meId;
+
   static const _bottomThreshold = 96.0;
 
   void attach() => scrollController.addListener(_onScroll);
   void detach() {
     scrollController.removeListener(_onScroll);
     _focusTimer?.cancel();
+  }
+
+  void bindThread(List<ChatMessage> messages, String meId) {
+    _threadMessages = messages;
+    _meId = meId;
   }
 
   double get _stickThreshold {
@@ -71,9 +79,84 @@ class ChatScrollCoordinator {
     tailPinned = true;
   }
 
+  static bool isPeerUnread(ChatMessage m, String meId, DateTime? readAt) {
+    if (m.senderId == meId) return false;
+    if (m.type == 'announcement' || m.type == 'system') return false;
+    return readAt == null || m.createdAt.isAfter(readAt);
+  }
+
+  /// Unread above the viewport top edge (reverse list: lower indices = older).
+  ///
+  /// Any unread at or below [minVisibleIndex] is in view or already scrolled past
+  /// toward newer messages and must not inflate the chip count.
+  static int countRemainingUnreadAboveViewport({
+    required List<ChatMessage> messages,
+    required String meId,
+    required DateTime? readAt,
+    required bool Function(String messageId) isVisibleInViewport,
+  }) {
+    int? minVisibleIndex;
+    for (var i = 0; i < messages.length; i++) {
+      if (isVisibleInViewport(messages[i].id)) {
+        minVisibleIndex = minVisibleIndex == null
+            ? i
+            : math.min(minVisibleIndex, i);
+      }
+    }
+
+    var remaining = 0;
+    for (var i = 0; i < messages.length; i++) {
+      if (!isPeerUnread(messages[i], meId, readAt)) continue;
+      if (minVisibleIndex != null && i >= minVisibleIndex) continue;
+      remaining++;
+    }
+    return remaining;
+  }
+
+  bool _isMessageVisibleInViewport(String messageId) {
+    final ctx = _messageItemKeys[messageId]?.currentContext;
+    if (ctx == null) return false;
+    final box = ctx.findRenderObject();
+    if (box is! RenderBox || !box.hasSize || !scrollController.hasClients) {
+      return false;
+    }
+    final scrollable = Scrollable.maybeOf(ctx);
+    if (scrollable == null) return false;
+    final viewportBox = scrollable.context.findRenderObject();
+    if (viewportBox is! RenderBox || !viewportBox.hasSize) return false;
+
+    final topLeft = box.localToGlobal(Offset.zero, ancestor: viewportBox);
+    final bottom = topLeft.dy + box.size.height;
+    final viewportHeight = viewportBox.size.height;
+    return bottom > 0 && topLeft.dy < viewportHeight;
+  }
+
+  void updateUnreadVisibility() {
+    final meId = _meId;
+    if (meId == null || _threadMessages.isEmpty) return;
+
+    final readAt = readAtSnapshot;
+    final remaining = countRemainingUnreadAboveViewport(
+      messages: _threadMessages,
+      meId: meId,
+      readAt: readAt,
+      isVisibleInViewport: _isMessageVisibleInViewport,
+    );
+
+    final nextShow = remaining > 0;
+    if (nextShow != showJumpToUnread || remaining != enterUnreadCount) {
+      enterUnreadCount = remaining;
+      showJumpToUnread = nextShow;
+      if (!nextShow) unreadDividerAtIndex = null;
+      onChanged();
+    }
+  }
+
   void _onScroll() {
     if (_suppressScrollHandling) return;
     tailPinned = isNearBottom;
+    updateUnreadVisibility();
+
     if (!isNearBottom) return;
 
     if (belowUnreadCount > 0 || showJumpToBottom) {
@@ -107,7 +190,6 @@ class ChatScrollCoordinator {
     tailPinned = true;
     belowUnreadCount = 0;
     showJumpToBottom = false;
-    showJumpToUnread = false;
     onChanged();
     scrollToBottom(animated: true);
     if (messages.isNotEmpty) {
@@ -117,21 +199,35 @@ class ChatScrollCoordinator {
       });
       unawaited(markRead());
     }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      enterUnreadCount = 0;
+      showJumpToUnread = false;
+      unreadDividerAtIndex = null;
+      onChanged();
+    });
   }
 
   void onJumpToUnread(List<ChatMessage> messages) {
     final idx = firstUnreadIndexIn(messages, readAtSnapshot);
     if (idx == null) {
       showJumpToUnread = false;
+      enterUnreadCount = 0;
+      unreadDividerAtIndex = null;
       onChanged();
       return;
     }
     final msg = messages[idx];
-    showJumpToUnread = false;
     unreadDividerAtIndex = idx;
+    showJumpToUnread = false;
+    enterUnreadCount = 0;
     onChanged();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      unawaited(scrollToMessage(msg.id, viewportAlign: 0.68));
+      unawaited(
+        scrollToMessage(
+          msg.id,
+          viewportAlign: 0.68,
+        ).whenComplete(updateUnreadVisibility),
+      );
       focusMessage(msg.id);
     });
   }
@@ -171,10 +267,14 @@ class ChatScrollCoordinator {
                 duration: const Duration(milliseconds: 280),
                 curve: Curves.easeOutCubic,
               )
-              .whenComplete(() => _suppressScrollHandling = false);
+              .whenComplete(() {
+                _suppressScrollHandling = false;
+                updateUnreadVisibility();
+              });
         } else {
           scrollController.jumpTo(target);
           _suppressScrollHandling = false;
+          updateUnreadVisibility();
         }
       } catch (_) {
         _suppressScrollHandling = false;
@@ -189,6 +289,7 @@ class ChatScrollCoordinator {
       _suppressScrollHandling = true;
       scrollController.jumpTo(scrollController.position.minScrollExtent);
       _suppressScrollHandling = false;
+      updateUnreadVisibility();
     }
   }
 
@@ -230,10 +331,14 @@ class ChatScrollCoordinator {
               duration: const Duration(milliseconds: 320),
               curve: Curves.easeOutCubic,
             )
-            .whenComplete(() => _suppressScrollHandling = false);
+            .whenComplete(() {
+              _suppressScrollHandling = false;
+              updateUnreadVisibility();
+            });
       } else {
         pos.jumpTo(offset);
         _suppressScrollHandling = false;
+        updateUnreadVisibility();
       }
     }
     run();

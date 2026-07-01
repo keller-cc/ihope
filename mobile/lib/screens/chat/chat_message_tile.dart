@@ -3,7 +3,9 @@ import 'package:flutter/material.dart';
 import '../../models/conversation.dart';
 import '../../models/message.dart';
 import '../../models/user.dart';
+import '../../utils/announcement_read.dart';
 import '../../utils/message_time.dart';
+import '../../widgets/announcement_card.dart';
 import '../../widgets/chat_bubble.dart';
 import '../../widgets/chat_scroll_chip.dart';
 
@@ -22,6 +24,9 @@ class ChatMessageTile extends StatelessWidget {
     required this.onPeerTap,
     required this.onMediaRetry,
     required this.onSendRetry,
+    this.announcementReadId,
+    this.onAnnouncementTap,
+    this.allMessages = const [],
     this.itemKey,
   });
 
@@ -37,6 +42,9 @@ class ChatMessageTile extends StatelessWidget {
   final void Function(String userId) onPeerTap;
   final Future<void> Function(String messageId) onMediaRetry;
   final void Function(ChatMessage msg) onSendRetry;
+  final String? announcementReadId;
+  final void Function(ChatMessage msg)? onAnnouncementTap;
+  final List<ChatMessage> allMessages;
   final Key? itemKey;
 
   @override
@@ -56,6 +64,20 @@ class ChatMessageTile extends StatelessWidget {
                 color: Theme.of(context).colorScheme.onSurfaceVariant,
               ),
         ),
+      );
+    } else if (msg.type == 'announcement') {
+      final annUnread = AnnouncementRead.isUnread(
+        announcement: msg,
+        readMessageId: announcementReadId,
+        myUserId: me.id,
+        allMessages: allMessages,
+      );
+      body = AnnouncementCard(
+        msg: msg,
+        isUnread: annUnread,
+        onTap: onAnnouncementTap == null
+            ? null
+            : () => onAnnouncementTap!(msg),
       );
     } else {
       body = ChatBubble(
@@ -138,33 +160,32 @@ class ChatFloatingChips extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (!showJumpToUnread && !showJumpToBottom) return const SizedBox.shrink();
-    return Positioned(
-      right: 0,
-      top: 72,
-      bottom: 72,
-      child: Align(
-        alignment: Alignment.centerRight,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.end,
-          children: [
-            if (showJumpToUnread)
-              ChatScrollChip(
-                label: '$enterUnreadCount 条未读',
-                icon: Icons.arrow_upward_rounded,
-                onTap: onJumpToUnread,
-              ),
-            if (showJumpToUnread && showJumpToBottom) const SizedBox(height: 10),
-            if (showJumpToBottom)
-              ChatScrollChip(
-                label: belowUnreadCount > 0 ? '$belowUnreadCount 条新消息' : '回到底部',
-                icon: Icons.arrow_downward_rounded,
-                onTap: onJumpToBottom,
-              ),
-          ],
-        ),
-      ),
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        if (showJumpToUnread)
+          Positioned(
+            right: 0,
+            top: 8,
+            child: ChatScrollChip(
+              label: enterUnreadCount > 0
+                  ? '$enterUnreadCount条未读'
+                  : '直达未读',
+              icon: Icons.north_rounded,
+              onTap: onJumpToUnread,
+            ),
+          ),
+        if (showJumpToBottom)
+          Positioned(
+            right: 0,
+            bottom: 12,
+            child: ChatScrollChip(
+              label: belowUnreadCount > 0 ? '$belowUnreadCount 条新消息' : '回到底部',
+              icon: Icons.arrow_downward_rounded,
+              onTap: onJumpToBottom,
+            ),
+          ),
+      ],
     );
   }
 }

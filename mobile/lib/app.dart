@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import 'services/auth_service.dart';
@@ -14,22 +16,23 @@ class IHopeApp extends StatefulWidget {
 }
 
 class _IHopeAppState extends State<IHopeApp> {
-  bool _ready = false;
-  bool _loggedIn = false;
+  bool? _loggedIn;
 
   @override
   void initState() {
     super.initState();
-    _bootstrap();
+    unawaited(_bootstrap());
   }
 
   Future<void> _bootstrap() async {
+    final local = await widget.auth.restoreLocalSession();
+    if (!mounted) return;
+    setState(() => _loggedIn = local);
+    if (!local) return;
+
     final ok = await widget.auth.restoreSession();
     if (!mounted) return;
-    setState(() {
-      _loggedIn = ok;
-      _ready = true;
-    });
+    if (!ok) setState(() => _loggedIn = false);
   }
 
   Future<void> _onLoggedIn() async {
@@ -50,11 +53,11 @@ class _IHopeAppState extends State<IHopeApp> {
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.indigo),
         useMaterial3: true,
       ),
-      home: !_ready
-          ? const Scaffold(body: Center(child: CircularProgressIndicator()))
-          : _loggedIn
-              ? ConversationsScreen(auth: widget.auth, onLogout: _onLogout)
-              : LoginScreen(auth: widget.auth, onLoggedIn: _onLoggedIn),
+      home: switch (_loggedIn) {
+        null => const Scaffold(),
+        true => ConversationsScreen(auth: widget.auth, onLogout: _onLogout),
+        false => LoginScreen(auth: widget.auth, onLoggedIn: _onLoggedIn),
+      },
     );
   }
 }

@@ -67,6 +67,10 @@ class ChatThreadLoader {
     if (fetchRemote) {
       msgs = await fetchRemoteMerged(msgs);
     }
+    final me = auth.currentUser;
+    if (me != null) {
+      msgs = conversation.messagesVisibleToMember(me.id, msgs);
+    }
     await prepareGroup(msgs);
     return auth.decryptMessagesLocal(conversation, msgs);
   }

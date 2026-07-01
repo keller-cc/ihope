@@ -7,6 +7,7 @@ import '../models/conversation.dart';
 import '../models/message.dart';
 import '../services/auth_service.dart';
 import '../services/ws_service.dart';
+import '../utils/announcement_payload.dart';
 import '../utils/conversation_sort.dart';
 import '../utils/media_payload.dart';
 import '../utils/message_time.dart';
@@ -40,9 +41,9 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
   final Map<String, String> _previews = {};
   final Map<String, List<ChatMessage>> _messageCache = {};
   final Map<String, int> _unreadCounts = {};
+  final Map<String, bool> _announcementUnread = {};
   Set<String> _hiddenIds = {};
   final _search = TextEditingController();
-  bool _loading = true;
   bool _refreshing = false;
   String? _error;
   String? _offlineNotice;
@@ -53,6 +54,7 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
   StreamSubscription<ConversationRemovedFrame>? _removedSub;
   StreamSubscription<ConversationUpdatedFrame>? _updatedSub;
   StreamSubscription<List<ConnectivityResult>>? _connectivitySub;
+  StreamSubscription<String>? _groupKeySub;
 
   void _syncOfflineNotice() {
     _offlineNotice = widget.auth.ws.isConnected
@@ -85,6 +87,25 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
         widget.auth.ws.onConversationRemoved.listen(_onConversationRemoved);
     _updatedSub =
         widget.auth.ws.onConversationUpdated.listen(_onConversationUpdated);
+    _groupKeySub = widget.auth.onGroupKeyReady.listen((convId) {
+      unawaited(_refreshPreviewFor(convId));
+    });
+  }
+
+  Future<void> _refreshPreviewFor(String conversationId) async {
+    if (!mounted) return;
+    final index = _items.indexWhere((c) => c.id == conversationId);
+    if (index < 0) return;
+    final item = _items[index];
+    final last = item.lastMessage;
+    if (last == null) return;
+    final preview = await widget.auth.decryptPreview(
+      item,
+      last,
+      cachedThread: _messageCache[item.id],
+    );
+    if (!mounted) return;
+    setState(() => _previews[item.id] = preview);
   }
 
   void _onConversationUpdated(ConversationUpdatedFrame frame) {
@@ -114,6 +135,7 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
     _removedSub?.cancel();
     _updatedSub?.cancel();
     _connectivitySub?.cancel();
+    _groupKeySub?.cancel();
     _connSub?.cancel();
     super.dispose();
   }
@@ -250,9 +272,14 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
     ChatMessage msg,
   ) {
     if (msg.type == 'system') return msg.ciphertext;
-    final body = msg.type == 'text'
-        ? ChatMessage.decryptPlaceholder
-        : MediaPayload.previewLabel('', msg.type);
+    final String body;
+    if (msg.type == 'announcement') {
+      body = AnnouncementPayload.previewFromPlaintext(msg.plaintext);
+    } else if (msg.type == 'text') {
+      body = ChatMessage.decryptPlaceholder;
+    } else {
+      body = MediaPayload.previewLabel('', msg.type);
+    }
     if (item.type != 'group') return body;
     return '${_senderName(item, meId, msg.senderId)}: $body';
   }
@@ -290,7 +317,17 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
     });
 
     unawaited(_applyIncomingPreview(conv, msg));
+    unawaited(widget.auth.upsertCachedMessage(conv.id, msg));
     unawaited(() async {
+      if (msg.type == 'announcement' && conv.type == 'group') {
+        if (!mounted) return;
+        final annUnread = await widget.auth.hasUnreadAnnouncementFor(
+          updated,
+        );
+        if (!mounted) return;
+        setState(() => _announcementUnread[msg.conversationId] = annUnread);
+        return;
+      }
       await widget.auth.noteIncomingMessage(msg);
       if (!mounted) return;
       if (widget.auth.isConversationOpen(msg.conversationId)) {
@@ -385,7 +422,9 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
     if (existing.any((m) => m.id == msg.id)) return;
     final stored = msg.type == 'system'
         ? msg.copyWith(plaintext: msg.ciphertext)
-        : msg.copyWith(plaintext: preview);
+        : msg.type == 'announcement'
+            ? msg
+            : msg.copyWith(plaintext: preview);
     _messageCache[conversationId] = [...existing, stored];
   }
 
@@ -394,8 +433,18 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
     final counts = await widget.auth.unreadCountsFor(
       _items.map((c) => c.id),
     );
+    final annUnread = <String, bool>{};
+    for (final item in _items) {
+      if (item.type != 'group') continue;
+      annUnread[item.id] = await widget.auth.hasUnreadAnnouncementFor(item);
+    }
     if (!mounted) return;
-    setState(() => _unreadCounts..clear..addAll(counts));
+    setState(() {
+      _unreadCounts..clear..addAll(counts);
+      _announcementUnread
+        ..clear
+        ..addAll(annUnread);
+    });
   }
 
   /// 重连后拉取离线消息并刷新未读角标。
@@ -558,20 +607,14 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
         setState(() {
           _pinnedIds = pinned;
           _items = sortConversationsByPin(cached, pinned);
-          _loading = false;
         });
         unawaited(_loadMessageCaches(cached));
         unawaited(_refreshUnreadCounts());
       }
     }
 
-    final isInitial = _items.isEmpty;
     setState(() {
-      if (isInitial) {
-        _loading = true;
-      } else {
-        _refreshing = true;
-      }
+      _refreshing = true;
       _error = null;
     });
     try {
@@ -587,6 +630,14 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
       final msgCaches = await widget.auth.loadCachedMessagesForConversations(
         items.map((c) => c.id),
       );
+      for (final item in items) {
+        if (item.type != 'group' || item.lastMessage == null) continue;
+        widget.auth.prepareGroupConversation(item);
+        await widget.auth.ensureGroupKeys(
+          item,
+          epochs: [item.lastMessage!.epoch],
+        );
+      }
       final previews = <String, String>{};
       for (final item in items) {
         final last = item.lastMessage;
@@ -640,12 +691,7 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
         });
       }
     } finally {
-      if (mounted) {
-        setState(() {
-          _loading = false;
-          _refreshing = false;
-        });
-      }
+      if (mounted) setState(() => _refreshing = false);
     }
   }
 
@@ -879,7 +925,11 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
     ChatMessage? last,
   ) {
     var text = preview;
-    if (last != null && last.type != 'system') {
+    if (last?.type == 'announcement') {
+      text = AnnouncementPayload.previewFromPlaintext(
+        preview == ChatMessage.decryptPlaceholder ? null : preview,
+      );
+    } else if (last != null && last.type != 'system') {
       text = MediaPayload.previewLabel(preview, last.type);
     }
     if (item.type != 'group' || last == null || last.type == 'system') {
@@ -999,9 +1049,7 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
           Expanded(
             child: RefreshIndicator(
               onRefresh: _load,
-              child: _loading && _items.isEmpty
-                  ? const Center(child: CircularProgressIndicator())
-                  : _error != null && _items.isEmpty
+              child: _error != null && _items.isEmpty
                       ? ListView(
                           children: [
                             Padding(
@@ -1017,7 +1065,9 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
                                 Center(
                                   child: Text(
                                     _items.isEmpty
-                                        ? '暂无会话，点右上角 + 发起聊天'
+                                        ? (_refreshing
+                                            ? '正在同步会话…'
+                                            : '暂无会话，点右上角 + 发起聊天')
                                         : '无匹配的会话',
                                   ),
                                 ),
@@ -1032,7 +1082,10 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
                                 final last = item.lastMessage;
                                 final rawPreview = last == null
                                     ? '暂无消息'
-                                    : (_previews[item.id] ?? last.displayText);
+                                    : (_previews[item.id] ??
+                                        (last.type == 'announcement'
+                                            ? '[群公告]'
+                                            : last.displayText));
                                 final preview = _formatLastMessagePreview(
                                   item,
                                   me.id,
@@ -1042,6 +1095,8 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
                                 final peerName = item.displayTitle(me.id);
                                 final isPinned = _pinnedIds.contains(item.id);
                                 final unread = _unreadCounts[item.id] ?? 0;
+                                final annUnread =
+                                    _announcementUnread[item.id] ?? false;
                                 final subtitle = _subtitleFor(item, me.id, preview);
                                 return SwipeActionTile(
                                   key: ValueKey(item.id),
@@ -1109,6 +1164,19 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
                                               overflow: TextOverflow.ellipsis,
                                             ),
                                           ),
+                                          if (item.type == 'group' && annUnread)
+                                            Padding(
+                                              padding: const EdgeInsets.only(
+                                                left: 4,
+                                              ),
+                                              child: Icon(
+                                                Icons.campaign,
+                                                size: 16,
+                                                color: Theme.of(context)
+                                                    .colorScheme
+                                                    .error,
+                                              ),
+                                            ),
                                           if (last != null) ...[
                                             const SizedBox(width: 8),
                                             Text(

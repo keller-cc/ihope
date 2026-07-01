@@ -14,6 +14,8 @@ class ChatAppBar extends StatelessWidget implements PreferredSizeWidget {
     required this.isArchived,
     required this.onTitleTap,
     required this.onMenu,
+    this.onAnnouncements,
+    this.announcementUnread = false,
   });
 
   final ConversationItem conversation;
@@ -22,6 +24,8 @@ class ChatAppBar extends StatelessWidget implements PreferredSizeWidget {
   final bool isArchived;
   final VoidCallback? onTitleTap;
   final VoidCallback onMenu;
+  final VoidCallback? onAnnouncements;
+  final bool announcementUnread;
 
   @override
   Size get preferredSize => const Size.fromHeight(kToolbarHeight);
@@ -65,6 +69,16 @@ class ChatAppBar extends StatelessWidget implements PreferredSizeWidget {
         ),
       ),
       actions: [
+        if (isGroup && !isArchived && onAnnouncements != null)
+          IconButton(
+            tooltip: '群公告',
+            onPressed: onAnnouncements,
+            icon: Badge(
+              isLabelVisible: announcementUnread,
+              smallSize: 8,
+              child: const Icon(Icons.campaign_outlined),
+            ),
+          ),
         if (!isArchived)
           IconButton(
             tooltip: '更多',

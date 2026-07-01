@@ -123,8 +123,8 @@ func (r *Repository) ListForMember(
 			SELECT 1 FROM conversation_member_periods p
 			WHERE p.conversation_id = m.conversation_id
 			  AND p.user_id = $2
+			  AND p.left_at IS NULL
 			  AND m.created_at >= p.joined_at
-			  AND (p.left_at IS NULL OR m.created_at <= p.left_at)
 			  AND m.epoch >= p.joined_epoch
 		)`
 

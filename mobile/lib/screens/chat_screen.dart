@@ -8,8 +8,12 @@ import '../models/message.dart';
 import '../models/user.dart';
 import '../services/auth_service.dart';
 import '../services/ws_service.dart';
+import '../utils/announcement_read.dart';
 import '../widgets/chat_input_bar.dart';
+import '../widgets/group_announcement_banner.dart';
 import '../widgets/offline_banner.dart';
+import 'announcement_detail_screen.dart';
+import 'group_announcements_screen.dart';
 import 'chat/chat_app_bar.dart';
 import 'chat/chat_message_list_view.dart';
 import 'chat/chat_message_tile.dart';
@@ -50,8 +54,31 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _loading = true;
   String? _error;
   int _historyEpoch = 0;
+  String? _announcementReadId;
+  final Set<String> _dismissedAnnouncementBannerIds = {};
 
   bool get _isGroup => _conversation.type == 'group';
+
+  bool get _announcementUnread => widget.auth.isAnnouncementUnread(
+        _messages,
+        readMessageId: _announcementReadId,
+      );
+
+  List<ChatMessage> get _visibleUnreadAnnouncementBanners {
+    final me = widget.auth.currentUser;
+    if (me == null) return const [];
+    // unreadList is newest-first; keep the 3 most recent, show oldest at top.
+    final unread = AnnouncementRead.unreadList(
+      _messages,
+      readMessageId: _announcementReadId,
+      myUserId: me.id,
+    ).where((a) => !_dismissedAnnouncementBannerIds.contains(a.id));
+    return unread.take(3).toList(growable: false).reversed.toList(growable: false);
+  }
+
+  void _dismissAnnouncementBanner(String announcementId) {
+    setState(() => _dismissedAnnouncementBannerIds.add(announcementId));
+  }
 
   @override
   void initState() {
@@ -161,6 +188,8 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _presentMessages(List<ChatMessage> list, {DateTime? readAt}) async {
     final at = readAt ?? await widget.auth.readAtFor(_conversation.id);
+    final annReadId = await widget.auth.announcementReadIdFor(_conversation.id);
+    final me = widget.auth.currentUser;
     final unread = math.max(
       widget.auth.countUnreadInThread(list, readAt: at),
       widget.initialUnreadCount,
@@ -169,8 +198,15 @@ class _ChatScreenState extends State<ChatScreen> {
       _messages = ChatThreadLoader.preserveLocalOutgoing(list, _messages);
       _error = null;
       _loading = false;
+      _announcementReadId = annReadId;
       _scrollCoord.applyReadSnapshot(readAt: at, unread: unread);
     });
+    if (me != null) {
+      _scrollCoord.bindThread(_messages, me.id);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _scrollCoord.updateUnreadVisibility();
+      });
+    }
     unawaited(_thread.cacheIfReady(list));
     if (unread == 0) unawaited(_markReadToLast());
   }
@@ -219,7 +255,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
       final list = await _thread.resolve(
         cached: cached,
-        fetchRemote: !fullyLocal || _conversation.isArchived,
+        fetchRemote: _conversation.isArchived || _isGroup || !fullyLocal,
       );
       if (_isStale(epoch)) return;
       await _presentMessages(list, readAt: readAt);
@@ -315,6 +351,42 @@ class _ChatScreenState extends State<ChatScreen> {
     await _outgoing.resend(msg);
   }
 
+  Future<void> _markAnnouncementRead(ChatMessage ann) async {
+    await widget.auth.markAnnouncementRead(_conversation.id, ann.id);
+    if (!mounted) return;
+    _applyAnnouncementRead(ann.id);
+  }
+
+  void _applyAnnouncementRead(String? readMessageId) {
+    if (readMessageId == null) return;
+    setState(() => _announcementReadId = readMessageId);
+  }
+
+  Future<void> _openAnnouncements() async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => GroupAnnouncementsScreen(
+          auth: widget.auth,
+          conversation: _conversation,
+        ),
+      ),
+    );
+    if (!mounted) return;
+    final readId = await widget.auth.announcementReadIdFor(_conversation.id);
+    _applyAnnouncementRead(readId);
+  }
+
+  Future<void> _openAnnouncementDetail(ChatMessage ann) async {
+    final me = widget.auth.currentUser;
+    if (me == null) return;
+    await AnnouncementDetailScreen.open(
+      context,
+      msg: ann,
+      publisherName: _nameFor(ann.senderId, me),
+      onMarkRead: () => unawaited(_markAnnouncementRead(ann)),
+    );
+  }
+
   Future<void> _onIncomingMessage(ChatMessage msg) async {
     if (_conversation.isArchived ||
         msg.conversationId != _conversation.id ||
@@ -344,6 +416,7 @@ class _ChatScreenState extends State<ChatScreen> {
       _messages = ChatThreadLoader.upsert(list, materialized);
       _thread.cacheMessageIfReady(_messages, materialized);
     });
+    if (me != null) _scrollCoord.bindThread(_messages, me.id);
     _scrollCoord.handleTailAfterMessage(
       atBottom: atBottom,
       fromPeer: fromPeer,
@@ -519,6 +592,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
     final isArchived = _conversation.isArchived;
     final peer = _peerMember(me);
+    _scrollCoord.bindThread(_messages, me.id);
 
     return PopScope(
       canPop: !isArchived,
@@ -533,6 +607,9 @@ class _ChatScreenState extends State<ChatScreen> {
           isGroup: _isGroup,
           isArchived: isArchived,
           onTitleTap: peer != null ? () => _openUserDetail(peer.userId) : null,
+          onAnnouncements:
+              _isGroup && !isArchived ? () => unawaited(_openAnnouncements()) : null,
+          announcementUnread: _announcementUnread,
           onMenu: () => unawaited(_openConversationMenu()),
         ),
         body: Column(
@@ -556,6 +633,14 @@ class _ChatScreenState extends State<ChatScreen> {
                   ],
                 ),
               ),
+            if (_isGroup && !isArchived)
+              for (final ann in _visibleUnreadAnnouncementBanners)
+                GroupAnnouncementBanner(
+                  announcement: ann,
+                  isUnread: true,
+                  onTap: () => _openAnnouncementDetail(ann),
+                  onDismiss: () => _dismissAnnouncementBanner(ann.id),
+                ),
             Expanded(
               child: Stack(
                 clipBehavior: Clip.none,
@@ -575,6 +660,8 @@ class _ChatScreenState extends State<ChatScreen> {
                     onPeerTap: _openUserDetail,
                     onMediaRetry: _repairMessageMedia,
                     onSendRetry: (msg) => unawaited(_onSendRetry(msg)),
+                    announcementReadId: _announcementReadId,
+                    onAnnouncementTap: (msg) => unawaited(_openAnnouncementDetail(msg)),
                     onRefresh: _onPullRefresh,
                   ),
                   ChatFloatingChips(
@@ -598,7 +685,6 @@ class _ChatScreenState extends State<ChatScreen> {
                 onVoiceHoldEnd: _outgoing.finishVoiceRecord,
                 onImage: () => unawaited(_outgoing.pickImage()),
                 onFile: () => unawaited(_outgoing.pickFile()),
-                onEmoji: () => _showSnack('表情功能即将上线'),
               ),
           ],
         ),

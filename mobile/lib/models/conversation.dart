@@ -156,5 +156,16 @@ class ConversationItem {
     return 0;
   }
 
+  /// 活跃群成员仅看当前 joined_epoch 及之后；归档会话保留完整本地历史。
+  List<ChatMessage> messagesVisibleToMember(
+    String myUserId,
+    List<ChatMessage> messages,
+  ) {
+    if (type != 'group' || isArchived) return messages;
+    if (!members.any((m) => m.userId == myUserId)) return messages;
+    final joined = joinedEpochFor(myUserId);
+    return messages.where((m) => m.epoch >= joined).toList(growable: false);
+  }
+
   String peerDisplayName(String currentUserId) => displayTitle(currentUserId);
 }

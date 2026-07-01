@@ -3,6 +3,7 @@ package server_test
 import (
 	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -236,6 +237,50 @@ func TestConversationFlowIntegration(t *testing.T) {
 	decodeBody(t, rotateRec.Body, &rotateResp)
 	if rotateResp.Epoch < 1 {
 		t.Fatalf("expected epoch >= 1 after rotate, got %d", rotateResp.Epoch)
+	}
+
+	// Bob removed then re-added: should see join notice, not prior kick notice.
+	removeBRec := doJSON(t, handler, http.MethodDelete, "/api/conversations/"+groupID+"/members/"+bUser.ID, nil, aToken)
+	if removeBRec.Code != http.StatusOK {
+		t.Fatalf("remove b status = %d body = %s", removeBRec.Code, removeBRec.Body.String())
+	}
+
+	readdBRec := doJSON(t, handler, http.MethodPost, "/api/conversations/"+groupID+"/members", map[string]any{
+		"member_ids": []string{bUser.ID},
+	}, aToken)
+	if readdBRec.Code != http.StatusOK {
+		t.Fatalf("re-add b status = %d body = %s", readdBRec.Code, readdBRec.Body.String())
+	}
+
+	bAfterReaddRec := doJSON(t, handler, http.MethodGet, "/api/conversations/"+groupID+"/messages", nil, bToken)
+	if bAfterReaddRec.Code != http.StatusOK {
+		t.Fatalf("b list after re-add status = %d body = %s", bAfterReaddRec.Code, bAfterReaddRec.Body.String())
+	}
+	var bAfterReadd struct {
+		Messages []struct {
+			Type       string `json:"type"`
+			Ciphertext string `json:"ciphertext"`
+		} `json:"messages"`
+	}
+	decodeBody(t, bAfterReaddRec.Body, &bAfterReadd)
+	seenJoin := false
+	seenKick := false
+	for _, m := range bAfterReadd.Messages {
+		if m.Type != "system" {
+			continue
+		}
+		if strings.Contains(m.Ciphertext, "加入了群聊") {
+			seenJoin = true
+		}
+		if strings.Contains(m.Ciphertext, "移出了群聊") {
+			seenKick = true
+		}
+	}
+	if !seenJoin {
+		t.Fatalf("re-added member should see join notice, got %+v", bAfterReadd.Messages)
+	}
+	if seenKick {
+		t.Fatalf("re-added member should not see prior kick notice, got %+v", bAfterReadd.Messages)
 	}
 }
 

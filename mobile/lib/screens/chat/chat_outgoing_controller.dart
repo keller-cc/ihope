@@ -162,11 +162,9 @@ class ChatOutgoingController {
   }
 
   Future<void> pickFile() async {
-    final result = await FilePicker.platform.pickFiles(withData: true);
-    if (result == null || result.files.isEmpty) return;
-    final file = result.files.single;
-    final bytes = file.bytes;
-    if (bytes == null) return;
+    final file = await FilePicker.pickFile(type: FileType.any);
+    if (file == null) return;
+    final bytes = await file.readAsBytes();
     await sendMedia(
       type: 'file',
       media: MediaPayload(
