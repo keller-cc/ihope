@@ -64,6 +64,21 @@ class ConversationService {
     );
   }
 
+  /// Megolm 定期轮换：epoch+1，不改变成员 joined_epoch。
+  Future<({ConversationItem conversation, int epoch})> rotateGroupKeys(
+    String conversationId,
+  ) async {
+    final data = await api.postJson(
+      '/api/conversations/$conversationId/rotate-keys',
+    );
+    return (
+      conversation: ConversationItem.fromJson(
+        data['conversation'] as Map<String, dynamic>,
+      ),
+      epoch: data['epoch'] as int,
+    );
+  }
+
   Future<
       ({
         ConversationItem conversation,
@@ -146,6 +161,17 @@ class ConversationService {
     );
     return (data['bundles'] as List<dynamic>? ?? [])
         .map((e) => GroupKeyBundle.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<List<ConversationMember>> listMemberDirectory(
+    String conversationId,
+  ) async {
+    final data = await api.getJson(
+      '/api/conversations/$conversationId/member-directory',
+    );
+    return (data['members'] as List<dynamic>)
+        .map((e) => ConversationMember.fromJson(e as Map<String, dynamic>))
         .toList();
   }
 

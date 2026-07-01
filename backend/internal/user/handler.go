@@ -41,7 +41,8 @@ func NewHandler(repo *Repository, cfg config.Config) *Handler {
 }
 
 type updateMeRequest struct {
-	Username string `json:"username"`
+	Username          string `json:"username"`
+	IdentityPublicKey string `json:"identity_public_key"`
 }
 
 // Me GET /api/users/me
@@ -65,7 +66,7 @@ func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, u)
 }
 
-// UpdateMe PATCH /api/users/me — 修改用户名。
+// UpdateMe PATCH /api/users/me — 修改用户名或同步身份公钥（换设备/模拟器）。
 func (h *Handler) UpdateMe(w http.ResponseWriter, r *http.Request) {
 	var req updateMeRequest
 	if err := httpx.DecodeJSON(r, &req); err != nil {
@@ -74,24 +75,50 @@ func (h *Handler) UpdateMe(w http.ResponseWriter, r *http.Request) {
 	}
 
 	username := strings.TrimSpace(req.Username)
-	if !usernamePattern.MatchString(username) {
-		httpx.WriteError(w, http.StatusBadRequest, "validation_error", "invalid username")
+	identityKey := strings.TrimSpace(req.IdentityPublicKey)
+	if username == "" && identityKey == "" {
+		httpx.WriteError(w, http.StatusBadRequest, "validation_error", "nothing to update")
 		return
 	}
 
 	userID := middleware.UserIDFromContext(r.Context())
-	u, err := h.repo.UpdateUsername(r.Context(), userID, username)
-	if errors.Is(err, ErrUsernameTaken) {
-		httpx.WriteError(w, http.StatusConflict, "username_taken", "username already taken")
-		return
+	var u *User
+	var err error
+
+	if username != "" {
+		if !usernamePattern.MatchString(username) {
+			httpx.WriteError(w, http.StatusBadRequest, "validation_error", "invalid username")
+			return
+		}
+		u, err = h.repo.UpdateUsername(r.Context(), userID, username)
+		if errors.Is(err, ErrUsernameTaken) {
+			httpx.WriteError(w, http.StatusConflict, "username_taken", "username already taken")
+			return
+		}
+		if errors.Is(err, ErrNotFound) {
+			httpx.WriteError(w, http.StatusNotFound, "not_found", "user not found")
+			return
+		}
+		if err != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "could not update profile")
+			return
+		}
 	}
-	if errors.Is(err, ErrNotFound) {
-		httpx.WriteError(w, http.StatusNotFound, "not_found", "user not found")
-		return
-	}
-	if err != nil {
-		httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "could not update profile")
-		return
+
+	if identityKey != "" {
+		if err := ValidateIdentityPublicKey(identityKey); err != nil {
+			httpx.WriteError(w, http.StatusBadRequest, "validation_error", "invalid identity_public_key")
+			return
+		}
+		u, err = h.repo.UpdateIdentityPublicKey(r.Context(), userID, identityKey)
+		if errors.Is(err, ErrNotFound) {
+			httpx.WriteError(w, http.StatusNotFound, "not_found", "user not found")
+			return
+		}
+		if err != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "could not update profile")
+			return
+		}
 	}
 
 	httpx.WriteJSON(w, http.StatusOK, u)

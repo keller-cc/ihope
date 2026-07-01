@@ -89,6 +89,59 @@ func (r *Repository) ExistsByID(ctx context.Context, id string) (bool, error) {
 	return exists, err
 }
 
+// AllExistByIDs 批量校验用户是否存在；返回不存在的 id 列表。
+func (r *Repository) AllExistByIDs(ctx context.Context, ids []string) ([]string, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	rows, err := r.pool.Query(ctx, `SELECT id FROM users WHERE id = ANY($1)`, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	found := make(map[string]struct{}, len(ids))
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		found[id] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	var missing []string
+	for _, id := range ids {
+		if _, ok := found[id]; !ok {
+			missing = append(missing, id)
+		}
+	}
+	return missing, nil
+}
+
+// PublicNamesByIDs 批量读取展示名。
+func (r *Repository) PublicNamesByIDs(ctx context.Context, ids []string) (map[string]string, error) {
+	if len(ids) == 0 {
+		return map[string]string{}, nil
+	}
+	rows, err := r.pool.Query(ctx, `SELECT id, username FROM users WHERE id = ANY($1)`, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make(map[string]string, len(ids))
+	for rows.Next() {
+		var id, name string
+		if err := rows.Scan(&id, &name); err != nil {
+			return nil, err
+		}
+		out[id] = name
+	}
+	return out, rows.Err()
+}
+
 func (r *Repository) ListPublic(ctx context.Context, excludeUserID, query string, limit int) ([]PublicUser, error) {
 	var rows pgx.Rows
 	var err error
@@ -184,6 +237,20 @@ func (r *Repository) UpdateAvatarURL(ctx context.Context, userID string, avatarU
 		WHERE id = $1
 		RETURNING id, email, username, avatar_url, identity_public_key, email_verified_at, created_at, updated_at`,
 		userID, avatarURL,
+	)
+	u, err := scanUser(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	return u, err
+}
+
+func (r *Repository) UpdateIdentityPublicKey(ctx context.Context, userID, identityPublicKey string) (*User, error) {
+	row := r.pool.QueryRow(ctx, `
+		UPDATE users SET identity_public_key = $2, updated_at = now()
+		WHERE id = $1
+		RETURNING id, email, username, avatar_url, identity_public_key, email_verified_at, created_at, updated_at`,
+		userID, identityPublicKey,
 	)
 	u, err := scanUser(row)
 	if errors.Is(err, pgx.ErrNoRows) {

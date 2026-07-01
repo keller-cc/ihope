@@ -1,0 +1,35 @@
+$kind: http-request
+name: POST /api/conversations/{id}/key-bundles
+url: "{{baseUrl}}/api/conversations/{{conversation_id}}/key-bundles"
+method: POST
+headers:
+  Content-Type: application/json
+  Authorization: Bearer {{access_token}}
+body:
+  type: json
+  content: |-
+    {
+      "bundles": [
+        {
+          "epoch": {{group_epoch}},
+          "recipient_user_id": "{{peer_user_id}}",
+          "ciphertext": "e2ee:gw:v1:postman-opaque-welcome-bundle"
+        }
+      ]
+    }
+scripts:
+  - type: beforeRequest
+    language: text/javascript
+    code: |-
+      if (!pm.environment.get('group_epoch')) {
+        pm.environment.set('group_epoch', '0');
+      }
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      pm.test('key bundles uploaded', function () {
+        pm.response.to.have.status(201);
+        const json = pm.response.json();
+        pm.expect(json.ok).to.eql(true);
+      });
+order: 3800

@@ -1,0 +1,19 @@
+$kind: http-request
+name: POST /api/conversations/{id}/rotate-keys
+url: "{{baseUrl}}/api/conversations/{{conversation_id}}/rotate-keys"
+method: POST
+headers:
+  Authorization: Bearer {{access_token}}
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      pm.test('group keys rotated', function () {
+        pm.response.to.have.status(200);
+        const json = pm.response.json();
+        pm.expect(json.epoch).to.be.a('number').that.is.at.least(1);
+        if (pm.environment.name) {
+          pm.environment.set('group_epoch', String(json.epoch));
+        }
+      });
+order: 3900

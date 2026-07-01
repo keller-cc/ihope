@@ -105,13 +105,9 @@ func (h *Handler) onMembersAdded(
 	}
 	actorName := h.svc.DisplayName(ctx, actorID)
 	names := strings.Join(h.svc.DisplayNames(ctx, added), "、")
-	// 邀请提示写入上一 epoch，避免新成员因 joined_epoch 过滤仍能看到入群前的提示。
-	noticeEpoch := item.Epoch - 1
-	if noticeEpoch < 0 {
-		noticeEpoch = 0
-	}
+	// 写入当前 epoch，与受邀成员的 joined_epoch 一致，便于首页预览与会话内展示入群提示。
 	h.postSystemNoticeAtEpoch(ctx, item.ID, actorID,
-		fmt.Sprintf("%s 邀请 %s 加入了群聊", actorName, names), noticeEpoch)
+		fmt.Sprintf("%s 邀请 %s 加入了群聊", actorName, names), item.Epoch)
 	h.notifyConversationAddedForUsers(ctx, added, item.ID)
 }
 

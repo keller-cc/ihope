@@ -18,7 +18,7 @@ class MediaSaveResult {
   final String displayLabel;
 }
 
-/// 将媒体保存到系统公共目录（Pictures/IHope、Download/IHope、相册等）。
+/// 将媒体保存到系统公共目录（Pictures、Download、相册等）。
 class MediaSave {
   static const _androidChannel = MethodChannel('com.ihope.ihope/media_save');
 
@@ -60,7 +60,7 @@ class MediaSave {
     }
 
     final tempDir = await getTemporaryDirectory();
-    final tempFile = File('${tempDir.path}/ihope_$fileName');
+    final tempFile = File('${tempDir.path}/$fileName');
     await _writeBytes(tempFile, bytes, (p) => onProgress?.call(p * 0.85));
     try {
       if (!kIsWeb && Platform.isIOS) {
@@ -96,10 +96,10 @@ class MediaSave {
 
   static String snackBarFor(MediaSaveResult result) {
     if (result.displayLabel.startsWith('Pictures/')) {
-      return '已保存至 ${result.displayLabel}，请在文件管理 → 图片/Pictures → IHope 查看';
+      return '已保存至 ${result.displayLabel}，请在文件管理 → 图片/Pictures 查看';
     }
     if (result.displayLabel.startsWith('Download/')) {
-      return '已保存至 ${result.displayLabel}，请在文件管理 → 下载/Download → IHope 查看';
+      return '已保存至 ${result.displayLabel}，请在文件管理 → 下载/Download 查看';
     }
     return '已保存至 ${result.displayLabel}';
   }
@@ -212,14 +212,12 @@ class MediaSave {
   }) async {
     final downloads =
         await getDownloadsDirectory() ?? await getApplicationDocumentsDirectory();
-    final ihopeDir = Directory('${downloads.path}/IHope');
-    if (!await ihopeDir.exists()) await ihopeDir.create(recursive: true);
-    final target = File('${ihopeDir.path}/$fileName');
+    final target = File('${downloads.path}/$fileName');
     await tempFile.copy(target.path);
     onProgress?.call(1);
     return MediaSaveResult(
       openPath: target.path,
-      displayLabel: 'Download/IHope/$fileName',
+      displayLabel: 'Download/$fileName',
     );
   }
 

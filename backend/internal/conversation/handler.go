@@ -192,6 +192,37 @@ func (h *Handler) RemoveMember(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, resp)
 }
 
+// RotateKeys POST /api/conversations/{id}/rotate-keys — Megolm 定期 GMK 轮换（epoch+1）
+func (h *Handler) RotateKeys(w http.ResponseWriter, r *http.Request) {
+	conversationID := r.PathValue("id")
+	userID := middleware.UserIDFromContext(r.Context())
+
+	item, newEpoch, err := h.svc.RotateGroupKeys(r.Context(), userID, conversationID)
+	if errors.Is(err, ErrNotMember) {
+		httpx.WriteError(w, http.StatusForbidden, "forbidden", "not a member")
+		return
+	}
+	if errors.Is(err, ErrNotGroup) {
+		httpx.WriteError(w, http.StatusBadRequest, "validation_error", "not a group conversation")
+		return
+	}
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "could not rotate keys")
+		return
+	}
+
+	if h.notify != nil {
+		if ids, err := h.svc.MemberUserIDs(r.Context(), conversationID); err == nil {
+			h.notify.NotifyEpochUpdated(ids, conversationID, newEpoch)
+		}
+	}
+
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"conversation": item,
+		"epoch":        newEpoch,
+	})
+}
+
 // Delete DELETE /api/conversations/{id} — 群主解散群聊
 func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 	conversationID := r.PathValue("id")
@@ -290,6 +321,18 @@ func (h *Handler) UploadKeyBundles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	epochSet := make(map[int]struct{}, len(inputs))
+	for _, b := range inputs {
+		epochSet[b.Epoch] = struct{}{}
+	}
+	epochs := make([]int, 0, len(epochSet))
+	for e := range epochSet {
+		epochs = append(epochs, e)
+	}
+	if ids, err := h.svc.MemberUserIDs(r.Context(), conversationID); err == nil && len(epochs) > 0 {
+		h.notify.NotifyGmkUpdated(ids, conversationID, userID, epochs)
+	}
+
 	httpx.WriteJSON(w, http.StatusCreated, map[string]any{"ok": true})
 }
 
@@ -329,6 +372,24 @@ func (h *Handler) ListKeyBundles(w http.ResponseWriter, r *http.Request) {
 	}
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"bundles": bundles})
+}
+
+// MemberDirectory GET /api/conversations/{id}/member-directory
+func (h *Handler) MemberDirectory(w http.ResponseWriter, r *http.Request) {
+	conversationID := r.PathValue("id")
+	userID := middleware.UserIDFromContext(r.Context())
+
+	members, err := h.svc.MemberDirectory(r.Context(), userID, conversationID)
+	if errors.Is(err, ErrNotMember) {
+		httpx.WriteError(w, http.StatusForbidden, "forbidden", "not a conversation member")
+		return
+	}
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "could not list member directory")
+		return
+	}
+
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"members": members})
 }
 
 // Patch PATCH /api/conversations/{id} — 群主修改群名称。

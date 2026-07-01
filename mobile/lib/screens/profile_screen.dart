@@ -1,11 +1,8 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../services/auth_service.dart';
 import '../widgets/auth_form.dart';
-import '../widgets/realtime_indicator.dart';
 import '../widgets/user_avatar.dart';
 import 'change_password_screen.dart';
 
@@ -28,20 +25,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
   bool _loading = false;
   bool _uploadingAvatar = false;
   String? _error;
-  StreamSubscription<bool>? _connSub;
 
   @override
   void initState() {
     super.initState();
     _username = TextEditingController(text: widget.auth.currentUser!.username);
-    _connSub = widget.auth.ws.onConnectionChanged.listen((_) {
-      if (mounted) setState(() {});
-    });
   }
 
   @override
   void dispose() {
-    _connSub?.cancel();
     _username.dispose();
     super.dispose();
   }
@@ -147,21 +139,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               child: const Text('更换头像'),
             ),
           ),
-          const SizedBox(height: 16),
-          RealtimeIndicator(
-            connected: widget.auth.ws.isConnected,
-            onReconnect: widget.auth.ws.isConnected
-                ? null
-                : () => widget.auth.reconnectRealtime(),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            '推送通道表示本机与服务器的 WebSocket 连接，不代表聊天对象在线。',
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                ),
-          ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 24),
           InputDecorator(
             decoration: const InputDecoration(labelText: '邮箱'),
             child: Text(user.email),

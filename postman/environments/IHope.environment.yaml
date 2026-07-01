@@ -23,7 +23,7 @@ values:
   - key: login_password
     value: password123
   - key: identity_public_key
-    value: AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=
+    value: BQABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f
   - key: peer_user_id
     value: ''
   - key: conversation_id
@@ -38,3 +38,11 @@ values:
     value: ''
   - key: message_after_epoch
     value: ''
+  - key: signal_identity_key
+    value: BQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+  - key: signal_signed_pre_key
+    value: BQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+  - key: signal_signed_pre_key_sig
+    value: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==
+  - key: signal_one_time_pre_key
+    value: BQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA

@@ -55,6 +55,7 @@ class ChatBubble extends StatelessWidget {
     required this.avatarUrlFor,
     this.onPeerTap,
     this.onMediaRetry,
+    this.onSendRetry,
   });
 
   final ChatMessage msg;
@@ -66,6 +67,7 @@ class ChatBubble extends StatelessWidget {
   final String? Function(String userId) avatarUrlFor;
   final void Function(String userId)? onPeerTap;
   final Future<void> Function(String messageId)? onMediaRetry;
+  final VoidCallback? onSendRetry;
 
   bool get _isMedia =>
       msg.type == 'image' ||
@@ -92,6 +94,53 @@ class ChatBubble extends StatelessWidget {
     return Text(msg.displayText);
   }
 
+  Widget _sendStatusIndicator(ColorScheme scheme) {
+    if (!mine) return const SizedBox.shrink();
+    switch (msg.sendStatus) {
+      case MessageSendStatus.sent:
+        return const SizedBox.shrink();
+      case MessageSendStatus.sending:
+        return Padding(
+          padding: const EdgeInsets.only(right: 6),
+          child: SizedBox(
+            width: 18,
+            height: 18,
+            child: CircularProgressIndicator(
+              strokeWidth: 2,
+              color: scheme.onSurfaceVariant,
+            ),
+          ),
+        );
+      case MessageSendStatus.failed:
+        return Padding(
+          padding: const EdgeInsets.only(right: 6),
+          child: GestureDetector(
+            onTap: onSendRetry,
+            behavior: HitTestBehavior.opaque,
+            child: Icon(
+              Icons.error_outline,
+              size: 22,
+              color: scheme.error,
+            ),
+          ),
+        );
+    }
+  }
+
+  Widget _bubbleWithStatus(Widget bubbleBox, ColorScheme scheme) {
+    if (!mine || msg.sendStatus == MessageSendStatus.sent) {
+      return bubbleBox;
+    }
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        _sendStatusIndicator(scheme),
+        bubbleBox,
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
@@ -116,6 +165,7 @@ class ChatBubble extends StatelessWidget {
       constraints: BoxConstraints(maxWidth: maxBubbleWidth),
       child: bubble,
     );
+    final bubbleWithStatus = _bubbleWithStatus(bubbleBox, scheme);
 
     Widget avatarFor(String userId, {VoidCallback? onTap}) {
       final child = UserAvatar(
@@ -147,6 +197,20 @@ class ChatBubble extends StatelessWidget {
 
     if (isGroup) {
       final userId = mine ? me.id : msg.senderId;
+      final nameStyle = Theme.of(context).textTheme.labelSmall?.copyWith(
+            fontWeight: FontWeight.w600,
+          );
+      final headerChildren = <Widget>[
+        if (mine && senderTitle != null) ...[
+          MemberTitleBadge(title: senderTitle!),
+          const SizedBox(width: 4),
+        ],
+        Text(nameFor(msg.senderId), style: nameStyle),
+        if (!mine && senderTitle != null) ...[
+          const SizedBox(width: 4),
+          MemberTitleBadge(title: senderTitle!),
+        ],
+      ];
       final messageColumn = Column(
         crossAxisAlignment:
             mine ? CrossAxisAlignment.end : CrossAxisAlignment.start,
@@ -154,20 +218,11 @@ class ChatBubble extends StatelessWidget {
         children: [
           Row(
             mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                nameFor(msg.senderId),
-                style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                      fontWeight: FontWeight.w600,
-                      height: 1.0,
-                    ),
-              ),
-              if (senderTitle != null) MemberTitleBadge(title: senderTitle!),
-            ],
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: headerChildren,
           ),
           const SizedBox(height: kGroupNameBubbleGap),
-          bubbleBox,
+          bubbleWithStatus,
         ],
       );
       final row = Row(
@@ -209,7 +264,7 @@ class ChatBubble extends StatelessWidget {
           mine ? CrossAxisAlignment.end : CrossAxisAlignment.start,
       children: [
         Row(
-          crossAxisAlignment: CrossAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             if (mine) const Spacer(),
             if (!mine) ...[
@@ -221,7 +276,7 @@ class ChatBubble extends StatelessWidget {
               ),
               const SizedBox(width: 6),
             ],
-            bubbleBox,
+            bubbleWithStatus,
             if (mine) ...[
               const SizedBox(width: 6),
               avatarFor(me.id),

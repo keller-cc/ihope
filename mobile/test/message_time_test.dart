@@ -14,26 +14,17 @@ void main() {
     });
 
     test('formats divider for today, yesterday, and older dates', () {
-      final now = DateTime(2026, 6, 29, 15, 30);
-      final today = DateTime(2026, 6, 29, 9, 5);
-      final yesterday = DateTime(2026, 6, 28, 9, 5);
-      final lastYear = DateTime(2025, 1, 2, 9, 5);
+      final now = DateTime.now();
+      final today = DateTime(now.year, now.month, now.day, 9, 5);
+      final yesterday = today.subtract(const Duration(days: 1));
+      final lastYear = DateTime(now.year - 1, 1, 2, 9, 5);
 
-      expect(
-        MessageTimeFormat.formatDivider(today),
-        '09:05',
-      );
-      expect(
-        MessageTimeFormat.formatDivider(yesterday),
-        '昨天 09:05',
-      );
+      expect(MessageTimeFormat.formatDivider(today), '09:05');
+      expect(MessageTimeFormat.formatDivider(yesterday), '昨天 09:05');
       expect(
         MessageTimeFormat.formatDivider(lastYear),
-        '2025年1月2日 09:05',
+        '${lastYear.year}年1月2日 09:05',
       );
-
-      // Keep `now` referenced so tests stay anchored to the same calendar day.
-      expect(now.day, 29);
     });
 
     test('formats bubble time', () {

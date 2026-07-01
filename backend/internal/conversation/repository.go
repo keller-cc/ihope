@@ -194,10 +194,9 @@ func (r *Repository) ListMemberUserIDs(ctx context.Context, conversationID strin
 
 func (r *Repository) ListForUser(ctx context.Context, userID string) ([]ListItem, error) {
 	rows, err := r.pool.Query(ctx, `
-		SELECT c.id, c.type, c.name, c.avatar_url, c.epoch, c.owner_id, c.created_at
+		SELECT c.id, c.type, c.name, c.avatar_url, c.epoch, c.owner_id, c.created_at, m.joined_epoch
 		FROM conversations c
-		JOIN conversation_members m ON m.conversation_id = c.id
-		WHERE m.user_id = $1 AND m.left_at IS NULL
+		JOIN conversation_members m ON m.conversation_id = c.id AND m.user_id = $1 AND m.left_at IS NULL
 		ORDER BY c.created_at DESC`, userID)
 	if err != nil {
 		return nil, err
@@ -205,27 +204,111 @@ func (r *Repository) ListForUser(ctx context.Context, userID string) ([]ListItem
 	defer rows.Close()
 
 	var items []ListItem
+	joinedEpochs := make(map[string]int)
 	for rows.Next() {
 		var item ListItem
-		if err := rows.Scan(&item.ID, &item.Type, &item.Name, &item.AvatarURL, &item.Epoch, &item.OwnerID, &item.CreatedAt); err != nil {
+		var joined int
+		if err := rows.Scan(
+			&item.ID, &item.Type, &item.Name, &item.AvatarURL,
+			&item.Epoch, &item.OwnerID, &item.CreatedAt, &joined,
+		); err != nil {
 			return nil, err
 		}
-		members, err := r.listMembers(ctx, item.ID)
-		if err != nil {
-			return nil, err
-		}
-		item.Members = members
-		preview, err := r.lastMessageForUser(ctx, item.ID, userID)
-		if err != nil {
-			return nil, err
-		}
-		item.LastMessage = preview
 		items = append(items, item)
+		joinedEpochs[item.ID] = joined
 	}
-	if items == nil {
-		items = []ListItem{}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
-	return items, rows.Err()
+	if len(items) == 0 {
+		return []ListItem{}, nil
+	}
+
+	convIDs := make([]string, len(items))
+	for i := range items {
+		convIDs[i] = items[i].ID
+	}
+
+	membersByConv, err := r.listMembersMap(ctx, convIDs)
+	if err != nil {
+		return nil, err
+	}
+	previewsByConv, err := r.lastMessagesForUser(ctx, userID, convIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	for i := range items {
+		id := items[i].ID
+		items[i].Members = membersByConv[id]
+		if items[i].Members == nil {
+			items[i].Members = []Member{}
+		}
+		items[i].LastMessage = previewsByConv[id]
+	}
+	return items, nil
+}
+
+func (r *Repository) listMembersMap(ctx context.Context, conversationIDs []string) (map[string][]Member, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT m.conversation_id, m.user_id, u.username, u.avatar_url, u.identity_public_key, m.joined_at, m.joined_epoch
+		FROM conversation_members m
+		JOIN users u ON u.id = m.user_id
+		WHERE m.conversation_id = ANY($1) AND m.left_at IS NULL
+		ORDER BY m.conversation_id, m.joined_at`, conversationIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make(map[string][]Member)
+	for rows.Next() {
+		var convID string
+		var m Member
+		if err := rows.Scan(
+			&convID, &m.UserID, &m.Username, &m.AvatarURL,
+			&m.IdentityPublicKey, &m.JoinedAt, &m.JoinedEpoch,
+		); err != nil {
+			return nil, err
+		}
+		out[convID] = append(out[convID], m)
+	}
+	return out, rows.Err()
+}
+
+func (r *Repository) lastMessagesForUser(
+	ctx context.Context,
+	userID string,
+	conversationIDs []string,
+) (map[string]*Preview, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT DISTINCT ON (msg.conversation_id)
+			msg.id, msg.conversation_id, msg.sender_id, msg.type, msg.ciphertext, msg.epoch, msg.created_at
+		FROM messages msg
+		JOIN conversation_members cm
+		  ON cm.conversation_id = msg.conversation_id
+		 AND cm.user_id = $1
+		 AND cm.left_at IS NULL
+		 AND msg.epoch >= cm.joined_epoch
+		WHERE msg.conversation_id = ANY($2)
+		ORDER BY msg.conversation_id, msg.created_at DESC`,
+		userID, conversationIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make(map[string]*Preview)
+	for rows.Next() {
+		var p Preview
+		if err := rows.Scan(
+			&p.ID, &p.ConversationID, &p.SenderID, &p.Type, &p.Ciphertext, &p.Epoch, &p.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		out[p.ConversationID] = &p
+	}
+	return out, rows.Err()
 }
 
 func (r *Repository) listMembers(ctx context.Context, conversationID string) ([]Member, error) {
@@ -252,6 +335,47 @@ func (r *Repository) listMembers(ctx context.Context, conversationID string) ([]
 		members = []Member{}
 	}
 	return members, rows.Err()
+}
+
+// ListMemberDirectory 返回曾在群内出现过的成员（含已退群），供历史消息展示昵称/头像。
+func (r *Repository) ListMemberDirectory(ctx context.Context, conversationID string) ([]Member, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT DISTINCT ON (p.user_id)
+			p.user_id, u.username, u.avatar_url, u.identity_public_key, p.joined_epoch
+		FROM conversation_member_periods p
+		JOIN users u ON u.id = p.user_id
+		WHERE p.conversation_id = $1
+		ORDER BY p.user_id, p.joined_at ASC`, conversationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var members []Member
+	for rows.Next() {
+		var m Member
+		if err := rows.Scan(&m.UserID, &m.Username, &m.AvatarURL, &m.IdentityPublicKey, &m.JoinedEpoch); err != nil {
+			return nil, err
+		}
+		members = append(members, m)
+	}
+	if members == nil {
+		members = []Member{}
+	}
+	return members, rows.Err()
+}
+
+func (r *Repository) HasAnyMembership(
+	ctx context.Context,
+	conversationID, userID string,
+) (bool, error) {
+	var exists bool
+	err := r.pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM conversation_member_periods
+			WHERE conversation_id = $1 AND user_id = $2
+		)`, conversationID, userID).Scan(&exists)
+	return exists, err
 }
 
 func (r *Repository) lastMessage(ctx context.Context, conversationID string) (*Preview, error) {
@@ -368,19 +492,31 @@ func (r *Repository) AddMembers(ctx context.Context, conversationID, actorID str
 		return 0, err
 	}
 
-	for _, uid := range unique {
-		var active bool
-		if err := tx.QueryRow(ctx, `
-			SELECT EXISTS(
-				SELECT 1 FROM conversation_members
-				WHERE conversation_id = $1 AND user_id = $2 AND left_at IS NULL
-			)`, conversationID, uid).Scan(&active); err != nil {
+	var active []string
+	rows, err := tx.Query(ctx, `
+		SELECT user_id FROM conversation_members
+		WHERE conversation_id = $1 AND user_id = ANY($2) AND left_at IS NULL`,
+		conversationID, unique)
+	if err != nil {
+		return 0, err
+	}
+	for rows.Next() {
+		var uid string
+		if err := rows.Scan(&uid); err != nil {
+			rows.Close()
 			return 0, err
 		}
-		if active {
-			return 0, ErrAlreadyMember
-		}
+		active = append(active, uid)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+	if len(active) > 0 {
+		return 0, ErrAlreadyMember
+	}
 
+	for _, uid := range unique {
 		tag, err := tx.Exec(ctx, `
 			INSERT INTO conversation_members (conversation_id, user_id, joined_epoch)
 			VALUES ($1, $2, $3)
@@ -459,7 +595,28 @@ func (r *Repository) RemoveMember(ctx context.Context, conversationID, actorID, 
 	return newEpoch, nil
 }
 
-// TouchMemberLeftAt 在退群系统消息写入后刷新 left_at，确保退群者也能看到该条提示。
+// BumpEpoch 定期轮换 GMK：仅递增 epoch，不改变成员 joined_epoch。
+func (r *Repository) BumpEpoch(ctx context.Context, conversationID string) (int, error) {
+	conv, err := r.GetByID(ctx, conversationID)
+	if err != nil {
+		return 0, err
+	}
+	if conv.Type != "group" {
+		return 0, ErrNotGroup
+	}
+	newEpoch := conv.Epoch + 1
+	tag, err := r.pool.Exec(ctx, `
+		UPDATE conversations SET epoch = $1 WHERE id = $2 AND epoch = $3`,
+		newEpoch, conversationID, conv.Epoch)
+	if err != nil {
+		return 0, err
+	}
+	if tag.RowsAffected() == 0 {
+		return 0, ErrInvalidInput
+	}
+	return newEpoch, nil
+}
+
 func (r *Repository) TouchMemberLeftAt(ctx context.Context, conversationID, userID string) error {
 	if _, err := r.pool.Exec(ctx, `
 		UPDATE conversation_members SET left_at = now(), last_left_at = now()

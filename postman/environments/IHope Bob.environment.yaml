@@ -13,7 +13,7 @@ values:
   - key: login_password
     value: password123
   - key: identity_public_key
-    value: v7MAS9QNMWbO+4X0FkMFFOrWd1wLWhEriVUx/PeeHlM=
+    value: BSAhIiMkJSYnKCkqKywtLi8wMTIzNDU2Nzg5Ojs8PT4/
   - key: access_token
     value: ''
   - key: refresh_token
@@ -32,6 +32,14 @@ values:
     value: ''
   - key: message_after_epoch
     value: ''
+  - key: signal_identity_key
+    value: BQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+  - key: signal_signed_pre_key
+    value: BQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+  - key: signal_signed_pre_key_sig
+    value: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==
+  - key: signal_one_time_pre_key
+    value: BQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
   - key: old_access_token
     value: ''
   - key: old_refresh_token

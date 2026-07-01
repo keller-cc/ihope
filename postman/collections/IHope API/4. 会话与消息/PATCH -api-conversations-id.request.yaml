@@ -1,0 +1,23 @@
+$kind: http-request
+name: PATCH /api/conversations/{id}
+url: "{{baseUrl}}/api/conversations/{{conversation_id}}"
+method: PATCH
+headers:
+  Content-Type: application/json
+  Authorization: Bearer {{access_token}}
+body:
+  type: json
+  content: |-
+    {
+      "name": "Postman Renamed Group"
+    }
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      pm.test('group name patched', function () {
+        pm.response.to.have.status(200);
+        const json = pm.response.json();
+        pm.expect(json.conversation.name).to.eql('Postman Renamed Group');
+      });
+order: 3700

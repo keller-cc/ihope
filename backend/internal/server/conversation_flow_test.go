@@ -130,6 +130,11 @@ func TestConversationFlowIntegration(t *testing.T) {
 	if addRec.Code != http.StatusOK {
 		t.Fatalf("add member status = %d body = %s", addRec.Code, addRec.Body.String())
 	}
+	var addResp struct {
+		Epoch int `json:"epoch"`
+	}
+	decodeBody(t, addRec.Body, &addResp)
+	cJoinedEpoch := addResp.Epoch
 
 	sendAfterRec := doJSON(t, handler, http.MethodPost, "/api/conversations/"+groupID+"/messages", map[string]string{
 		"type":       "text",
@@ -149,8 +154,88 @@ func TestConversationFlowIntegration(t *testing.T) {
 		} `json:"messages"`
 	}
 	decodeBody(t, cListRec.Body, &cList)
-	if len(cList.Messages) != 1 || cList.Messages[0].Ciphertext != "after invite" {
-		t.Fatalf("new member should only see post-join messages, got %+v", cList.Messages)
+	if len(cList.Messages) != 2 {
+		t.Fatalf("new member should see invite notice and post-join message, got %+v", cList.Messages)
+	}
+	seenAfter := false
+	for _, m := range cList.Messages {
+		if m.Ciphertext == "after invite" {
+			seenAfter = true
+		}
+	}
+	if !seenAfter {
+		t.Fatalf("new member should see post-join text, got %+v", cList.Messages)
+	}
+
+	// Patch group name
+	patchRec := doJSON(t, handler, http.MethodPatch, "/api/conversations/"+groupID, map[string]string{
+		"name": "Renamed Group",
+	}, aToken)
+	if patchRec.Code != http.StatusOK {
+		t.Fatalf("patch group status = %d body = %s", patchRec.Code, patchRec.Body.String())
+	}
+	var patchResp struct {
+		Conversation struct {
+			Name *string `json:"name"`
+		} `json:"conversation"`
+	}
+	decodeBody(t, patchRec.Body, &patchResp)
+	if patchResp.Conversation.Name == nil || *patchResp.Conversation.Name != "Renamed Group" {
+		t.Fatalf("patched name = %+v", patchResp.Conversation.Name)
+	}
+
+	dirRec := doJSON(t, handler, http.MethodGet, "/api/conversations/"+groupID+"/member-directory", nil, aToken)
+	if dirRec.Code != http.StatusOK {
+		t.Fatalf("member directory status = %d body = %s", dirRec.Code, dirRec.Body.String())
+	}
+	var dirResp struct {
+		Members []struct {
+			UserID string `json:"user_id"`
+		} `json:"members"`
+	}
+	decodeBody(t, dirRec.Body, &dirResp)
+	if len(dirResp.Members) < 2 {
+		t.Fatalf("member directory too short: %+v", dirResp.Members)
+	}
+
+	uploadBundlesRec := doJSON(t, handler, http.MethodPost, "/api/conversations/"+groupID+"/key-bundles", map[string]any{
+		"bundles": []map[string]any{
+			{
+				"epoch":             cJoinedEpoch,
+				"recipient_user_id": cUser.ID,
+				"ciphertext":        "e2ee:gw:v1:opaque-welcome-test",
+			},
+		},
+	}, aToken)
+	if uploadBundlesRec.Code != http.StatusCreated {
+		t.Fatalf("upload key bundles status = %d body = %s", uploadBundlesRec.Code, uploadBundlesRec.Body.String())
+	}
+
+	listBundlesRec := doJSON(t, handler, http.MethodGet, fmt.Sprintf("/api/conversations/%s/key-bundles?epochs=%d", groupID, cJoinedEpoch), nil, cToken)
+	if listBundlesRec.Code != http.StatusOK {
+		t.Fatalf("list key bundles status = %d body = %s", listBundlesRec.Code, listBundlesRec.Body.String())
+	}
+	var bundlesResp struct {
+		Bundles []struct {
+			Epoch      int    `json:"epoch"`
+			Ciphertext string `json:"ciphertext"`
+		} `json:"bundles"`
+	}
+	decodeBody(t, listBundlesRec.Body, &bundlesResp)
+	if len(bundlesResp.Bundles) == 0 {
+		t.Fatal("expected at least one key bundle for recipient")
+	}
+
+	rotateRec := doJSON(t, handler, http.MethodPost, "/api/conversations/"+groupID+"/rotate-keys", nil, aToken)
+	if rotateRec.Code != http.StatusOK {
+		t.Fatalf("rotate keys status = %d body = %s", rotateRec.Code, rotateRec.Body.String())
+	}
+	var rotateResp struct {
+		Epoch int `json:"epoch"`
+	}
+	decodeBody(t, rotateRec.Body, &rotateResp)
+	if rotateResp.Epoch < 1 {
+		t.Fatalf("expected epoch >= 1 after rotate, got %d", rotateResp.Epoch)
 	}
 }
 

@@ -44,8 +44,8 @@ object PublicMediaSaver {
     ): Map<String, String> {
         val resolver = context.contentResolver
         val relativePath =
-            if (isImage) "${Environment.DIRECTORY_PICTURES}/IHope"
-            else "${Environment.DIRECTORY_DOWNLOADS}/IHope"
+            if (isImage) Environment.DIRECTORY_PICTURES
+            else Environment.DIRECTORY_DOWNLOADS
         val collection =
             if (isImage) {
                 MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
@@ -75,7 +75,7 @@ object PublicMediaSaver {
         resolver.update(uri, values, null, null)
 
         val label =
-            if (isImage) "Pictures/IHope/$fileName" else "Download/IHope/$fileName"
+            if (isImage) "Pictures/$fileName" else "Download/$fileName"
         return mapOf(
             "openPath" to uri.toString(),
             "displayLabel" to label,
@@ -87,8 +87,13 @@ object PublicMediaSaver {
         fileName: String,
         isImage: Boolean,
     ): Map<String, String> {
-        val sub = if (isImage) "Pictures/IHope" else "Download/IHope"
-        val dir = File(Environment.getExternalStorageDirectory(), sub)
+        val sub = if (isImage) Environment.DIRECTORY_PICTURES else Environment.DIRECTORY_DOWNLOADS
+        val dir =
+            if (isImage) {
+                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES)
+            } else {
+                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+            }
         if (!dir.exists() && !dir.mkdirs()) {
             throw IllegalStateException("无法创建目录 $sub")
         }

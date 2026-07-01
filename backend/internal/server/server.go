@@ -11,6 +11,7 @@ import (
 	"github.com/ihope/ihope/internal/jwt"
 	"github.com/ihope/ihope/internal/message"
 	"github.com/ihope/ihope/internal/middleware"
+	"github.com/ihope/ihope/internal/signal"
 	"github.com/ihope/ihope/internal/user"
 	"github.com/ihope/ihope/internal/ws"
 )
@@ -22,6 +23,7 @@ type Server struct {
 	conversations *conversation.Handler
 	messages      *message.Handler
 	ws            *ws.Handler
+	signal        *signal.Handler
 	userRepo      *user.Repository
 	jwt           *jwt.Manager
 	loginLimit    *middleware.RateLimiter
@@ -36,6 +38,7 @@ func New(
 	convHandler *conversation.Handler,
 	msgHandler *message.Handler,
 	wsHandler *ws.Handler,
+	signalHandler *signal.Handler,
 ) *Server {
 	return &Server{
 		cfg:           cfg,
@@ -44,6 +47,7 @@ func New(
 		conversations: convHandler,
 		messages:      msgHandler,
 		ws:            wsHandler,
+		signal:        signalHandler,
 		userRepo:      userRepo,
 		jwt:           jwtMgr,
 		loginLimit:    middleware.NewRateLimiter(cfg.LoginRateLimit, cfg.LoginRateWindow),
@@ -70,16 +74,24 @@ func (s *Server) Router() http.Handler {
 	mux.HandleFunc("GET /api/avatars/{filename}", s.users.ServeAvatar)
 	mux.Handle("GET /api/users", authRequired(http.HandlerFunc(s.users.List)))
 
+	if s.signal != nil {
+		mux.Handle("PUT /api/users/me/signal-keys", authRequired(http.HandlerFunc(s.signal.UploadKeys)))
+		mux.Handle("GET /api/users/{userId}/signal-bundle", authRequired(http.HandlerFunc(s.signal.GetUserBundle)))
+		mux.Handle("GET /api/users/{userId}/signal-devices", authRequired(http.HandlerFunc(s.signal.ListDevices)))
+	}
+
 	if s.conversations != nil {
 		mux.Handle("GET /api/conversations", authRequired(http.HandlerFunc(s.conversations.List)))
 		mux.Handle("POST /api/conversations", authRequired(http.HandlerFunc(s.conversations.Create)))
 		mux.Handle("POST /api/conversations/{id}/members", authRequired(http.HandlerFunc(s.conversations.AddMembers)))
+		mux.Handle("POST /api/conversations/{id}/rotate-keys", authRequired(http.HandlerFunc(s.conversations.RotateKeys)))
 		mux.Handle("DELETE /api/conversations/{id}/members/{userId}", authRequired(http.HandlerFunc(s.conversations.RemoveMember)))
 		mux.Handle("DELETE /api/conversations/{id}", authRequired(http.HandlerFunc(s.conversations.Delete)))
 		mux.Handle("PATCH /api/conversations/{id}", authRequired(http.HandlerFunc(s.conversations.Patch)))
 		mux.Handle("POST /api/conversations/{id}/avatar", authRequired(http.HandlerFunc(s.conversations.UploadAvatar)))
 		mux.Handle("GET /api/conversations/{id}/key-bundles", authRequired(http.HandlerFunc(s.conversations.ListKeyBundles)))
 		mux.Handle("POST /api/conversations/{id}/key-bundles", authRequired(http.HandlerFunc(s.conversations.UploadKeyBundles)))
+		mux.Handle("GET /api/conversations/{id}/member-directory", authRequired(http.HandlerFunc(s.conversations.MemberDirectory)))
 	}
 	if s.messages != nil {
 		mux.Handle("GET /api/conversations/{id}/messages", authRequired(http.HandlerFunc(s.messages.List)))

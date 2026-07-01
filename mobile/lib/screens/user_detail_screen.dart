@@ -94,7 +94,7 @@ class UserDetailScreen extends StatelessWidget {
           _InfoTile(
             icon: Icons.fingerprint,
             label: '端到端加密',
-            value: e2eeReady ? '已配置身份密钥' : '尚未配置（需重新登录）',
+            value: e2eeReady ? '已配置身份密钥' : '尚未配置身份密钥',
           ),
           if (!_isSelf) ...[
             const SizedBox(height: 24),

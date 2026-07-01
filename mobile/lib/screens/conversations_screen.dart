@@ -70,11 +70,13 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
     _connSub = widget.auth.ws.onConnectionChanged.listen((connected) {
       if (!mounted) return;
       setState(_syncOfflineNotice);
+      if (connected) unawaited(_syncAfterOnline());
     });
     _connectivitySub = Connectivity().onConnectivityChanged.listen((results) {
       if (!mounted) return;
       if (results.any((r) => r != ConnectivityResult.none)) {
         unawaited(widget.auth.ensureRealtimeConnected());
+        unawaited(_syncAfterOnline());
       }
     });
     _dissolvedSub = widget.auth.ws.onGroupDissolved.listen(_onGroupDissolved);
@@ -125,13 +127,20 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
     final me = widget.auth.currentUser!;
     final title = conv.displayTitle(me.id);
 
-    await widget.auth.ensureGroupKeys(conv);
+    widget.auth.prepareGroupConversation(conv);
 
     final existing = _items.indexWhere((c) => c.id == conv.id);
     if (existing >= 0) {
+      var preview = '暂无消息';
+      if (conv.lastMessage != null) {
+        preview = await widget.auth.decryptPreview(conv, conv.lastMessage!);
+      }
       if (!mounted) return;
       setState(() {
         _items[existing] = conv;
+        if (conv.lastMessage != null) {
+          _previews[conv.id] = preview;
+        }
         _items = sortConversationsByPin(_items, _pinnedIds);
       });
       return;
@@ -266,6 +275,11 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
       return;
     }
 
+    if (msg.senderId == me.id && conv.type != 'group') {
+      unawaited(_applyOwnMessagePreview(conv, msg));
+      return;
+    }
+
     final quick = _quickPreview(conv, me.id, msg);
     final updated = conv.copyWith(lastMessage: msg);
     setState(() {
@@ -279,10 +293,37 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
     unawaited(() async {
       await widget.auth.noteIncomingMessage(msg);
       if (!mounted) return;
+      if (widget.auth.isConversationOpen(msg.conversationId)) {
+        setState(() => _unreadCounts[msg.conversationId] = 0);
+        return;
+      }
       final count = await widget.auth.unreadCountFor(msg.conversationId);
       if (!mounted) return;
       setState(() => _unreadCounts[msg.conversationId] = count);
     }());
+  }
+
+  Future<void> _applyOwnMessagePreview(
+    ConversationItem conv,
+    ChatMessage msg,
+  ) async {
+    final stored =
+        await widget.auth.cachedPlaintextForMessage(conv.id, msg.id);
+    final preview = stored ??
+        (msg.type == 'text'
+            ? ChatMessage.decryptPlaceholder
+            : MediaPayload.previewLabel('', msg.type));
+    if (!mounted) return;
+    final updated = conv.copyWith(lastMessage: msg);
+    setState(() {
+      _previews[conv.id] = preview;
+      _appendCachedMessage(conv.id, msg, preview);
+      final idx = _items.indexWhere((c) => c.id == conv.id);
+      if (idx >= 0) {
+        _items[idx] = updated;
+      }
+      _items = sortConversationsByPin(_items, _pinnedIds);
+    });
   }
 
   Future<void> _applyIncomingPreview(
@@ -312,7 +353,9 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
   }
 
   Future<void> _loadMessageCaches(List<ConversationItem> items) async {
-    final cache = await widget.auth.loadLocalMessagesForConversations(items);
+    final cache = await widget.auth.loadCachedMessagesForConversations(
+      items.map((c) => c.id),
+    );
     if (!mounted) return;
     setState(() {
       _messageCache
@@ -347,11 +390,20 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
   }
 
   Future<void> _refreshUnreadCounts() async {
+    widget.auth.resetUnreadCounts();
     final counts = await widget.auth.unreadCountsFor(
       _items.map((c) => c.id),
     );
     if (!mounted) return;
     setState(() => _unreadCounts..clear..addAll(counts));
+  }
+
+  /// 重连后拉取离线消息并刷新未读角标。
+  Future<void> _syncAfterOnline() async {
+    if (_items.isEmpty) return;
+    await widget.auth.syncMissedMessages(_items);
+    if (!mounted) return;
+    await _refreshUnreadCounts();
   }
 
   List<ConversationItem> _visibleItems(String meId) {
@@ -532,12 +584,18 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
           .timeout(const Duration(seconds: 12));
       await wsConnect;
       final sorted = sortConversationsByPin(items, pinned);
+      final msgCaches = await widget.auth.loadCachedMessagesForConversations(
+        items.map((c) => c.id),
+      );
       final previews = <String, String>{};
       for (final item in items) {
         final last = item.lastMessage;
         if (last != null) {
-          previews[item.id] =
-              await widget.auth.decryptPreview(item, last);
+          previews[item.id] = await widget.auth.decryptPreview(
+            item,
+            last,
+            cachedThread: msgCaches[item.id],
+          );
         }
       }
       if (!mounted) return;
@@ -549,7 +607,14 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
           ..addAll(previews);
         _syncOfflineNotice();
       });
+      await widget.auth.syncMissedMessages(sorted);
+      if (!mounted) return;
       unawaited(_loadMessageCaches(sorted));
+      for (final item in sorted) {
+        if (item.type == 'group') {
+          unawaited(widget.auth.ensureGroupMemberDirectory(item));
+        }
+      }
       unawaited(_refreshUnreadCounts());
     } catch (e) {
       if (!mounted) return;
@@ -595,9 +660,17 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
       final reactivated = await widget.auth.tryReactivateConversation(conv);
       if (reactivated != null) item = reactivated;
     }
+    final initialUnread = _unreadCounts[item.id] ?? 0;
+    if (mounted && initialUnread > 0) {
+      setState(() => _unreadCounts[item.id] = 0);
+    }
     final result = await Navigator.of(context).push<Object?>(
       MaterialPageRoute(
-        builder: (_) => ChatScreen(auth: widget.auth, conversation: item),
+        builder: (_) => ChatScreen(
+          auth: widget.auth,
+          conversation: item,
+          initialUnreadCount: initialUnread,
+        ),
       ),
     );
     if (!mounted) return;
@@ -789,6 +862,9 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
   List<ConversationItem> _filteredItems(String meId) => _visibleItems(meId);
 
   String _senderName(ConversationItem item, String meId, String senderId) {
+    if (item.type == 'group') {
+      return widget.auth.groupSenderLabel(item, meId, senderId);
+    }
     if (senderId == meId) return '我';
     for (final m in item.members) {
       if (m.userId == senderId) return m.username;

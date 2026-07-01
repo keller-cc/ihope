@@ -20,6 +20,14 @@ func (n *convRealtime) NotifyEpochUpdated(memberUserIDs []string, conversationID
 	n.hub.NotifyEpochUpdated(memberUserIDs, conversationID, epoch)
 }
 
+func (n *convRealtime) NotifyGmkUpdated(
+	memberUserIDs []string,
+	conversationID, senderID string,
+	epochs []int,
+) {
+	n.hub.NotifyGmkUpdated(memberUserIDs, conversationID, senderID, epochs)
+}
+
 func (n *convRealtime) NotifyGroupDissolved(
 	memberUserIDs []string,
 	conversationID, groupName, dissolvedBy string,

@@ -1,0 +1,16 @@
+$kind: http-request
+name: GET /api/conversations/{id}/member-directory
+url: "{{baseUrl}}/api/conversations/{{conversation_id}}/member-directory"
+method: GET
+headers:
+  Authorization: Bearer {{access_token}}
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      pm.test('member directory ok', function () {
+        pm.response.to.have.status(200);
+        const json = pm.response.json();
+        pm.expect(json.members).to.be.an('array').with.lengthOf.at.least(1);
+      });
+order: 3750

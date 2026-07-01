@@ -57,7 +57,7 @@ func (s *Service) createPrivate(ctx context.Context, userID, peerID string) (*Li
 	}
 
 	if existing, err := s.conv.FindPrivateBetween(ctx, userID, peerID); err == nil {
-		return s.toListItem(ctx, existing)
+		return s.toListItemForUser(ctx, existing, userID)
 	} else if !errors.Is(err, ErrNotFound) {
 		return nil, err
 	}
@@ -66,7 +66,7 @@ func (s *Service) createPrivate(ctx context.Context, userID, peerID string) (*Li
 	if err != nil {
 		return nil, err
 	}
-	return s.toListItem(ctx, conv)
+	return s.toListItemForUser(ctx, conv, userID)
 }
 
 func (s *Service) createGroup(ctx context.Context, ownerID, name string, memberIDs []string) (*ListItem, error) {
@@ -86,21 +86,19 @@ func (s *Service) createGroup(ctx context.Context, ownerID, name string, memberI
 
 	var members []string
 	for id := range unique {
-		exists, err := s.users.ExistsByID(ctx, id)
-		if err != nil {
-			return nil, err
-		}
-		if !exists {
-			return nil, ErrPeerNotFound
-		}
 		members = append(members, id)
+	}
+	if missing, err := s.users.AllExistByIDs(ctx, members); err != nil {
+		return nil, err
+	} else if len(missing) > 0 {
+		return nil, ErrPeerNotFound
 	}
 
 	conv, err := s.conv.CreateGroup(ctx, name, ownerID, members)
 	if err != nil {
 		return nil, err
 	}
-	return s.toListItem(ctx, conv)
+	return s.toListItemForUser(ctx, conv, ownerID)
 }
 
 func (s *Service) GetIfMember(ctx context.Context, conversationID, userID string) (*Conversation, error) {
@@ -127,18 +125,17 @@ func (s *Service) GetMemberJoinedEpoch(ctx context.Context, conversationID, user
 }
 
 func (s *Service) AddMembers(ctx context.Context, actorID, conversationID string, memberIDs []string) (*ListItem, int, error) {
+	ids := make([]string, 0, len(memberIDs))
 	for _, id := range memberIDs {
 		id = strings.TrimSpace(id)
-		if id == "" {
-			continue
+		if id != "" {
+			ids = append(ids, id)
 		}
-		exists, err := s.users.ExistsByID(ctx, id)
-		if err != nil {
-			return nil, 0, err
-		}
-		if !exists {
-			return nil, 0, ErrPeerNotFound
-		}
+	}
+	if missing, err := s.users.AllExistByIDs(ctx, ids); err != nil {
+		return nil, 0, err
+	} else if len(missing) > 0 {
+		return nil, 0, ErrPeerNotFound
 	}
 
 	newEpoch, err := s.conv.AddMembers(ctx, conversationID, actorID, memberIDs)
@@ -149,7 +146,35 @@ func (s *Service) AddMembers(ctx context.Context, actorID, conversationID string
 	if err != nil {
 		return nil, 0, err
 	}
-	item, err := s.toListItem(ctx, conv)
+	item, err := s.toListItemForUser(ctx, conv, actorID)
+	return item, newEpoch, err
+}
+
+// RotateGroupKeys Megolm 定期轮换：活跃成员可触发 epoch+1（不改变 joined_epoch）。
+func (s *Service) RotateGroupKeys(ctx context.Context, actorID, conversationID string) (*ListItem, int, error) {
+	ok, err := s.conv.IsActiveMember(ctx, conversationID, actorID)
+	if err != nil {
+		return nil, 0, err
+	}
+	if !ok {
+		return nil, 0, ErrNotMember
+	}
+	conv, err := s.conv.GetByID(ctx, conversationID)
+	if err != nil {
+		return nil, 0, err
+	}
+	if conv.Type != "group" {
+		return nil, 0, ErrNotGroup
+	}
+	newEpoch, err := s.conv.BumpEpoch(ctx, conversationID)
+	if err != nil {
+		return nil, 0, err
+	}
+	conv, err = s.conv.GetByID(ctx, conversationID)
+	if err != nil {
+		return nil, 0, err
+	}
+	item, err := s.toListItemForUser(ctx, conv, actorID)
 	return item, newEpoch, err
 }
 
@@ -162,7 +187,7 @@ func (s *Service) RemoveMember(ctx context.Context, actorID, conversationID, tar
 	if err != nil {
 		return nil, 0, err
 	}
-	item, err := s.toListItem(ctx, conv)
+	item, err := s.toListItemForUser(ctx, conv, actorID)
 	return item, newEpoch, err
 }
 
@@ -200,7 +225,7 @@ func (s *Service) UpdateGroupName(ctx context.Context, actorID, conversationID, 
 	if err != nil {
 		return nil, err
 	}
-	return s.toListItem(ctx, conv)
+	return s.toListItemForUser(ctx, conv, actorID)
 }
 
 func (s *Service) UpdateGroupAvatarURL(ctx context.Context, actorID, conversationID, avatarURL string) (*ListItem, error) {
@@ -211,7 +236,7 @@ func (s *Service) UpdateGroupAvatarURL(ctx context.Context, actorID, conversatio
 	if err != nil {
 		return nil, err
 	}
-	return s.toListItem(ctx, conv)
+	return s.toListItemForUser(ctx, conv, actorID)
 }
 
 func (s *Service) UploadKeyBundles(
@@ -227,17 +252,22 @@ func (s *Service) UploadKeyBundles(
 		return ErrNotGroup
 	}
 
+	active, err := s.conv.ListMemberUserIDs(ctx, conversationID)
+	if err != nil {
+		return err
+	}
+	activeSet := make(map[string]struct{}, len(active))
+	for _, id := range active {
+		activeSet[id] = struct{}{}
+	}
+
 	for _, b := range bundles {
 		recipientID := strings.TrimSpace(b.RecipientUserID)
 		ciphertext := strings.TrimSpace(b.Ciphertext)
 		if recipientID == "" || b.Epoch < 0 || !validWelcomeCiphertext(ciphertext) {
 			return ErrInvalidInput
 		}
-		ok, err := s.conv.IsActiveMember(ctx, conversationID, recipientID)
-		if err != nil {
-			return err
-		}
-		if !ok {
+		if _, ok := activeSet[recipientID]; !ok {
 			return ErrNotMember
 		}
 		if err := s.conv.UpsertKeyBundle(ctx, conversationID, senderID, recipientID, b.Epoch, ciphertext); err != nil {
@@ -286,31 +316,23 @@ func (s *Service) ListKeyBundles(
 	return filtered, nil
 }
 
-func (s *Service) ListItemForUser(ctx context.Context, userID, conversationID string) (*ListItem, error) {
-	ok, err := s.conv.IsActiveMember(ctx, conversationID, userID)
+func (s *Service) MemberDirectory(ctx context.Context, userID, conversationID string) ([]Member, error) {
+	ok, err := s.conv.HasAnyMembership(ctx, conversationID, userID)
 	if err != nil {
 		return nil, err
 	}
 	if !ok {
 		return nil, ErrNotMember
 	}
-	conv, err := s.conv.GetByID(ctx, conversationID)
+	return s.conv.ListMemberDirectory(ctx, conversationID)
+}
+
+func (s *Service) ListItemForUser(ctx context.Context, userID, conversationID string) (*ListItem, error) {
+	conv, err := s.GetIfMember(ctx, conversationID, userID)
 	if err != nil {
 		return nil, err
 	}
-	members, err := s.conv.listMembers(ctx, conversationID)
-	if err != nil {
-		return nil, err
-	}
-	preview, err := s.conv.lastMessageForUser(ctx, conversationID, userID)
-	if err != nil {
-		return nil, err
-	}
-	return &ListItem{
-		Conversation: *conv,
-		Members:      members,
-		LastMessage:  preview,
-	}, nil
+	return s.toListItemForUser(ctx, conv, userID)
 }
 
 func (s *Service) DisplayName(ctx context.Context, userID string) string {
@@ -322,11 +344,58 @@ func (s *Service) DisplayName(ctx context.Context, userID string) string {
 }
 
 func (s *Service) DisplayNames(ctx context.Context, userIDs []string) []string {
-	names := make([]string, 0, len(userIDs))
-	for _, id := range userIDs {
-		names = append(names, s.DisplayName(ctx, id))
+	ids := uniqueNonEmptyIDs(userIDs)
+	namesByID, err := s.users.PublicNamesByIDs(ctx, ids)
+	if err != nil {
+		names := make([]string, len(userIDs))
+		for i, id := range userIDs {
+			names[i] = s.DisplayName(ctx, id)
+		}
+		return names
+	}
+	names := make([]string, len(userIDs))
+	for i, id := range userIDs {
+		id = strings.TrimSpace(id)
+		if n, ok := namesByID[id]; ok && n != "" {
+			names[i] = n
+		} else {
+			names[i] = "用户"
+		}
 	}
 	return names
+}
+
+func uniqueNonEmptyIDs(ids []string) []string {
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	return out
+}
+
+func (s *Service) toListItemForUser(ctx context.Context, conv *Conversation, userID string) (*ListItem, error) {
+	members, err := s.conv.listMembers(ctx, conv.ID)
+	if err != nil {
+		return nil, err
+	}
+	preview, err := s.conv.lastMessageForUser(ctx, conv.ID, userID)
+	if err != nil {
+		return nil, err
+	}
+	return &ListItem{
+		Conversation: *conv,
+		Members:      members,
+		LastMessage:  preview,
+	}, nil
 }
 
 func (s *Service) toListItem(ctx context.Context, conv *Conversation) (*ListItem, error) {

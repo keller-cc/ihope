@@ -1,10 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:typed_data';
 
 import '../crypto/chat_crypto.dart';
 import '../crypto/e2ee_exception.dart';
 import '../crypto/identity.dart';
+import '../crypto/signal/signal_dm_service.dart';
 import '../models/conversation.dart';
 import '../models/message.dart';
 import '../models/user.dart';
@@ -13,6 +13,8 @@ import '../utils/media_payload.dart';
 import 'api_client.dart';
 import 'auth_storage.dart';
 import 'conversation_service.dart';
+import 'group_key_service.dart';
+import 'signal_kds_service.dart';
 import 'ws_service.dart';
 
 class AuthService {
@@ -31,13 +33,14 @@ class AuthService {
 
   User? currentUser;
   ChatCrypto? _crypto;
-  StreamSubscription<KeyRelayFrame>? _keyRelaySub;
-  StreamSubscription<GmkRequestFrame>? _gmkRequestSub;
-  StreamSubscription<EpochUpdatedFrame>? _epochSub;
+  SignalDmService? _signalDm;
+  GroupKeyService? _groupKeys;
   final Map<String, ConversationItem> _conversationCache = {};
+  final Map<String, Map<String, ConversationMember>> _memberDirectories = {};
+  final Map<String, List<ChatMessage>> _messagesMem = {};
+  final Set<String> _memberDirectorySynced = {};
   String? _openConversationId;
   final Map<String, int> _unreadCounts = {};
-  final Map<String, List<Completer<void>>> _gmkWaiters = {};
   final Map<String, DateTime> _removalUiClaimed = {};
 
   DateTime? _accessExpiresAt;
@@ -45,28 +48,52 @@ class AuthService {
 
   static const _refreshSkew = Duration(minutes: 2);
 
-  ChatCrypto get chatCrypto {
-    final user = currentUser;
-    if (user == null) {
-      throw StateError('not logged in');
-    }
-    return _crypto ??= _createChatCrypto(user);
+  /// 群 GMK 就绪（当前打开的会话可据此重新解密）。
+  Stream<String> get onGroupKeyReady => groupKeys.onKeysReady;
+
+  GroupKeyService get groupKeys {
+    return _groupKeys ??= GroupKeyService(
+      conversations: conversations,
+      storage: storage,
+      ws: ws,
+      crypto: () => chatCrypto,
+      refreshConversation: _refreshConversation,
+      getCurrentUser: () => currentUser,
+      getOpenConversationId: () => _openConversationId,
+      getCachedConversation: (id) => _conversationCache[id],
+      cacheConversation: _cacheConversation,
+    );
   }
 
-  ChatCrypto _createChatCrypto(User user) {
+  ChatCrypto get chatCrypto {
+    final crypto = _crypto;
+    if (crypto == null) {
+      throw StateError('加密模块尚未就绪，请重新登录');
+    }
+    return crypto;
+  }
+
+  Future<SignalDmService> _ensureSignalDm() async {
+    final user = currentUser;
+    if (user == null) throw StateError('not logged in');
+    if (_signalDm != null) return _signalDm!;
+    final deviceId = await storage.deviceId();
+    _signalDm = SignalDmService(
+      kds: SignalKdsService(api),
+      myUserId: user.id,
+      deviceId: deviceId,
+      readStore: () => storage.readSignalStore('user_${user.id}'),
+      writeStore: (data) => storage.writeSignalStore('user_${user.id}', data),
+    );
+    return _signalDm!;
+  }
+
+  Future<ChatCrypto> _buildChatCrypto() async {
+    final user = currentUser!;
+    final signal = await _ensureSignalDm();
     return createChatCrypto(
       myUserId: user.id,
-      readIdentitySeed: () => storage.readIdentitySeedForUser(user.id),
-      writeIdentitySeed: (seed) => storage.writeIdentitySeedForUser(user.id, seed),
-      readSession: (peer) => storage.readSessionKey(user.id, peer),
-      readSessionPeerKey: (peer) => storage.readSessionPeerKey(user.id, peer),
-      writeSession: (peer, bytes, peerPub) => storage.writeSessionKey(
-        user.id,
-        peer,
-        bytes,
-        peerPublicKey: peerPub,
-      ),
-      clearSession: (peer) => storage.clearSessionKey(user.id, peer),
+      signal: signal,
       readGroupGmk: (convId, epoch) =>
           storage.readGroupGmk(user.id, convId, epoch),
       writeGroupGmk: (convId, epoch, bytes) =>
@@ -89,20 +116,26 @@ class AuthService {
         await storage.clear();
         api.setAccessToken(null);
         _crypto = null;
+    _signalDm = null;
         _accessExpiresAt = null;
         return false;
       }
       await refreshCurrentUser();
     }
     try {
-      await _bindIdentityForUser();
+      final identityRotated = await _ensureSignalIdentity();
+      _crypto = await _buildChatCrypto();
       await _connectRealtime();
+      if (identityRotated) {
+        await groupKeys.onIdentityRotated();
+      }
       return true;
     } catch (_) {
       await _disconnectRealtime();
       await storage.clear();
       api.setAccessToken(null);
       _crypto = null;
+    _signalDm = null;
       _accessExpiresAt = null;
       return false;
     }
@@ -125,8 +158,13 @@ class AuthService {
       'device_id': deviceId,
       'device_name': 'Flutter',
     });
-    await _applyTokenResponse(data);
-    await _bindIdentityForUser();
+    await _saveTokenResponse(data);
+    final identityRotated = await _ensureSignalIdentity();
+    _crypto = await _buildChatCrypto();
+    await _connectRealtime();
+    if (identityRotated) {
+      await groupKeys.onIdentityRotated();
+    }
     return currentUser!;
   }
 
@@ -136,12 +174,16 @@ class AuthService {
     required String password,
   }) async {
     final normalizedEmail = email.trim().toLowerCase();
-    final pubKey = await identityPublicKeyForRegister(
-      readIdentitySeed: () =>
-          storage.readIdentitySeedForEmail(normalizedEmail),
-      writeIdentitySeed: (seed) =>
-          storage.writeIdentitySeedForEmail(normalizedEmail, seed),
+    final deviceId = await storage.deviceId();
+    final preRegisterDm = SignalDmService(
+      kds: SignalKdsService(api),
+      myUserId: 'pending',
+      deviceId: deviceId,
+      readStore: () => storage.readSignalStore('email_$normalizedEmail'),
+      writeStore: (data) =>
+          storage.writeSignalStore('email_$normalizedEmail', data),
     );
+    final pubKey = await preRegisterDm.identityPublicKeyBase64();
     await api.postJson('/api/auth/register', body: {
       'email': email.trim(),
       'username': username.trim(),
@@ -227,7 +269,11 @@ class AuthService {
     api.setAccessToken(null);
     currentUser = null;
     _crypto = null;
+    _signalDm = null;
     _conversationCache.clear();
+    _messagesMem.clear();
+    _memberDirectories.clear();
+    _memberDirectorySynced.clear();
     _accessExpiresAt = null;
   }
 
@@ -313,6 +359,7 @@ class AuthService {
     api.setAccessToken(access);
     currentUser = User.fromJson(data['user'] as Map<String, dynamic>);
     _crypto = null;
+    _signalDm = null;
     _accessExpiresAt = _expiryFromJwt(access);
     final expiresIn = data['expires_in'];
     if (expiresIn is int) {
@@ -351,6 +398,38 @@ class AuthService {
 
   void setOpenConversation(String? conversationId) {
     _openConversationId = conversationId;
+  }
+
+  bool isConversationOpen(String conversationId) =>
+      _openConversationId == conversationId;
+
+  Future<DateTime?> readAtFor(String conversationId) async {
+    final me = currentUser;
+    if (me == null) return null;
+    return storage.readConversationReadAt(me.id, conversationId);
+  }
+
+  int countUnreadInThread(
+    List<ChatMessage> messages, {
+    DateTime? readAt,
+  }) {
+    final me = currentUser;
+    if (me == null) return 0;
+    return _countUnread(messages, me.id, readAt);
+  }
+
+  int? firstUnreadIndexInThread(
+    List<ChatMessage> messages, {
+    DateTime? readAt,
+  }) {
+    final me = currentUser;
+    if (me == null) return null;
+    for (var i = 0; i < messages.length; i++) {
+      final m = messages[i];
+      if (m.senderId == me.id) continue;
+      if (readAt == null || m.createdAt.isAfter(readAt)) return i;
+    }
+    return null;
   }
 
   Future<void> markConversationRead(
@@ -404,13 +483,68 @@ class AuthService {
 
   Future<void> noteIncomingMessage(ChatMessage msg) async {
     if (_openConversationId == msg.conversationId) {
-      await markConversationRead(msg.conversationId, upTo: msg.createdAt);
       return;
     }
     final me = currentUser;
     if (me == null || msg.senderId == me.id) return;
     _unreadCounts[msg.conversationId] =
         (_unreadCounts[msg.conversationId] ?? 0) + 1;
+  }
+
+  void resetUnreadCounts() => _unreadCounts.clear();
+
+  /// 离线期间的消息不会经 WS 写入本地；根据会话 lastMessage 拉取并合并。
+  Future<void> syncMissedMessages(List<ConversationItem> items) async {
+    final me = currentUser;
+    if (me == null) return;
+
+    final convApi = conversations;
+    var synced = false;
+    for (final conv in items) {
+      if (conv.isArchived) continue;
+      final last = conv.lastMessage;
+      if (last == null) continue;
+
+      final readAt =
+          await storage.readConversationReadAt(me.id, conv.id);
+      if (readAt != null && !last.createdAt.isAfter(readAt)) continue;
+
+      final cached = await loadCachedMessages(conv.id);
+      if (cached.any((m) => m.id == last.id)) continue;
+
+      try {
+        final remote = await convApi.listMessages(conv.id, limit: 100);
+        final merged = _mergeMessageCaches(remote, cached);
+        if (merged.isNotEmpty) {
+          await cacheMessages(conv.id, merged);
+          synced = true;
+        }
+      } catch (_) {}
+    }
+    if (synced) resetUnreadCounts();
+  }
+
+  List<ChatMessage> _mergeMessageCaches(
+    List<ChatMessage> remote,
+    List<ChatMessage> local,
+  ) {
+    final byId = {for (final m in remote) m.id: m};
+    for (final cached in local) {
+      final hit = byId[cached.id];
+      if (hit == null) {
+        byId[cached.id] = cached;
+      } else {
+        final pt = cached.plaintext;
+        if (pt != null &&
+            pt.isNotEmpty &&
+            !ChatMessage.isDecryptPlaceholder(pt) &&
+            !ChatMessage.isDecryptFailure(pt)) {
+          byId[cached.id] = hit.copyWith(plaintext: pt);
+        }
+      }
+    }
+    return byId.values.toList()
+      ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
   }
 
   Future<void> hideConversationFromList(String conversationId) async {
@@ -453,9 +587,10 @@ class AuthService {
     if (me == null || !isValidIdentityPublicKey(me.identityPublicKey)) {
       throw E2eeException('本机加密密钥未就绪，请退出后重新登录');
     }
-    final fresh = await _refreshConversation(conversation);
+    var fresh = await _refreshConversation(conversation);
     if (fresh.type == 'group') {
-      await ensureGroupKeys(fresh, epochs: [fresh.epoch]);
+      fresh = await groupKeys.maybeRotateBeforeSend(fresh);
+      await groupKeys.ensureReadyForSend(fresh);
     }
     final payload = await chatCrypto.encryptOutgoing(fresh, plaintext);
     if (!chatCrypto.isEncryptedPayload(payload)) {
@@ -466,7 +601,16 @@ class AuthService {
       payload,
       type: type,
     );
-    return msg.copyWith(plaintext: plaintext);
+    if (fresh.type == 'group') {
+      await groupKeys.recordGroupMessageSent(fresh.id);
+    }
+    var sent = msg.copyWith(plaintext: plaintext);
+    if (type == 'image' || type == 'audio' || type == 'file') {
+      final compact = await MediaLocalCache.persistPlaintext(msg.id, plaintext);
+      if (compact != null) sent = msg.copyWith(plaintext: compact);
+    }
+    await upsertCachedMessage(fresh.id, sent);
+    return sent;
   }
 
   Future<ConversationItem> createGroupChat({
@@ -483,7 +627,8 @@ class AuthService {
     );
     _cacheConversation(conv);
     final gmk = await chatCrypto.initGroupEpoch(conv.id, conv.epoch);
-    await _relayGroupWelcome(conv, gmk);
+    await groupKeys.publishEpochKeys(conv, gmk);
+    await groupKeys.resetRotationMeta(conv.id);
     return conv;
   }
 
@@ -495,7 +640,8 @@ class AuthService {
     final updated = result.conversation.copyWith(epoch: result.epoch);
     _cacheConversation(updated);
     final gmk = await chatCrypto.rotateGroupEpoch(updated.id, result.epoch);
-    await _relayGroupWelcome(updated, gmk);
+    await groupKeys.publishEpochKeys(updated, gmk);
+    await groupKeys.resetRotationMeta(updated.id);
     return updated;
   }
 
@@ -510,7 +656,8 @@ class AuthService {
     final me = currentUser!;
     if (updated.isOwner(me.id)) {
       final gmk = await chatCrypto.rotateGroupEpoch(updated.id, result.epoch);
-      await _relayGroupWelcome(updated, gmk);
+      await groupKeys.publishEpochKeys(updated, gmk);
+      await groupKeys.resetRotationMeta(updated.id);
     }
     return updated;
   }
@@ -582,6 +729,9 @@ class AuthService {
       isArchived: false,
     );
     _cacheConversation(merged);
+    if (merged.type == 'group') {
+      unawaited(ensureGroupMemberDirectory(merged));
+    }
     return merged;
   }
 
@@ -605,8 +755,8 @@ class AuthService {
     final me = currentUser!;
     final active = await conversations.listConversations();
     final activeIds = active.map((c) => c.id).toSet();
+    await storage.removeArchivedConversations(me.id, activeIds);
     for (final c in active) {
-      await storage.removeArchivedConversation(me.id, c.id);
       _cacheConversation(c.copyWith(isArchived: false));
     }
 
@@ -650,6 +800,54 @@ class AuthService {
     return items;
   }
 
+  Future<String?> cachedPlaintextForMessage(
+    String conversationId,
+    String messageId,
+  ) async {
+    final mem = _messagesMem[conversationId];
+    if (mem != null) {
+      for (final m in mem) {
+        if (m.id != messageId) continue;
+        final pt = m.plaintext;
+        if (_isValidCachedPlaintext(pt)) return pt;
+        break;
+      }
+    }
+    final cached = await loadCachedMessages(conversationId);
+    for (final m in cached) {
+      if (m.id != messageId) continue;
+      final pt = m.plaintext;
+      if (_isValidCachedPlaintext(pt)) return pt;
+    }
+    return null;
+  }
+
+  bool _isValidCachedPlaintext(String? pt) {
+    if (pt == null || pt.isEmpty) return false;
+    if (ChatMessage.isDecryptPlaceholder(pt)) return false;
+    if (ChatMessage.isDecryptFailure(pt)) return false;
+    return true;
+  }
+
+  Future<void> upsertCachedMessage(
+    String conversationId,
+    ChatMessage message,
+  ) async {
+    if (!_isValidCachedPlaintext(message.plaintext)) return;
+    final list = List<ChatMessage>.from(
+      _messagesMem[conversationId] ?? await loadCachedMessages(conversationId),
+    );
+    final i = list.indexWhere((m) => m.id == message.id);
+    if (i >= 0) {
+      list[i] = message;
+    } else {
+      list.add(message);
+    }
+    list.sort((a, b) => a.createdAt.compareTo(b.createdAt));
+    _messagesMem[conversationId] = list;
+    await cacheMessages(conversationId, list);
+  }
+
   Future<void> cacheMessages(
     String conversationId,
     List<ChatMessage> messages,
@@ -660,6 +858,7 @@ class AuthService {
     for (final m in messages) {
       stored.add(await _compactMessageForCache(m));
     }
+    _messagesMem[conversationId] = stored;
     await storage.saveMessageCache(
       me.id,
       conversationId,
@@ -671,11 +870,23 @@ class AuthService {
     final pt = msg.plaintext;
     if (pt == null || pt.isEmpty) return msg;
     if (ChatMessage.isDecryptPlaceholder(pt)) return msg.forCacheWithoutPlaintext;
-    if (!_isMediaPlaintext(msg.type, pt)) return msg;
-    final compact = await MediaLocalCache.persistPlaintext(msg.id, pt);
-    if (compact == null) return msg;
-    if (!await MediaLocalCache.hasPayloadFile(msg.id)) return msg;
-    return msg.copyWith(plaintext: compact);
+    if (ChatMessage.isDecryptFailure(pt)) return msg.forCacheWithoutPlaintext;
+    if (msg.type == 'image' || msg.type == 'audio') {
+      if (MediaLocalCache.isLocalRef(pt)) return msg;
+      final compact = await MediaLocalCache.persistPlaintext(msg.id, pt);
+      if (compact != null) return msg.copyWith(plaintext: compact);
+      return msg.forCacheWithoutPlaintext;
+    }
+    if (msg.type == 'file') {
+      if (MediaLocalCache.isLocalRef(pt)) return msg;
+      if (await MediaLocalCache.hasPayloadFile(msg.id)) {
+        final ref = await MediaLocalCache.localRefFromDisk(msg.id);
+        if (ref != null) return msg.copyWith(plaintext: ref);
+      }
+      return msg.forCacheWithoutPlaintext;
+    }
+    if (_isMediaPlaintext(msg.type, pt)) return msg.forCacheWithoutPlaintext;
+    return msg;
   }
 
   /// 本地缓存是否已含可展示内容（媒体须已落盘或仍带 inline 数据）。
@@ -683,6 +894,7 @@ class AuthService {
     if (messages.isEmpty) return false;
     for (final m in messages) {
       if (m.type == 'system') continue;
+      if (m.type == 'file') continue;
       final pt = m.plaintext;
       if (pt == null || pt.isEmpty) return false;
       if (ChatMessage.isDecryptPlaceholder(pt)) return false;
@@ -695,11 +907,15 @@ class AuthService {
   }
 
   Future<List<ChatMessage>> loadCachedMessages(String conversationId) async {
+    final mem = _messagesMem[conversationId];
+    if (mem != null) return List<ChatMessage>.from(mem);
     final me = currentUser;
     if (me == null) return [];
     final raw = await storage.readMessageCache(me.id, conversationId);
-    return raw.map((e) => ChatMessage.fromJson(e)).toList()
+    final list = raw.map((e) => ChatMessage.fromJson(e)).toList()
       ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+    _messagesMem[conversationId] = list;
+    return list;
   }
 
   /// 批量读取本地消息缓存，供首页跨 epoch 搜索历史。
@@ -746,9 +962,13 @@ class AuthService {
   /// 媒体 plaintext 已损坏（local 引用但文件缺失等）时需重新解密。
   Future<bool> messagePlaintextNeedsRepair(ChatMessage msg) async {
     if (msg.type == 'system') return false;
+    if (msg.type == 'file') {
+      return !await MediaLocalCache.hasPayloadFile(msg.id);
+    }
     final pt = msg.plaintext;
     if (pt == null || pt.isEmpty) return true;
     if (ChatMessage.isDecryptPlaceholder(pt)) return true;
+    if (ChatMessage.isDecryptFailure(pt)) return true;
     if (!_isMediaPlaintext(msg.type, pt)) return false;
     return !await MediaLocalCache.isPlaintextAvailable(msg.id, pt);
   }
@@ -760,29 +980,142 @@ class AuthService {
       MediaLocalCache.isLocalRef(pt) ||
       MediaPayload.tryParse(pt) != null;
 
+  Future<ChatMessage> _finalizeDecryptedMedia(
+    String conversationId,
+    ChatMessage dec, {
+    bool persistFile = false,
+  }) async {
+    final pt = dec.plaintext;
+    if (pt == null || pt.isEmpty) return dec;
+    if (ChatMessage.isDecryptPlaceholder(pt)) return dec;
+    if (ChatMessage.isDecryptFailure(pt)) return dec;
+    if (dec.type == 'image' ||
+        dec.type == 'audio' ||
+        (dec.type == 'file' && persistFile)) {
+      final compact = await MediaLocalCache.persistPlaintext(dec.id, pt);
+      if (compact != null) {
+        final cached = dec.copyWith(plaintext: compact);
+        unawaited(upsertCachedMessage(conversationId, cached));
+        return cached;
+      }
+    } else if (dec.type == 'text') {
+      unawaited(upsertCachedMessage(conversationId, dec));
+    }
+    return dec;
+  }
+
   Future<ChatMessage> _decryptOneLocal(
     ConversationItem conversation,
-    ChatMessage msg,
-  ) async {
+    ChatMessage msg, {
+    bool persistFile = false,
+  }) async {
     final conv = _conversationCache[conversation.id] ?? conversation;
     var base = msg;
     if (base.ciphertext.isEmpty) {
       base = await hydrateIncomingMessage(conversation.id, msg);
     }
-    final dec = await chatCrypto.decryptMessage(conv, base);
-    final pt = dec.plaintext;
-    if (pt != null && pt.isNotEmpty) {
-      await MediaLocalCache.resolve(dec.id, pt);
+    final me = currentUser;
+    if (me != null && base.senderId == me.id && conv.type != 'group') {
+      final inline = base.plaintext;
+      if (inline != null &&
+          inline.isNotEmpty &&
+          !ChatMessage.isDecryptPlaceholder(inline) &&
+          !ChatMessage.isDecryptFailure(inline)) {
+        if (base.type == 'image' || base.type == 'audio') {
+          return _finalizeDecryptedMedia(conversation.id, base);
+        }
+        return base;
+      }
+      final stored = await _resolvePlaintext(conversation.id, base.id);
+      if (stored != null) {
+        return base.copyWith(plaintext: stored);
+      }
+      return base.copyWith(plaintext: ChatMessage.decryptPlaceholder);
     }
-    return dec;
+    final cached = await _resolvePlaintext(conversation.id, base.id);
+    if (cached != null) {
+      final withPt = base.copyWith(plaintext: cached);
+      if ((base.type == 'image' || base.type == 'audio') &&
+          MediaPayload.tryParse(cached) != null) {
+        return _finalizeDecryptedMedia(conversation.id, withPt);
+      }
+      return withPt;
+    }
+    if (conv.type == 'group') {
+      try {
+        await ensureGroupKeys(conv, epochs: [base.epoch], waitForRelay: true);
+      } catch (_) {}
+    }
+    final dec = await chatCrypto.decryptMessage(conv, base);
+    if (dec.type == 'file') {
+      if (persistFile) {
+        return _finalizeDecryptedMedia(
+          conversation.id,
+          dec,
+          persistFile: true,
+        );
+      }
+      if (await MediaLocalCache.hasPayloadFile(dec.id)) {
+        final ref = MediaLocalCache.isLocalRef(dec.plaintext)
+            ? dec.plaintext
+            : await MediaLocalCache.localRefFromDisk(dec.id);
+        if (ref != null) return dec.copyWith(plaintext: ref);
+      }
+      return dec.copyWith(plaintext: ChatMessage.decryptPlaceholder);
+    }
+    return _finalizeDecryptedMedia(conversation.id, dec);
   }
 
-  /// 单条消息媒体修复（缓存 local 引用失效时重新解密并落盘）。
+  Future<String?> _resolvePlaintext(
+    String conversationId,
+    String messageId, {
+    List<ChatMessage>? thread,
+  }) async {
+    if (thread != null) {
+      for (final m in thread) {
+        if (m.id != messageId) continue;
+        final pt = m.plaintext;
+        if (pt == null || pt.isEmpty) break;
+        if (ChatMessage.isDecryptPlaceholder(pt)) break;
+        if (ChatMessage.isDecryptFailure(pt)) break;
+        return pt;
+      }
+    }
+    return cachedPlaintextForMessage(conversationId, messageId);
+  }
+
+  /// 单条消息媒体修复（文件：用户点击接收；其它：缓存 local 引用失效时重新解密）。
   Future<ChatMessage?> repairMessageMedia(
     ConversationItem conversation,
     ChatMessage message,
   ) async {
     if (message.type == 'system') return message;
+    if (message.type == 'file') {
+      if (await MediaLocalCache.hasPayloadFile(message.id)) {
+        final ref = MediaLocalCache.isLocalRef(message.plaintext)
+            ? message.plaintext
+            : await MediaLocalCache.localRefFromDisk(message.id);
+        if (ref != null) {
+          final fixed = message.copyWith(plaintext: ref);
+          unawaited(upsertCachedMessage(conversation.id, fixed));
+          return fixed;
+        }
+      }
+      if (conversation.type == 'group') {
+        try {
+          await ensureGroupKeysForMessages(conversation, [message]);
+        } catch (_) {}
+      }
+      try {
+        return await _decryptOneLocal(
+          conversation,
+          message,
+          persistFile: true,
+        );
+      } catch (_) {
+        return null;
+      }
+    }
     if (!await messagePlaintextNeedsRepair(message)) return message;
     if (conversation.type == 'group') {
       try {
@@ -790,7 +1123,8 @@ class AuthService {
       } catch (_) {}
     }
     try {
-      return await _decryptOneLocal(conversation, message);
+      return await _finalizeDecryptedMedia(conversation.id,
+          await _decryptOneLocal(conversation, message));
     } catch (_) {
       return null;
     }
@@ -803,8 +1137,24 @@ class AuthService {
   ) async {
     final out = <ChatMessage>[];
     for (final msg in messages) {
+      if (ChatMessage.isLocalId(msg.id)) {
+        out.add(msg);
+        continue;
+      }
       if (msg.type == 'system') {
         out.add(msg.copyWith(plaintext: msg.ciphertext));
+        continue;
+      }
+      if (msg.type == 'file') {
+        if (await MediaLocalCache.hasPayloadFile(msg.id)) {
+          var ref = msg.plaintext;
+          if (!MediaLocalCache.isLocalRef(ref)) {
+            ref = await MediaLocalCache.localRefFromDisk(msg.id);
+          }
+          out.add(ref != null ? msg.copyWith(plaintext: ref) : msg);
+        } else {
+          out.add(msg.copyWith(plaintext: ChatMessage.decryptPlaceholder));
+        }
         continue;
       }
       if (msg.plaintext != null &&
@@ -863,274 +1213,28 @@ class AuthService {
     );
   }
 
-  /// 确保本地有所需 epoch 的群 GMK（优先 REST 拉取服务端密文包，其次 WS 向在线群主补发）。
   Future<void> ensureGroupKeys(
     ConversationItem conversation, {
     List<int>? epochs,
-  }) async {
-    if (conversation.type != 'group') return;
-    final me = currentUser;
-    if (me == null) return;
+    bool waitForRelay = false,
+  }) =>
+      groupKeys.ensureKeys(
+        conversation,
+        epochs: epochs,
+        waitForRelay: waitForRelay,
+      );
 
-    var conv = conversation;
-    if (conv.members.isEmpty) {
-      conv = await _refreshConversation(conversation);
-    }
-
-    final needed = <int>{conv.epoch, ...?epochs};
-    for (final epoch in needed) {
-      if (await _hasGroupGmk(conv.id, epoch)) continue;
-
-      if (conv.isOwner(me.id)) {
-        if (await _fetchOwnerSelfBundle(conv, epoch)) continue;
-        await _backfillKeyBundlesForOwner(conv, epochs: {epoch});
-        continue;
-      }
-
-      final fromServer = await _fetchKeyBundlesFromServer(conv, epoch);
-      if (fromServer || await _hasGroupGmk(conv.id, epoch)) continue;
-
-      await _requestGmkAndWait(conv.id, epoch);
-    }
-  }
-
-  /// 群主换设备后，从服务端自备份拉取历史 epoch 的 GMK。
-  Future<void> ensureOwnerGroupKeys(ConversationItem conversation) async {
-    if (conversation.type != 'group') return;
-    final me = currentUser;
-    if (me == null || !conversation.isOwner(me.id)) return;
-
-    var conv = conversation;
-    if (conv.members.isEmpty) {
-      conv = await _refreshConversation(conversation);
-    }
-
-    try {
-      final bundles = await conversations.fetchKeyBundles(conv.id);
-      final epochs = <int>{conv.epoch};
-      for (final b in bundles) {
-        epochs.add(b.epoch);
-      }
-      for (var e = 0; e <= conv.epoch; e++) {
-        epochs.add(e);
-      }
-      await ensureGroupKeys(conv, epochs: epochs.toList());
-    } catch (_) {
-      await ensureGroupKeys(conv);
-    }
-  }
+  Future<void> ensureOwnerGroupKeys(ConversationItem conversation) =>
+      groupKeys.ensureOwnerKeys(conversation);
 
   Future<void> ensureGroupKeysForMessages(
     ConversationItem conversation,
     List<ChatMessage> messages,
-  ) async {
-    if (conversation.type != 'group') return;
-    final epochs = messages.map((m) => m.epoch).toSet().toList();
-    await ensureGroupKeys(conversation, epochs: epochs);
-  }
+  ) =>
+      groupKeys.prepareForMessages(conversation, messages);
 
-  Future<bool> _hasGroupGmk(String conversationId, int epoch) async {
-    final me = currentUser;
-    if (me == null) return false;
-    final raw = await storage.readGroupGmk(me.id, conversationId, epoch);
-    return raw != null && raw.length == 32;
-  }
-
-  Future<bool> _fetchOwnerSelfBundle(
-    ConversationItem conv,
-    int epoch,
-  ) async {
-    final me = currentUser;
-    if (me == null || !conv.isOwner(me.id)) return false;
-
-    ConversationMember? owner;
-    for (final m in conv.members) {
-      if (m.userId == me.id) {
-        owner = m;
-        break;
-      }
-    }
-    if (owner == null || !canUseE2EEWithPeer(owner.identityPublicKey)) {
-      return false;
-    }
-
-    try {
-      final bundles = await conversations.fetchKeyBundles(
-        conv.id,
-        epochs: [epoch],
-      );
-      for (final bundle in bundles) {
-        if (bundle.epoch != epoch || bundle.senderId != me.id) continue;
-        if (await _hasGroupGmk(conv.id, epoch)) return true;
-        try {
-          final stored = await chatCrypto.absorbGroupWelcome(
-            senderUserId: me.id,
-            senderPublicKeyBase64: owner.identityPublicKey,
-            ciphertext: bundle.ciphertext,
-          );
-          _signalGmkReceived(stored.conversationId, stored.epoch);
-        } catch (_) {}
-      }
-    } catch (_) {}
-    return await _hasGroupGmk(conv.id, epoch);
-  }
-
-  Future<bool> _fetchKeyBundlesFromServer(
-    ConversationItem conv,
-    int epoch,
-  ) async {
-    try {
-      final bundles = await conversations.fetchKeyBundles(
-        conv.id,
-        epochs: [epoch],
-      );
-      for (final bundle in bundles) {
-        if (bundle.epoch != epoch) continue;
-        if (await _hasGroupGmk(conv.id, epoch)) return true;
-
-        ConversationMember? sender;
-        for (final m in conv.members) {
-          if (m.userId == bundle.senderId) {
-            sender = m;
-            break;
-          }
-        }
-        if (sender == null || !canUseE2EEWithPeer(sender.identityPublicKey)) {
-          continue;
-        }
-
-        try {
-          final stored = await chatCrypto.absorbGroupWelcome(
-            senderUserId: sender.userId,
-            senderPublicKeyBase64: sender.identityPublicKey,
-            ciphertext: bundle.ciphertext,
-          );
-          _signalGmkReceived(stored.conversationId, stored.epoch);
-        } catch (_) {}
-      }
-    } catch (_) {}
-    return await _hasGroupGmk(conv.id, epoch);
-  }
-
-  Future<void> _backfillKeyBundlesForOwner(
-    ConversationItem conv, {
-    required Set<int> epochs,
-  }) async {
-    final me = currentUser;
-    if (me == null || !conv.isOwner(me.id)) return;
-
-    final uploads = <Map<String, dynamic>>[];
-    for (final epoch in epochs) {
-      final raw = await storage.readGroupGmk(me.id, conv.id, epoch);
-      if (raw == null || raw.length != 32) continue;
-      final gmk = Uint8List.fromList(raw);
-
-      for (final member in conv.members) {
-        if (!canUseE2EEWithPeer(member.identityPublicKey)) continue;
-        try {
-          final cipher = await chatCrypto.buildGroupWelcome(
-            recipient: member,
-            conversationId: conv.id,
-            epoch: epoch,
-            gmk: gmk,
-          );
-          uploads.add({
-            'epoch': epoch,
-            'recipient_user_id': member.userId,
-            'ciphertext': cipher,
-          });
-        } catch (_) {}
-      }
-    }
-
-    if (uploads.isEmpty) return;
-    try {
-      await conversations.uploadKeyBundles(conv.id, uploads);
-    } catch (_) {}
-  }
-
-  Future<bool> _requestGmkAndWait(String conversationId, int epoch) async {
-    if (await _hasGroupGmk(conversationId, epoch)) return true;
-
-    final key = '$conversationId:$epoch';
-    final completer = Completer<void>();
-    _gmkWaiters.putIfAbsent(key, () => []).add(completer);
-    ws.sendGmkRequest(conversationId: conversationId, epoch: epoch);
-
-    try {
-      await completer.future.timeout(const Duration(seconds: 10));
-    } catch (_) {
-      _gmkWaiters[key]?.remove(completer);
-      if (_gmkWaiters[key]?.isEmpty ?? false) {
-        _gmkWaiters.remove(key);
-      }
-      return false;
-    }
-    return _hasGroupGmk(conversationId, epoch);
-  }
-
-  void _signalGmkReceived(String conversationId, int epoch) {
-    final key = '$conversationId:$epoch';
-    final waiters = _gmkWaiters.remove(key);
-    if (waiters == null) return;
-    for (final c in waiters) {
-      if (!c.isCompleted) c.complete();
-    }
-  }
-
-  Future<void> _syncGroupKeysInBackground() async {
-    final me = currentUser;
-    if (me == null) return;
-    for (final conv in _conversationCache.values) {
-      if (conv.type != 'group') continue;
-      if (conv.isOwner(me.id)) {
-        unawaited(ensureOwnerGroupKeys(conv));
-      } else {
-        unawaited(ensureGroupKeys(conv));
-      }
-    }
-  }
-
-  void _cacheConversation(ConversationItem conv) {
-    _conversationCache[conv.id] = conv;
-  }
-
-  Future<void> _relayGroupWelcome(
-    ConversationItem conv,
-    Uint8List gmk,
-  ) async {
-    final me = currentUser;
-    if (me == null) return;
-
-    final uploads = <Map<String, dynamic>>[];
-    for (final member in conv.members) {
-      if (!canUseE2EEWithPeer(member.identityPublicKey)) continue;
-      final cipher = await chatCrypto.buildGroupWelcome(
-        recipient: member,
-        conversationId: conv.id,
-        epoch: conv.epoch,
-        gmk: gmk,
-      );
-      if (member.userId != me.id) {
-        ws.sendKeyRelay(
-          conversationId: conv.id,
-          targetUserId: member.userId,
-          ciphertext: cipher,
-        );
-      }
-      uploads.add({
-        'epoch': conv.epoch,
-        'recipient_user_id': member.userId,
-        'ciphertext': cipher,
-      });
-    }
-
-    if (uploads.isNotEmpty) {
-      try {
-        await conversations.uploadKeyBundles(conv.id, uploads);
-      } catch (_) {}
-    }
-  }
+  void prepareGroupConversation(ConversationItem conversation) =>
+      groupKeys.prepareForConversation(conversation);
 
   Future<ConversationItem> _refreshConversation(ConversationItem conversation) async {
     if (conversation.isArchived) {
@@ -1167,13 +1271,7 @@ class AuthService {
     ConversationItem conversation,
     ChatMessage message,
   ) async {
-    final hydrated =
-        await hydrateIncomingMessage(conversation.id, message);
-    if (hydrated.type == 'system') {
-      return hydrated.copyWith(plaintext: hydrated.ciphertext);
-    }
-    final conv = await _refreshConversation(conversation);
-    return chatCrypto.decryptMessage(conv, hydrated);
+    return _decryptOneLocal(conversation, message);
   }
 
   Future<List<ChatMessage>> decryptMessages(
@@ -1189,22 +1287,63 @@ class AuthService {
 
   Future<String> decryptPreview(
     ConversationItem conversation,
-    ChatMessage message,
-  ) async {
+    ChatMessage message, {
+    List<ChatMessage>? cachedThread,
+  }) async {
     final hydrated =
         await hydrateIncomingMessage(conversation.id, message);
     if (hydrated.type == 'system') {
       return hydrated.ciphertext;
     }
-    final conv = await _refreshConversation(conversation);
-    if (conv.type == 'group') {
-      await ensureGroupKeys(conv, epochs: [hydrated.epoch]);
+    final conv = _conversationCache[conversation.id] ?? conversation;
+    final me = currentUser;
+    if (me != null && hydrated.senderId == me.id && conv.type != 'group') {
+      final stored = await _resolvePlaintext(
+        conversation.id,
+        hydrated.id,
+        thread: cachedThread,
+      );
+      if (stored != null) return _previewBody(hydrated, stored);
+      return hydrated.type == 'text'
+          ? ChatMessage.decryptPlaceholder
+          : MediaPayload.previewLabel('', hydrated.type);
     }
-    return chatCrypto.decryptIncoming(
+    final stored = await _resolvePlaintext(
+      conversation.id,
+      hydrated.id,
+      thread: cachedThread,
+    );
+    if (stored != null) return _previewBody(hydrated, stored);
+    if (conv.type == 'group') {
+      unawaited(ensureGroupKeys(conv, epochs: [hydrated.epoch]));
+    }
+    final text = await chatCrypto.decryptIncoming(
       conv,
       hydrated.ciphertext,
       messageEpoch: hydrated.epoch,
     );
+    if (ChatMessage.isDecryptFailure(text)) {
+      final retry = await _resolvePlaintext(
+        conversation.id,
+        hydrated.id,
+        thread: cachedThread,
+      );
+      if (retry != null) return _previewBody(hydrated, retry);
+      return text;
+    }
+    final preview = _previewBody(hydrated, text);
+    unawaited(
+      upsertCachedMessage(
+        conversation.id,
+        hydrated.copyWith(plaintext: preview),
+      ),
+    );
+    return preview;
+  }
+
+  String _previewBody(ChatMessage message, String plaintext) {
+    if (message.type == 'text') return plaintext;
+    return MediaPayload.previewLabel(plaintext, message.type);
   }
 
   /// WS 推送大消息时 ciphertext 可能被省略；优先读本机缓存，再请求 API。
@@ -1248,179 +1387,163 @@ class AuthService {
     }
   }
 
+  void _cacheConversation(ConversationItem conv) {
+    _conversationCache[conv.id] = conv;
+    if (conv.type == 'group' && conv.members.isNotEmpty) {
+      unawaited(mergeMemberDirectory(conv.id, conv.members));
+    }
+  }
+
+  Future<Map<String, ConversationMember>> _directoryFor(
+    String conversationId,
+  ) async {
+    final cached = _memberDirectories[conversationId];
+    if (cached != null) return cached;
+    final me = currentUser;
+    if (me == null) return {};
+    return _directoryFromStorage(me.id, conversationId);
+  }
+
+  Future<void> mergeMemberDirectory(
+    String conversationId,
+    List<ConversationMember> members, {
+    bool persist = true,
+  }) async {
+    final me = currentUser;
+    if (me == null || members.isEmpty) return;
+    final dir = _memberDirectories[conversationId] ??
+        await _directoryFromStorage(me.id, conversationId);
+    var changed = false;
+    for (final m in members) {
+      if (m.userId.isEmpty) continue;
+      final existing = dir[m.userId];
+      if (existing == null ||
+          existing.username != m.username ||
+          existing.avatarUrl != m.avatarUrl ||
+          existing.identityPublicKey != m.identityPublicKey) {
+        dir[m.userId] = m;
+        changed = true;
+      }
+    }
+    if (!changed) return;
+    _memberDirectories[conversationId] = dir;
+    if (persist) {
+      await storage.saveMemberDirectory(
+        me.id,
+        conversationId,
+        dir.values.map((m) => m.toJson()).toList(),
+      );
+    }
+  }
+
+  Future<Map<String, ConversationMember>> _directoryFromStorage(
+    String userId,
+    String conversationId,
+  ) async {
+    final raw = await storage.readMemberDirectory(userId, conversationId);
+    final map = <String, ConversationMember>{};
+    for (final e in raw) {
+      final m = ConversationMember.fromJson(e);
+      if (m.userId.isNotEmpty) map[m.userId] = m;
+    }
+    _memberDirectories[conversationId] = map;
+    return map;
+  }
+
+  /// 拉取并合并群成员名录（含已退群），供历史消息展示昵称/头像。
+  Future<void> ensureGroupMemberDirectory(ConversationItem conversation) async {
+    if (conversation.type != 'group') return;
+    await mergeMemberDirectory(conversation.id, conversation.members);
+    if (_memberDirectorySynced.contains(conversation.id)) return;
+    try {
+      final remote =
+          await conversations.listMemberDirectory(conversation.id);
+      await mergeMemberDirectory(conversation.id, remote);
+      _memberDirectorySynced.add(conversation.id);
+    } catch (_) {}
+  }
+
+  ConversationMember? knownGroupMember(
+    ConversationItem conversation,
+    String userId,
+  ) {
+    for (final m in conversation.members) {
+      if (m.userId == userId) return m;
+    }
+    return _memberDirectories[conversation.id]?[userId];
+  }
+
+  Future<ConversationMember?> groupMemberProfile(
+    ConversationItem conversation,
+    String userId,
+  ) async {
+    final active = knownGroupMember(conversation, userId);
+    if (active != null) return active;
+    final dir = await _directoryFor(conversation.id);
+    return dir[userId];
+  }
+
+  String groupSenderLabel(
+    ConversationItem conversation,
+    String meId,
+    String senderId,
+  ) {
+    if (senderId == meId) return '我';
+    return groupMemberUsername(conversation, senderId);
+  }
+
+  String groupMemberUsername(ConversationItem conversation, String userId) {
+    final profile = knownGroupMember(conversation, userId);
+    return profile?.username ?? '?';
+  }
+
+  String? groupMemberAvatarUrl(ConversationItem conversation, String userId) {
+    return knownGroupMember(conversation, userId)?.avatarUrl;
+  }
+
   Future<void> _connectRealtime() async {
     final token = await ensureValidAccessToken();
     if (token == null || token.isEmpty) return;
     await ws.connect(token);
-    _attachWsHandlers();
+    groupKeys.attachWsHandlers();
     try {
       final items = await conversations.listConversations();
       for (final c in items) {
         _cacheConversation(c);
       }
-      unawaited(_syncGroupKeysInBackground());
+      groupKeys.syncAllCachedInBackground(_conversationCache.values);
     } catch (_) {}
   }
 
   Future<void> _disconnectRealtime() async {
-    await _keyRelaySub?.cancel();
-    _keyRelaySub = null;
-    await _gmkRequestSub?.cancel();
-    _gmkRequestSub = null;
-    await _epochSub?.cancel();
-    _epochSub = null;
+    groupKeys.detachWsHandlers();
     await ws.disconnect();
   }
 
-  void _attachWsHandlers() {
-    _keyRelaySub?.cancel();
-    _epochSub?.cancel();
-    _keyRelaySub = ws.onKeyRelay.listen((frame) {
-      unawaited(_handleKeyRelay(frame));
-    });
-    _gmkRequestSub = ws.onGmkRequest.listen((frame) {
-      unawaited(_handleGmkRequest(frame));
-    });
-    _epochSub = ws.onEpochUpdated.listen((frame) {
-      unawaited(_handleEpochUpdated(frame));
-    });
-  }
-
-  Future<void> _handleEpochUpdated(EpochUpdatedFrame frame) async {
-    final me = currentUser;
-    if (me == null) return;
-
-    var conv = _conversationCache[frame.conversationId];
-    if (conv != null) {
-      conv = conv.copyWith(epoch: frame.epoch);
-      _cacheConversation(conv);
-    } else {
-      conv = ConversationItem(
-        id: frame.conversationId,
-        type: 'group',
-        members: [],
-        epoch: frame.epoch,
-      );
-      _cacheConversation(conv);
-    }
-
-    if (!conv.isOwner(me.id)) return;
-
-    final existing =
-        await storage.readGroupGmk(me.id, conv.id, frame.epoch);
-    if (existing != null) return;
-
-    try {
-      final gmk = await chatCrypto.rotateGroupEpoch(conv.id, frame.epoch);
-      await _relayGroupWelcome(conv, gmk);
-    } catch (_) {}
-  }
-
-  Future<void> _handleKeyRelay(KeyRelayFrame frame) async {
-    final me = currentUser;
-    if (me == null || frame.targetUserId != me.id) return;
-
-    var conv = _conversationCache[frame.conversationId];
-    if (conv == null) {
-      conv = await _refreshConversation(
-        ConversationItem(
-          id: frame.conversationId,
-          type: 'group',
-          members: [],
-        ),
-      );
-    }
-
-    ConversationMember? sender;
-    for (final m in conv.members) {
-      if (m.userId == frame.fromUserId) {
-        sender = m;
-        break;
-      }
-    }
-    if (sender == null || !canUseE2EEWithPeer(sender.identityPublicKey)) {
-      return;
-    }
-
-    try {
-      final stored = await chatCrypto.absorbGroupWelcome(
-        senderUserId: sender.userId,
-        senderPublicKeyBase64: sender.identityPublicKey,
-        ciphertext: frame.ciphertext,
-      );
-      _signalGmkReceived(stored.conversationId, stored.epoch);
-    } catch (_) {}
-  }
-
-  Future<void> _handleGmkRequest(GmkRequestFrame frame) async {
-    final me = currentUser;
-    if (me == null) return;
-
-    var conv = _conversationCache[frame.conversationId];
-    if (conv == null || conv.members.isEmpty) {
-      conv = await _refreshConversation(
-        ConversationItem(
-          id: frame.conversationId,
-          type: 'group',
-          members: [],
-        ),
-      );
-    }
-    if (!conv.isOwner(me.id)) return;
-
-    ConversationMember? requester;
-    for (final m in conv.members) {
-      if (m.userId == frame.requesterUserId) {
-        requester = m;
-        break;
-      }
-    }
-    if (requester == null || !canUseE2EEWithPeer(requester.identityPublicKey)) {
-      return;
-    }
-
-    for (final epoch in frame.epochs) {
-      final raw = await storage.readGroupGmk(me.id, conv.id, epoch);
-      if (raw == null || raw.length != 32) continue;
-      try {
-        final cipher = await chatCrypto.buildGroupWelcome(
-          recipient: requester,
-          conversationId: conv.id,
-          epoch: epoch,
-          gmk: Uint8List.fromList(raw),
-        );
-        ws.sendKeyRelay(
-          conversationId: conv.id,
-          targetUserId: requester.userId,
-          ciphertext: cipher,
-        );
-        try {
-          await conversations.uploadKeyBundles(conv.id, [
-            {
-              'epoch': epoch,
-              'recipient_user_id': requester.userId,
-              'ciphertext': cipher,
-            },
-          ]);
-        } catch (_) {}
-      } catch (_) {}
-    }
-  }
-
-  Future<void> _applyTokenResponse(Map<String, dynamic> data) async {
-    await _saveTokenResponse(data);
-    await _connectRealtime();
-  }
-
-  /// 登录后绑定本账号身份密钥（注册 email 密钥 → userId）。
-  Future<void> _bindIdentityForUser() async {
+  /// 登录后上传 Signal 预密钥并同步身份公钥。
+  Future<bool> _ensureSignalIdentity() async {
     final user = currentUser;
-    if (user == null) return;
+    if (user == null) return false;
 
-    await storage.bindIdentityForUser(
+    await storage.bindSignalStoreForUser(
       userId: user.id,
       email: user.email,
     );
+    _signalDm = null;
     _crypto = null;
+
+    final dm = await _ensureSignalDm();
+    await dm.uploadKeysToServer();
+    final localPub = await dm.identityPublicKeyBase64();
+
+    if (!isValidIdentityPublicKey(user.identityPublicKey) ||
+        user.identityPublicKey != localPub) {
+      final data = await api.patchJson('/api/users/me', body: {
+        'identity_public_key': localPub,
+      });
+      currentUser = User.fromJson(data);
+      return true;
+    }
+    return false;
   }
 }

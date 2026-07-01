@@ -4,6 +4,8 @@ import 'dart:typed_data';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:uuid/uuid.dart';
 
+import '../crypto/megolm_rotation_meta.dart';
+
 const _kAccess = 'access_token';
 const _kRefresh = 'refresh_token';
 const _kDeviceId = 'device_id';
@@ -120,6 +122,66 @@ class AuthStorage {
     await _storage.delete(key: _sessionKey(ownerUserId, peerUserId));
   }
 
+  Future<Map<String, String>> readSignalStore(String scope) async {
+    final raw = await _storage.read(key: _signalStoreKey(scope));
+    if (raw == null || raw.isEmpty) return {};
+    try {
+      final decoded = jsonDecode(raw) as Map<String, dynamic>;
+      return decoded.map((k, v) => MapEntry(k, v as String));
+    } catch (_) {
+      return {};
+    }
+  }
+
+  Future<void> writeSignalStore(String scope, Map<String, String> data) async {
+    await _storage.write(
+      key: _signalStoreKey(scope),
+      value: jsonEncode(data),
+    );
+  }
+
+  Future<void> bindSignalStoreForUser({
+    required String userId,
+    required String email,
+  }) async {
+    final userScope = 'user_$userId';
+    if (await _storage.read(key: _signalStoreKey(userScope)) != null) {
+      return;
+    }
+    final emailScope = 'email_${email.trim().toLowerCase()}';
+    final raw = await _storage.read(key: _signalStoreKey(emailScope));
+    if (raw != null) {
+      await _storage.write(key: _signalStoreKey(userScope), value: raw);
+      await _storage.delete(key: _signalStoreKey(emailScope));
+    }
+  }
+
+  Future<MegolmRotationMeta?> readMegolmRotationMeta(
+    String userId,
+    String conversationId,
+  ) async {
+    final raw = await _storage.read(key: _megolmRotationKey(userId, conversationId));
+    if (raw == null || raw.isEmpty) return null;
+    try {
+      return MegolmRotationMeta.fromJson(
+        jsonDecode(raw) as Map<String, dynamic>,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> writeMegolmRotationMeta(
+    String userId,
+    String conversationId,
+    MegolmRotationMeta meta,
+  ) async {
+    await _storage.write(
+      key: _megolmRotationKey(userId, conversationId),
+      value: jsonEncode(meta.toJson()),
+    );
+  }
+
   Future<List<int>?> readGroupGmk(
     String ownerUserId,
     String conversationId,
@@ -141,6 +203,16 @@ class AuthStorage {
     await _storage.write(
       key: _groupGmkKey(ownerUserId, conversationId, epoch),
       value: base64Encode(bytes),
+    );
+  }
+
+  Future<void> clearGroupGmk(
+    String ownerUserId,
+    String conversationId,
+    int epoch,
+  ) async {
+    await _storage.delete(
+      key: _groupGmkKey(ownerUserId, conversationId, epoch),
     );
   }
 
@@ -196,9 +268,18 @@ class AuthStorage {
     String userId,
     String conversationId,
   ) async {
+    await removeArchivedConversations(userId, {conversationId});
+  }
+
+  Future<void> removeArchivedConversations(
+    String userId,
+    Set<String> conversationIds,
+  ) async {
+    if (conversationIds.isEmpty) return;
     final list = await readArchivedConversationsRaw(userId);
-    final next =
-        list.where((e) => e['id'] != conversationId).toList(growable: false);
+    final next = list
+        .where((e) => !conversationIds.contains(e['id'] as String? ?? ''))
+        .toList(growable: false);
     if (next.length == list.length) return;
     await _storage.write(
       key: _archivedConversationsKey(userId),
@@ -326,6 +407,36 @@ class AuthStorage {
   String _messageCacheKey(String userId, String conversationId) =>
       'message_cache_${userId}_$conversationId';
 
+  String _memberDirectoryKey(String userId, String conversationId) =>
+      'member_directory_${userId}_$conversationId';
+
+  Future<void> saveMemberDirectory(
+    String userId,
+    String conversationId,
+    List<Map<String, dynamic>> members,
+  ) async {
+    await _storage.write(
+      key: _memberDirectoryKey(userId, conversationId),
+      value: jsonEncode(members),
+    );
+  }
+
+  Future<List<Map<String, dynamic>>> readMemberDirectory(
+    String userId,
+    String conversationId,
+  ) async {
+    final raw =
+        await _storage.read(key: _memberDirectoryKey(userId, conversationId));
+    if (raw == null || raw.isEmpty) return [];
+    try {
+      return (jsonDecode(raw) as List<dynamic>)
+          .map((e) => Map<String, dynamic>.from(e as Map))
+          .toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
   String _pinnedKey(String userId) => 'pinned_conversations_$userId';
 
   String _groupGmkKey(String ownerUserId, String conversationId, int epoch) =>
@@ -338,6 +449,11 @@ class AuthStorage {
 
   String _sessionKey(String ownerUserId, String peerUserId) =>
       'dm_session_${ownerUserId}_$peerUserId';
+
+  String _signalStoreKey(String scope) => 'signal_store_$scope';
+
+  String _megolmRotationKey(String userId, String conversationId) =>
+      'megolm_rotation_${userId}_$conversationId';
 
   Future<Uint8List?> _readSeed(String key) async {
     final raw = await _storage.read(key: key);

@@ -1,0 +1,35 @@
+$kind: http-request
+name: PUT /api/users/me/signal-keys
+url: "{{baseUrl}}/api/users/me/signal-keys"
+method: PUT
+headers:
+  Content-Type: application/json
+  Authorization: Bearer {{access_token}}
+body:
+  type: json
+  content: |-
+    {
+      "device_id": "{{device_id}}",
+      "signal_device_id": 1,
+      "registration_id": 12345,
+      "identity_key": "{{signal_identity_key}}",
+      "signed_pre_key_id": 1,
+      "signed_pre_key_public": "{{signal_signed_pre_key}}",
+      "signed_pre_key_signature": "{{signal_signed_pre_key_sig}}",
+      "one_time_pre_keys": [
+        {"pre_key_id": 1, "public_key": "{{signal_one_time_pre_key}}"},
+        {"pre_key_id": 2, "public_key": "{{signal_one_time_pre_key}}"},
+        {"pre_key_id": 3, "public_key": "{{signal_one_time_pre_key}}"}
+      ]
+    }
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      pm.test('signal keys uploaded', function () {
+        pm.response.to.have.status(200);
+        const json = pm.response.json();
+        pm.expect(json.ok).to.eql(true);
+        pm.expect(json.needs_pre_key_upload).to.be.a('boolean');
+      });
+order: 1000

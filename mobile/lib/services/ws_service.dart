@@ -45,6 +45,18 @@ class EpochUpdatedFrame {
   final int epoch;
 }
 
+class GmkUpdatedFrame {
+  GmkUpdatedFrame({
+    required this.conversationId,
+    required this.epochs,
+    this.senderUserId,
+  });
+
+  final String conversationId;
+  final List<int> epochs;
+  final String? senderUserId;
+}
+
 class GroupDissolvedFrame {
   GroupDissolvedFrame({
     required this.conversationId,
@@ -93,6 +105,7 @@ class WsService {
   final _messageController = StreamController<ChatMessage>.broadcast();
   final _keyRelayController = StreamController<KeyRelayFrame>.broadcast();
   final _gmkRequestController = StreamController<GmkRequestFrame>.broadcast();
+  final _gmkUpdatedController = StreamController<GmkUpdatedFrame>.broadcast();
   final _epochController = StreamController<EpochUpdatedFrame>.broadcast();
   final _groupDissolvedController =
       StreamController<GroupDissolvedFrame>.broadcast();
@@ -108,6 +121,7 @@ class WsService {
   Stream<ChatMessage> get onMessage => _messageController.stream;
   Stream<KeyRelayFrame> get onKeyRelay => _keyRelayController.stream;
   Stream<GmkRequestFrame> get onGmkRequest => _gmkRequestController.stream;
+  Stream<GmkUpdatedFrame> get onGmkUpdated => _gmkUpdatedController.stream;
   Stream<EpochUpdatedFrame> get onEpochUpdated => _epochController.stream;
   Stream<GroupDissolvedFrame> get onGroupDissolved =>
       _groupDissolvedController.stream;
@@ -328,6 +342,26 @@ class WsService {
           requesterUserId: requester,
           epochs: epochs,
         ));
+      }
+      return;
+    }
+    if (event == 'gmk_updated') {
+      final convId = frame['conversation_id'] as String?;
+      final epochsRaw = frame['epochs'];
+      if (convId != null) {
+        final epochs = <int>[];
+        if (epochsRaw is List) {
+          for (final e in epochsRaw) {
+            if (e is int) epochs.add(e);
+          }
+        }
+        if (epochs.isNotEmpty) {
+          _safeAdd(_gmkUpdatedController, GmkUpdatedFrame(
+            conversationId: convId,
+            epochs: epochs,
+            senderUserId: frame['sender_user_id'] as String?,
+          ));
+        }
       }
       return;
     }

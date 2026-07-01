@@ -22,6 +22,7 @@ dependencies:
   connectivity_plus: ^6.1.4
   open_file: ^3.5.10
   gal: ^2.3.2
+  libsignal_protocol_dart: ^0.8.2
 
 dev_dependencies:
   flutter_test:

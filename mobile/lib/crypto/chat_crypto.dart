@@ -5,20 +5,22 @@ import '../models/message.dart';
 import 'e2ee_exception.dart';
 import 'group_epoch.dart';
 import 'identity.dart';
-import 'message_codec.dart';
+import 'signal/signal_dm_service.dart';
 
-/// 封装单聊与群聊 E2EE。
+/// 封装单聊（Signal）与群聊（Megolm GMK）。
 class ChatCrypto {
   ChatCrypto({
-    required MessageCodec codec,
+    required SignalDmService signal,
     required GroupCrypto group,
     required this.myUserId,
-  })  : _codec = codec,
+  })  : _signal = signal,
         _group = group;
 
-  final MessageCodec _codec;
+  final SignalDmService _signal;
   final GroupCrypto _group;
   final String myUserId;
+
+  SignalDmService get signal => _signal;
 
   bool get enabled => myUserId.isNotEmpty;
 
@@ -44,11 +46,7 @@ class ChatCrypto {
         !canUseE2EEWithPeer(peer.identityPublicKey)) {
       throw E2eeException('对方尚未配置加密密钥，请让对方重新登录后再试');
     }
-    return _codec.encrypt(
-      peerUserId: peer.userId,
-      peerPublicKeyBase64: peer.identityPublicKey,
-      plaintext: plaintext,
-    );
+    return _signal.encrypt(peer.userId, plaintext);
   }
 
   Future<String> decryptIncoming(
@@ -60,17 +58,13 @@ class ChatCrypto {
       final epoch = messageEpoch ?? conversation.epoch;
       return _group.decryptGroupMessage(conversation.id, epoch, payload);
     }
-    if (!_codec.isEncrypted(payload)) return payload;
+    if (!_signal.isEncrypted(payload)) return payload;
     final peer = _peer(conversation);
     if (peer == null) return '[无法解密]';
     if (!canUseE2EEWithPeer(peer.identityPublicKey)) {
       return '[无法解密：对方未配置加密密钥]';
     }
-    return _codec.decrypt(
-      peerUserId: peer.userId,
-      peerPublicKeyBase64: peer.identityPublicKey,
-      payload: payload,
-    );
+    return _signal.decrypt(peer.userId, payload);
   }
 
   Future<ChatMessage> decryptMessage(
@@ -135,7 +129,7 @@ class ChatCrypto {
   }
 
   bool isEncryptedPayload(String payload) {
-    return _codec.isEncrypted(payload) || _group.isGroupEncrypted(payload);
+    return _signal.isEncrypted(payload) || _group.isGroupEncrypted(payload);
   }
 
   ConversationMember? _peer(ConversationItem conversation) {
@@ -149,41 +143,16 @@ class ChatCrypto {
 
 ChatCrypto createChatCrypto({
   required String myUserId,
-  required Future<Uint8List?> Function() readIdentitySeed,
-  required Future<void> Function(Uint8List seed) writeIdentitySeed,
-  required Future<List<int>?> Function(String peerUserId) readSession,
-  required Future<String?> Function(String peerUserId) readSessionPeerKey,
-  required Future<void> Function(
-    String peerUserId,
-    List<int> keyBytes,
-    String peerPublicKeyBase64,
-  ) writeSession,
-  required Future<void> Function(String peerUserId) clearSession,
+  required SignalDmService signal,
   required Future<List<int>?> Function(String conversationId, int epoch)
       readGroupGmk,
   required Future<void> Function(String conversationId, int epoch, List<int> bytes)
       writeGroupGmk,
 }) {
-  final identity = IdentityKeyStore(readIdentitySeed, writeIdentitySeed);
-  final codec = MessageCodec(
-    loadIdentity: identity.loadOrCreate,
-    readSession: readSession,
-    readSessionPeerKey: readSessionPeerKey,
-    writeSession: writeSession,
-    clearSession: clearSession,
-  );
   final group = GroupCrypto(
     store: GroupEpochStore(readGmk: readGroupGmk, writeGmk: writeGroupGmk),
-    loadIdentity: identity.loadOrCreate,
+    loadIdentity: signal.groupIdentityKeyPair,
     myUserId: myUserId,
   );
-  return ChatCrypto(codec: codec, group: group, myUserId: myUserId);
-}
-
-Future<String> identityPublicKeyForRegister({
-  required Future<Uint8List?> Function() readIdentitySeed,
-  required Future<void> Function(Uint8List seed) writeIdentitySeed,
-}) {
-  final store = IdentityKeyStore(readIdentitySeed, writeIdentitySeed);
-  return store.publicKeyBase64();
+  return ChatCrypto(signal: signal, group: group, myUserId: myUserId);
 }

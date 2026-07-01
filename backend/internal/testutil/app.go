@@ -14,13 +14,11 @@ import (
 	"github.com/ihope/ihope/internal/mail"
 	"github.com/ihope/ihope/internal/message"
 	"github.com/ihope/ihope/internal/server"
+	signalkds "github.com/ihope/ihope/internal/signal"
 	"github.com/ihope/ihope/internal/user"
 	"github.com/ihope/ihope/internal/ws"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
-
-// TestIdentityPublicKey 32 字节 X25519 公钥（Base64），供集成测试注册使用。
-const TestIdentityPublicKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
 
 func DatabaseURL() string {
 	if v := os.Getenv("TEST_DATABASE_URL"); v != "" {
@@ -87,6 +85,9 @@ func NewTestServer(t *testing.T) *server.Server {
 	convNotify := server.NewConvRealtime(hub)
 	convSys := server.NewConvSystemMessenger(msgSvc)
 
+	signalRepo := signalkds.NewRepository(pool)
+	signalSvc := signalkds.NewService(signalRepo)
+
 	return server.New(
 		cfg,
 		auth.NewHandler(authSvc),
@@ -96,5 +97,6 @@ func NewTestServer(t *testing.T) *server.Server {
 		conversation.NewHandler(convSvc, convNotify, convSys, cfg),
 		message.NewHandler(msgSvc, convSvc, hub),
 		wsHandler,
+		signalkds.NewHandler(signalSvc),
 	)
 }

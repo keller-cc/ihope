@@ -104,12 +104,8 @@ func (h *Handler) handleFrame(r *http.Request, c *Conn, userID string, data []by
 			h.hub.SendJSON(c, map[string]string{"event": "error", "error": "forbidden"})
 			return
 		}
-		if conv.Type != "group" || conv.OwnerID == nil {
+		if conv.Type != "group" {
 			h.hub.SendJSON(c, map[string]string{"event": "error", "error": "not_group"})
-			return
-		}
-		if *conv.OwnerID == userID {
-			h.hub.SendJSON(c, map[string]string{"event": "error", "error": "owner_has_key"})
 			return
 		}
 		epochs := frame.Epochs
@@ -120,7 +116,12 @@ func (h *Handler) handleFrame(r *http.Request, c *Conn, userID string, data []by
 			}
 			epochs = []int{epoch}
 		}
-		h.hub.NotifyGmkRequest(*conv.OwnerID, map[string]any{
+		ids, err := h.convSvc.MemberUserIDs(r.Context(), frame.ConversationID)
+		if err != nil || len(ids) == 0 {
+			h.hub.SendJSON(c, map[string]string{"event": "error", "error": "no_members"})
+			return
+		}
+		h.hub.NotifyGmkRequest(ids, userID, map[string]any{
 			"event":             "gmk_request",
 			"conversation_id":   frame.ConversationID,
 			"requester_user_id": userID,

@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:cryptography/cryptography.dart';
@@ -34,8 +35,8 @@ void main() {
 
     final gmk = GroupEpochStore.generateGmk();
     await store.storeGmk('conv-1', 0, gmk);
-    final alicePub = await aliceStore.publicKeyBase64();
-    final bobPub = await bobStore.publicKeyBase64();
+    final alicePub = _asSignalPub(await aliceStore.publicKeyBase64());
+    final bobPub = _asSignalPub(await bobStore.publicKeyBase64());
 
     final welcome = await alice.buildWelcomeCiphertext(
       recipientUserId: 'bob',
@@ -55,4 +56,10 @@ void main() {
     final clear = await bob.decryptGroupMessage('conv-1', 0, encrypted);
     expect(clear, 'hello group');
   });
+}
+
+String _asSignalPub(String base64Key) {
+  final raw = base64Decode(base64Key);
+  if (raw.length == 33 && raw[0] == 0x05) return base64Key;
+  return base64Encode([0x05, ...raw]);
 }

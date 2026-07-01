@@ -5,7 +5,8 @@ import 'package:path_provider/path_provider.dart';
 
 import 'media_payload.dart';
 
-/// 语音/图片/文件二进制落盘，消息缓存只存元数据，避免反复向服务端拉取。
+/// 应用内私有媒体缓存（用户无感）：聊天内展示/播放用。
+/// 导出到相册或 Download/IHope 由 [MediaSave] / [MediaDownloadIndex] 在用户主动操作时完成。
 class MediaLocalCache {
   MediaLocalCache._();
 
@@ -111,6 +112,35 @@ class MediaLocalCache {
     return (await _bytesFile(messageId)).exists();
   }
 
+  /// 磁盘已有媒体时，重建不含 b64 的轻量 plaintext。
+  static Future<String?> localRefFromDisk(String messageId) async {
+    final media = await load(messageId);
+    if (media == null) return null;
+    return jsonEncode({
+      'media': media.kind,
+      'local': true,
+      'mime': media.mime,
+      'name': media.name,
+      if (media.durationMs != null) 'duration_ms': media.durationMs,
+    });
+  }
+
+  /// 带正确扩展名的临时路径，供系统应用打开文件（仍在应用私有目录）。
+  static Future<String?> openablePath(String messageId) async {
+    final media = await load(messageId);
+    if (media == null) return null;
+    final base = await _dir();
+    final msgDir = Directory('${base.path}/$messageId');
+    if (!await msgDir.exists()) await msgDir.create(recursive: true);
+    final safeName = media.name.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
+    final path = '${msgDir.path}/$safeName';
+    final file = File(path);
+    if (!await file.exists() || await file.length() != media.bytes.length) {
+      await file.writeAsBytes(media.bytes, flush: true);
+    }
+    return path;
+  }
+
   /// 本地 plaintext 是否真能读出媒体（inline b64 或已落盘文件）。
   static Future<bool> isPlaintextAvailable(
     String messageId,
@@ -123,7 +153,7 @@ class MediaLocalCache {
     return MediaPayload.tryParse(plaintext) != null;
   }
 
-  /// 从 plaintext（含 b64 或 local 引用）解析媒体，优先读本地文件。
+  /// 从 plaintext 解析媒体：优先读应用内落盘；否则解析 inline b64（内存）。
   static Future<MediaPayload?> resolve(
     String messageId,
     String? plaintext,
@@ -134,9 +164,10 @@ class MediaLocalCache {
       if (local != null) return local;
     }
     final inline = MediaPayload.tryParse(plaintext);
-    if (inline != null) {
-      await persistPayload(messageId, inline);
+    if (inline != null) return inline;
+    if (await hasPayloadFile(messageId)) {
+      return load(messageId);
     }
-    return inline;
+    return null;
   }
 }

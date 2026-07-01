@@ -1,30 +1,31 @@
-$kind: http-request
-name: POST /api/auth/register
-url: "{{baseUrl}}/api/auth/register"
-method: POST
-headers:
-  Content-Type: application/json
-body:
-  type: json
-  content: |-
-    {
-      "email": "{{login_email}}",
-      "username": "{{login_username}}",
-      "password": "{{login_password}}",
-      "identity_public_key": "{{identity_public_key}}"
-    }
-scripts:
-  - type: afterResponse
-    language: text/javascript
-    code: |-
-      pm.test('register ok or already exists', function () {
-        pm.expect([201, 409]).to.include(pm.response.code);
-      });
-      if (pm.response.code === 201) {
-        pm.test('identity_public_key is 32-byte base64', function () {
-          const key = pm.environment.get('identity_public_key');
-          const raw = Buffer.from(key, 'base64');
-          pm.expect(raw.length).to.eql(32);
-        });
-      }
-order: 1000
+$kind: http-request
+name: POST /api/auth/register
+url: "{{baseUrl}}/api/auth/register"
+method: POST
+headers:
+  Content-Type: application/json
+body:
+  type: json
+  content: |-
+    {
+      "email": "{{login_email}}",
+      "username": "{{login_username}}",
+      "password": "{{login_password}}",
+      "identity_public_key": "{{identity_public_key}}"
+    }
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      pm.test('register ok or already exists', function () {
+        pm.expect([201, 409]).to.include(pm.response.code);
+      });
+      if (pm.response.code === 201) {
+        pm.test('identity_public_key is 33-byte Signal key', function () {
+          const key = pm.environment.get('identity_public_key');
+          const raw = Buffer.from(key, 'base64');
+          pm.expect(raw.length).to.eql(33);
+          pm.expect(raw[0]).to.eql(0x05);
+        });
+      }
+order: 1000

@@ -24,6 +24,10 @@ scripts:
         group_epoch: '',
         message_before_epoch: '',
         message_after_epoch: '',
+        signal_identity_key: 'BQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+        signal_signed_pre_key: 'BQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+        signal_signed_pre_key_sig: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==',
+        signal_one_time_pre_key: 'BQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
       };
 
       const profiles = {
@@ -31,19 +35,19 @@ scripts:
           device_id: 'postman-device-1',
           login_email: 'alice@example.com',
           login_username: 'alice',
-          identity_public_key: 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=',
+          identity_public_key: 'BQABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f',
         },
         'IHope Alice': {
           device_id: 'postman-alice',
           login_email: 'alice@example.com',
           login_username: 'alice',
-          identity_public_key: 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=',
+          identity_public_key: 'BQABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f',
         },
         'IHope Bob': {
           device_id: 'postman-bob',
           login_email: 'bob@example.com',
           login_username: 'bob',
-          identity_public_key: 'ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8=',
+          identity_public_key: 'BSAhIiMkJSYnKCkqKywtLi8wMTIzNDU2Nzg5Ojs8PT4/',
         },
       };
 
@@ -58,9 +62,9 @@ scripts:
     code: |-
       const envName = pm.environment.name;
       const expectedKeys = {
-        'IHope Local': 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=',
-        'IHope Alice': 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=',
-        'IHope Bob': 'ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8=',
+        'IHope Local': 'BQABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f',
+        'IHope Alice': 'BQABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f',
+        'IHope Bob': 'BSAhIiMkJSYnKCkqKywtLi8wMTIzNDU2Nzg5Ojs8PT4/',
       };
 
       pm.test('environment reset to defaults', function () {
@@ -74,6 +78,8 @@ scripts:
         pm.expect(pm.environment.get('group_epoch')).to.eql('');
         pm.expect(pm.environment.get('message_before_epoch')).to.eql('');
         pm.expect(pm.environment.get('message_after_epoch')).to.eql('');
+        pm.expect(pm.environment.get('signal_identity_key')).to.eql('BQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA');
+        pm.expect(pm.environment.get('signal_signed_pre_key_sig')).to.have.lengthOf(88);
         pm.expect(pm.environment.get('baseUrl')).to.eql('http://localhost:8080');
         pm.expect(pm.environment.get('ws_base_url')).to.eql('ws://localhost:8080');
         if (expectedKeys[envName]) {

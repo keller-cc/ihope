@@ -1,0 +1,16 @@
+$kind: http-request
+name: GET /api/users/{userId}/signal-devices
+url: "{{baseUrl}}/api/users/{{peer_user_id}}/signal-devices"
+method: GET
+headers:
+  Authorization: Bearer {{access_token}}
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      pm.test('signal devices listed', function () {
+        pm.response.to.have.status(200);
+        const json = pm.response.json();
+        pm.expect(json.device_ids).to.be.an('array');
+      });
+order: 2000

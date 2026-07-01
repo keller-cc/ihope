@@ -50,7 +50,8 @@ SimplePublicKey? tryDecodePublicKey(String base64Key) {
 
 bool isValidIdentityPublicKey(String base64Key) {
   try {
-    return base64Decode(base64Key.trim()).length == 32;
+    final bytes = base64Decode(base64Key.trim());
+    return bytes.length == 33 && bytes[0] == 0x05;
   } catch (_) {
     return false;
   }
@@ -60,10 +61,20 @@ bool canUseE2EEWithPeer(String base64Key) {
   return isValidIdentityPublicKey(base64Key);
 }
 
-SimplePublicKey decodePublicKey(String base64Key) {
+Uint8List identityPublicKeyRawBytes(String base64Key) {
   final bytes = base64Decode(base64Key.trim());
-  if (bytes.length != 32) {
-    throw ArgumentError('invalid identity public key length');
+  if (bytes.length == 33 && bytes[0] == 0x05) {
+    return Uint8List.fromList(bytes.sublist(1));
   }
-  return SimplePublicKey(bytes, type: KeyPairType.x25519);
+  if (bytes.length == 32) {
+    return Uint8List.fromList(bytes);
+  }
+  throw ArgumentError('invalid identity public key length');
+}
+
+SimplePublicKey decodePublicKey(String base64Key) {
+  return SimplePublicKey(
+    identityPublicKeyRawBytes(base64Key),
+    type: KeyPairType.x25519,
+  );
 }

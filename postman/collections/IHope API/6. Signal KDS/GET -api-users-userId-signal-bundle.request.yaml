@@ -1,0 +1,18 @@
+$kind: http-request
+name: GET /api/users/{userId}/signal-bundle
+url: "{{baseUrl}}/api/users/{{peer_user_id}}/signal-bundle"
+method: GET
+headers:
+  Authorization: Bearer {{access_token}}
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      pm.test('signal bundle fetched', function () {
+        pm.response.to.have.status(200);
+        const json = pm.response.json();
+        pm.expect(json.identity_key).to.be.a('string').and.not.empty;
+        pm.expect(json.signed_pre_key_public).to.be.a('string').and.not.empty;
+        pm.expect(json.device_id).to.be.a('string').and.not.empty;
+      });
+order: 3000

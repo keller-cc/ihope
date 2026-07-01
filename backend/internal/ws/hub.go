@@ -102,6 +102,22 @@ func (h *Hub) NotifyEpochUpdated(memberUserIDs []string, conversationID string, 
 	h.broadcast(memberUserIDs, payload)
 }
 
+func (h *Hub) NotifyGmkUpdated(memberUserIDs []string, conversationID, senderID string, epochs []int) {
+	if len(epochs) == 0 {
+		return
+	}
+	payload, err := json.Marshal(map[string]any{
+		"event":           "gmk_updated",
+		"conversation_id": conversationID,
+		"sender_user_id":  senderID,
+		"epochs":          epochs,
+	})
+	if err != nil {
+		return
+	}
+	h.broadcast(memberUserIDs, payload)
+}
+
 func (h *Hub) NotifyGroupDissolved(memberUserIDs []string, conversationID, groupName, dissolvedBy string) {
 	payload, err := json.Marshal(map[string]any{
 		"event":           "group_dissolved",
@@ -165,7 +181,7 @@ func (h *Hub) NotifyKeyRelay(targetUserID string, frame map[string]any) {
 	}
 }
 
-func (h *Hub) NotifyGmkRequest(ownerUserID string, frame map[string]any) {
+func (h *Hub) NotifyGmkRequest(memberUserIDs []string, requesterUserID string, frame map[string]any) {
 	payload, err := json.Marshal(frame)
 	if err != nil {
 		return
@@ -173,11 +189,16 @@ func (h *Hub) NotifyGmkRequest(ownerUserID string, frame map[string]any) {
 
 	h.mu.RLock()
 	defer h.mu.RUnlock()
-	for c := range h.conns[ownerUserID] {
-		select {
-		case c.send <- payload:
-		default:
-			log.Printf("ws: drop gmk_request to user=%s device=%s (slow consumer)", c.userID, c.deviceID)
+	for _, uid := range memberUserIDs {
+		if uid == requesterUserID {
+			continue
+		}
+		for c := range h.conns[uid] {
+			select {
+			case c.send <- payload:
+			default:
+				log.Printf("ws: drop gmk_request to user=%s device=%s (slow consumer)", c.userID, c.deviceID)
+			}
 		}
 	}
 }

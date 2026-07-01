@@ -10,8 +10,7 @@ class MemberTitleBadge extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     return Container(
-      margin: const EdgeInsets.only(left: 4),
-      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
       decoration: BoxDecoration(
         color: scheme.primary.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(4),
@@ -23,7 +22,6 @@ class MemberTitleBadge extends StatelessWidget {
               color: scheme.primary,
               fontSize: 10,
               fontWeight: FontWeight.w600,
-              height: 1.0,
             ),
       ),
     );

@@ -1,0 +1,23 @@
+$kind: http-request
+name: PATCH /api/users/me
+url: "{{baseUrl}}/api/users/me"
+method: PATCH
+headers:
+  Content-Type: application/json
+  Authorization: Bearer {{access_token}}
+body:
+  type: json
+  content: |-
+    {
+      "username": "{{login_username}}_postman"
+    }
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      pm.test('profile username updated', function () {
+        pm.response.to.have.status(200);
+        const json = pm.response.json();
+        pm.expect(json.username).to.be.a('string').and.not.empty;
+      });
+order: 1000

@@ -126,6 +126,18 @@ class ApiClient {
     }
   }
 
+  Future<Map<String, dynamic>> putJson(
+    String path, {
+    Map<String, dynamic>? body,
+  }) async {
+    try {
+      final res = await _dio.put<Map<String, dynamic>>(path, data: body ?? {});
+      return res.data ?? {};
+    } on DioException catch (e) {
+      throw _mapError(e);
+    }
+  }
+
   Future<Map<String, dynamic>> deleteJson(String path) async {
     try {
       final res = await _dio.delete<Map<String, dynamic>>(path);

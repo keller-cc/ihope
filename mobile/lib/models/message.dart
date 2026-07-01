@@ -1,9 +1,26 @@
+enum MessageSendStatus {
+  sent,
+  sending,
+  failed,
+}
+
 class ChatMessage {
   /// 解密完成前 UI 占位，不可写入持久化缓存。
   static const decryptPlaceholder = '…';
 
+  /// 本机乐观发送中的消息 ID 前缀（不入持久化缓存）。
+  static const localIdPrefix = 'local:';
+
   static bool isDecryptPlaceholder(String? plaintext) =>
       plaintext == decryptPlaceholder;
+
+  static bool isDecryptFailure(String? plaintext) =>
+      plaintext != null && plaintext.startsWith('[无法解密');
+
+  static bool isLocalId(String id) => id.startsWith(localIdPrefix);
+
+  static String newLocalId() =>
+      '$localIdPrefix${DateTime.now().microsecondsSinceEpoch}';
 
   ChatMessage({
     required this.id,
@@ -14,6 +31,7 @@ class ChatMessage {
     required this.createdAt,
     this.epoch = 0,
     this.plaintext,
+    this.sendStatus = MessageSendStatus.sent,
   });
 
   final String id;
@@ -24,6 +42,15 @@ class ChatMessage {
   final DateTime createdAt;
   final int epoch;
   final String? plaintext;
+  final MessageSendStatus sendStatus;
+
+  bool get isLocalOutgoing => isLocalId(id);
+
+  bool get isPendingOutgoing =>
+      isLocalOutgoing && sendStatus != MessageSendStatus.sent;
+
+  /// 可写入消息缓存（已送达的服务端消息）。
+  bool get isCacheable => !isLocalOutgoing && sendStatus == MessageSendStatus.sent;
 
   String get displayText => plaintext ?? ciphertext;
 
@@ -51,9 +78,13 @@ class ChatMessage {
         if (plaintext != null) 'plaintext': plaintext,
       };
 
-  ChatMessage copyWith({String? plaintext}) {
+  ChatMessage copyWith({
+    String? id,
+    String? plaintext,
+    MessageSendStatus? sendStatus,
+  }) {
     return ChatMessage(
-      id: id,
+      id: id ?? this.id,
       conversationId: conversationId,
       senderId: senderId,
       type: type,
@@ -61,6 +92,7 @@ class ChatMessage {
       createdAt: createdAt,
       epoch: epoch,
       plaintext: plaintext ?? this.plaintext,
+      sendStatus: sendStatus ?? this.sendStatus,
     );
   }
 

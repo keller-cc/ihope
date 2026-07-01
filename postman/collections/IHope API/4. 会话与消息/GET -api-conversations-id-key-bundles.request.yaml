@@ -1,0 +1,22 @@
+$kind: http-request
+name: GET /api/conversations/{id}/key-bundles
+url: "{{baseUrl}}/api/conversations/{{conversation_id}}/key-bundles?epochs={{group_epoch}}"
+method: GET
+headers:
+  Authorization: Bearer {{access_token}}
+scripts:
+  - type: beforeRequest
+    language: text/javascript
+    code: |-
+      if (!pm.environment.get('group_epoch')) {
+        pm.environment.set('group_epoch', '0');
+      }
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      pm.test('key bundles listed', function () {
+        pm.response.to.have.status(200);
+        const json = pm.response.json();
+        pm.expect(json.bundles).to.be.an('array');
+      });
+order: 3850

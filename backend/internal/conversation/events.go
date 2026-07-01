@@ -25,6 +25,7 @@ type SystemMessenger interface {
 // RealtimeNotifier 会话/群相关实时通知。
 type RealtimeNotifier interface {
 	NotifyEpochUpdated(memberUserIDs []string, conversationID string, epoch int)
+	NotifyGmkUpdated(memberUserIDs []string, conversationID, senderID string, epochs []int)
 	NotifyGroupDissolved(memberUserIDs []string, conversationID, groupName, dissolvedBy string)
 	NotifyMessage(memberUserIDs []string, msg *ChatMessage)
 	NotifyConversationAdded(userIDs []string, conversation map[string]any)

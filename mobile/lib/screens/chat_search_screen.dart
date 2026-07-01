@@ -43,6 +43,9 @@ class _ChatSearchScreenState extends State<ChatSearchScreen> {
 
   Future<void> _loadLocalMessages() async {
     setState(() => _loading = true);
+    if (widget.conversation.type == 'group') {
+      await widget.auth.ensureGroupMemberDirectory(widget.conversation);
+    }
     final msgs = await widget.auth.loadLocalMessagesForSearch(
       widget.conversation,
     );
@@ -65,10 +68,7 @@ class _ChatSearchScreenState extends State<ChatSearchScreen> {
   String _nameFor(String userId) {
     final me = widget.auth.currentUser!;
     if (userId == me.id) return me.username;
-    for (final m in widget.conversation.members) {
-      if (m.userId == userId) return m.username;
-    }
-    return '?';
+    return widget.auth.groupMemberUsername(widget.conversation, userId);
   }
 
   @override
@@ -202,14 +202,12 @@ class _ChatSearchScreenState extends State<ChatSearchScreen> {
             mine: msg.senderId == me.id,
             isGroup: isGroup,
             me: me,
-            senderTitle: widget.conversation.memberTitle(msg.senderId),
+            senderTitle:
+                isGroup ? widget.conversation.memberTitle(msg.senderId) : null,
             nameFor: _nameFor,
             avatarUrlFor: (id) {
               if (id == me.id) return me.avatarUrl;
-              for (final m in widget.conversation.members) {
-                if (m.userId == id) return m.avatarUrl;
-              }
-              return null;
+              return widget.auth.groupMemberAvatarUrl(widget.conversation, id);
             },
             onPeerTap: (_) {},
           ),
