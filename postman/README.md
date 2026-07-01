@@ -7,7 +7,7 @@
 1. 安装 [Postman 桌面版](https://www.postman.com/downloads/)（需较新版本，支持 Native Git）
 2. 打开 Postman → 左上角 **Workspaces** → 你的 Workspace
 3. **Add repository** / **Connect to Git**（或 Settings → 关联本地 Git 仓库）
-4. 选择本仓库根目录：`D:\施玮书房\IHope`
+4. 选择 **本仓库根目录**（克隆后的 `IHope` 文件夹）
 5. Postman 会读取 `.postman/resources.yaml`，自动加载：
    - 集合：`postman/collections/IHope API/`
    - 环境：`postman/environments/IHope.environment.yaml`
@@ -72,7 +72,7 @@ Git 里 `postman/collections/IHope API/` 有文件，但 Postman 侧边栏空白
 
 1. **切到 Local View**（Native Git 必须；Cloud View 可能空白）
 2. **Pull / Sync**：从仓库拉最新 yaml（含本次 folder 修复）
-3. **确认打开的是 Git 关联 Workspace**，仓库根目录为 `D:\施玮书房\IHope`
+3. **确认 Git 关联 Workspace**，仓库根为本地克隆目录
 4. **子文件夹必须是 `$kind: folder`**（不是 `collection`）；根目录 `.resources/definition.yaml` 才是 `$kind: collection`
 5. 删除手动 Import 的旧 JSON 集合，避免看错集合
 6. 集合名应显示 **IHope API**，展开后应有 0–4 五个文件夹

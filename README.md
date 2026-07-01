@@ -2,6 +2,8 @@
 
 公司内部轻量 IM（Go 后端 + Flutter，当前完成后端账号体系）。
 
+**Windows 开发机：** 仓库放 `D:\IHope`，环境见 [Windows 开发环境](docs/Windows开发环境.md)。
+
 ## 文档
 
 | 文档 | 说明 |
@@ -9,7 +11,8 @@
 | [Postman 自动同步](postman/README.md) | 关联 Git，免 Import |
 | [API 与 Postman 测试](docs/API与Postman测试指南.md) | 启动、测 API |
 | [后端说明](backend/README.md) | 目录、限流、命令 |
-| [Windows 开发环境](docs/Windows开发环境.md) | Git、Navicat 等 |
+| [Windows 开发环境](docs/Windows开发环境.md) | 目录布局、启动、排错 |
+| [移动端](mobile/README.md) | Flutter API 地址、双模拟器 |
 | [开发指南](docs/开发指南.md) | 分阶段路线 |
 | [需求规格](docs/需求规格说明书.md) | 完整需求 |
 

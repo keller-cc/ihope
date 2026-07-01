@@ -21,8 +21,8 @@
 
 在已安装 Postman CLI 的机器上，从 v3 yaml 迁移导出（版本以官方文档为准）：
 
-```powershell
-cd D:\施玮书房\IHope
+```text
+cd <仓库根目录>
 postman collection migrate postman/collections/IHope API --output docs/postman/export
 ```
 
