@@ -6,6 +6,7 @@ package user
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -17,6 +18,7 @@ var (
 	ErrNotFound      = errors.New("user not found")
 	ErrEmailTaken    = errors.New("email already registered")
 	ErrUsernameTaken = errors.New("username already taken")
+	ErrDisabled      = errors.New("user disabled")
 )
 
 // User 返回给客户端的用户信息（不含 password_hash）。
@@ -29,6 +31,16 @@ type User struct {
 	EmailVerifiedAt   *time.Time `json:"email_verified_at,omitempty"`
 	CreatedAt         time.Time  `json:"created_at"`
 	UpdatedAt         time.Time  `json:"updated_at"`
+}
+
+// AdminUser 管理后台用户列表项。
+type AdminUser struct {
+	ID         string     `json:"id"`
+	Email      string     `json:"email"`
+	Username   string     `json:"username"`
+	IsAdmin    bool       `json:"is_admin"`
+	DisabledAt *time.Time `json:"disabled_at,omitempty"`
+	CreatedAt  time.Time  `json:"created_at"`
 }
 
 // PublicUser 用户列表/会话成员展示（不含邮箱）。
@@ -405,6 +417,162 @@ func (r *Repository) FindUserIDByDeviceRefresh(ctx context.Context, deviceID, to
 		return "", ErrNotFound
 	}
 	return userID, err
+}
+
+// PushTarget 带 push token 的设备。
+type PushTarget struct {
+	DeviceID  string
+	PushToken string
+	Platform  string
+}
+
+func (r *Repository) UpdatePushToken(
+	ctx context.Context,
+	userID, deviceID, pushToken, platform string,
+) error {
+	pushToken = strings.TrimSpace(pushToken)
+	platform = strings.TrimSpace(platform)
+	if deviceID == "" {
+		return errors.New("device_id required")
+	}
+	if pushToken == "" {
+		_, err := r.pool.Exec(ctx, `
+			UPDATE user_devices
+			SET push_token = NULL, platform = NULL, last_active_at = now()
+			WHERE user_id = $1 AND device_id = $2`, userID, deviceID)
+		return err
+	}
+	_, err := r.pool.Exec(ctx, `
+		INSERT INTO user_devices (user_id, device_id, push_token, platform, last_active_at)
+		VALUES ($1, $2, $3, $4, now())
+		ON CONFLICT (user_id, device_id) DO UPDATE SET
+			push_token = EXCLUDED.push_token,
+			platform = COALESCE(EXCLUDED.platform, user_devices.platform),
+			last_active_at = now()`,
+		userID, deviceID, pushToken, nullIfEmpty(platform),
+	)
+	return err
+}
+
+func (r *Repository) ListPushTargets(ctx context.Context, userID string) ([]PushTarget, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT device_id, push_token, COALESCE(platform, '')
+		FROM user_devices
+		WHERE user_id = $1
+		  AND push_token IS NOT NULL
+		  AND push_token <> ''`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []PushTarget
+	for rows.Next() {
+		var t PushTarget
+		if err := rows.Scan(&t.DeviceID, &t.PushToken, &t.Platform); err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+func (r *Repository) IsAdmin(ctx context.Context, userID string) (bool, error) {
+	var isAdmin bool
+	err := r.pool.QueryRow(ctx, `SELECT is_admin FROM users WHERE id = $1`, userID).Scan(&isAdmin)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, ErrNotFound
+	}
+	return isAdmin, err
+}
+
+func (r *Repository) IsUserDisabled(ctx context.Context, userID string) (bool, error) {
+	var disabledAt *time.Time
+	err := r.pool.QueryRow(ctx, `SELECT disabled_at FROM users WHERE id = $1`, userID).Scan(&disabledAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, ErrNotFound
+	}
+	return disabledAt != nil, err
+}
+
+func (r *Repository) SyncAdminByEmail(ctx context.Context, userID, email string, adminEmails []string) error {
+	want := false
+	email = strings.ToLower(strings.TrimSpace(email))
+	for _, e := range adminEmails {
+		if email == strings.ToLower(strings.TrimSpace(e)) {
+			want = true
+			break
+		}
+	}
+	_, err := r.pool.Exec(ctx, `UPDATE users SET is_admin = $2, updated_at = now() WHERE id = $1`, userID, want)
+	return err
+}
+
+func (r *Repository) AdminCounts(ctx context.Context) (total, disabled int, err error) {
+	err = r.pool.QueryRow(ctx, `
+		SELECT
+			(SELECT COUNT(*) FROM users),
+			(SELECT COUNT(*) FROM users WHERE disabled_at IS NOT NULL)`).Scan(&total, &disabled)
+	return total, disabled, err
+}
+
+func (r *Repository) ListForAdmin(ctx context.Context, limit, offset int) ([]AdminUser, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	rows, err := r.pool.Query(ctx, `
+		SELECT id, email, username, is_admin, disabled_at, created_at
+		FROM users
+		ORDER BY created_at DESC
+		LIMIT $1 OFFSET $2`, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []AdminUser
+	for rows.Next() {
+		var u AdminUser
+		if err := rows.Scan(&u.ID, &u.Email, &u.Username, &u.IsAdmin, &u.DisabledAt, &u.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, u)
+	}
+	return out, rows.Err()
+}
+
+func (r *Repository) DisableUser(ctx context.Context, userID string) error {
+	tag, err := r.pool.Exec(ctx, `
+		UPDATE users
+		SET disabled_at = now(), token_version = token_version + 1, updated_at = now()
+		WHERE id = $1 AND disabled_at IS NULL`, userID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		var exists bool
+		_ = r.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM users WHERE id = $1)`, userID).Scan(&exists)
+		if !exists {
+			return ErrNotFound
+		}
+	}
+	_, err = r.pool.Exec(ctx, `UPDATE user_devices SET refresh_token_hash = NULL WHERE user_id = $1`, userID)
+	return err
+}
+
+func (r *Repository) EnableUser(ctx context.Context, userID string) error {
+	tag, err := r.pool.Exec(ctx, `
+		UPDATE users SET disabled_at = NULL, updated_at = now()
+		WHERE id = $1`, userID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 func isUniqueViolation(err error) bool {

@@ -1,4 +1,4 @@
-package com.ihope.ihope
+package com.clprince.ihope
 
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -9,7 +9,7 @@ class MainActivity : FlutterActivity() {
         super.configureFlutterEngine(flutterEngine)
         MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
-            "com.ihope.ihope/media_save",
+            "com.clprince.ihope/media_save",
         ).setMethodCallHandler { call, result ->
             when (call.method) {
                 "saveToPublic" -> {

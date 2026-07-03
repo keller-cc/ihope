@@ -31,6 +31,11 @@ type Config struct {
 	ResetTokenTTL   time.Duration
 	UploadDir       string
 	MaxAvatarBytes  int64
+	PushDriver         string
+	FCMServerKey       string
+	JPushAppKey        string
+	JPushMasterSecret  string
+	AdminEmails        []string
 }
 
 // Load 读取 .env 与环境变量。
@@ -62,8 +67,24 @@ func Load() Config {
 		ResetTokenTTL:   envDurationMinutes("RESET_TOKEN_TTL_MIN", 30),
 		UploadDir:       env("UPLOAD_DIR", "uploads"),
 		MaxAvatarBytes:  int64(envInt("MAX_AVATAR_BYTES", 2*1024*1024)),
+		PushDriver:        env("PUSH_DRIVER", "log"),
+		FCMServerKey:      env("FCM_SERVER_KEY", ""),
+		JPushAppKey:       env("JPUSH_APP_KEY", ""),
+		JPushMasterSecret: env("JPUSH_MASTER_SECRET", ""),
+		AdminEmails:       splitCSV(env("ADMIN_EMAILS", "")),
 	}
 }
+
+func splitCSV(raw string) []string {
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 
 func loadDotEnv() {
 	if path := strings.TrimSpace(os.Getenv("ENV_FILE")); path != "" {

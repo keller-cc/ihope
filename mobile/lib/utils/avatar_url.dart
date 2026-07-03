@@ -1,4 +1,4 @@
-import '../config/env.dart';
+import '../config/server_config.dart';
 
 /// 将后端返回的头像 URL 转为当前 App 可访问的地址。
 ///
@@ -8,7 +8,7 @@ import '../config/env.dart';
 String? resolveAvatarUrl(String? url) {
   if (url == null || url.isEmpty) return null;
 
-  final base = Uri.parse(Env.apiBase);
+  final base = Uri.parse(ServerConfig.apiBase);
 
   if (url.startsWith('/')) {
     final relative = Uri.parse(url);

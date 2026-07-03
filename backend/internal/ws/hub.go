@@ -69,6 +69,17 @@ func (c *Conn) writePump() {
 	}
 }
 
+func (h *Hub) IsDeviceOnline(userID, deviceID string) bool {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	for c := range h.conns[userID] {
+		if c.deviceID == deviceID {
+			return true
+		}
+	}
+	return false
+}
+
 func (h *Hub) NotifyMessage(memberUserIDs []string, msg *message.Message) {
 	const wsCipherLimit = 24 * 1024
 	wireMsg := any(msg)

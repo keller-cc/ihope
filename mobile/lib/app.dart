@@ -3,25 +3,55 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import 'services/auth_service.dart';
+import 'services/notification_service.dart';
 import 'screens/conversations_screen.dart';
 import 'screens/login_screen.dart';
 
 class IHopeApp extends StatefulWidget {
-  const IHopeApp({super.key, required this.auth});
+  const IHopeApp({
+    super.key,
+    required this.auth,
+    required this.notification,
+  });
 
   final AuthService auth;
+  final NotificationService notification;
 
   @override
   State<IHopeApp> createState() => _IHopeAppState();
 }
 
-class _IHopeAppState extends State<IHopeApp> {
+class _IHopeAppState extends State<IHopeApp> with WidgetsBindingObserver {
   bool? _loggedIn;
+  final ValueNotifier<String?> _pendingPushConversation =
+      ValueNotifier<String?>(null);
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     unawaited(_bootstrap());
+    unawaited(
+      widget.notification.initialize(
+        auth: widget.auth,
+        onOpenConversation: _onPushOpenConversation,
+      ),
+    );
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _pendingPushConversation.dispose();
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    widget.notification.onLifecycleChanged(state);
+    if (state == AppLifecycleState.resumed && _loggedIn == true) {
+      unawaited(widget.auth.ensureRealtimeConnected());
+    }
   }
 
   Future<void> _bootstrap() async {
@@ -31,24 +61,34 @@ class _IHopeAppState extends State<IHopeApp> {
       setState(() => _loggedIn = false);
       return;
     }
-    // 本地 token 命中后立即进首页；联网校验与 E2EE 在后台完成。
     setState(() => _loggedIn = true);
     unawaited(_restoreSessionInBackground());
   }
 
   Future<void> _restoreSessionInBackground() async {
     final ok = await widget.auth.restoreSession();
-    if (!mounted || ok) return;
-    final hasLocal = await widget.auth.hasLocalSession();
     if (!mounted) return;
-    setState(() => _loggedIn = hasLocal);
+    if (ok) {
+      unawaited(widget.notification.resumeAfterLogin());
+    } else {
+      final hasLocal = await widget.auth.hasLocalSession();
+      if (!mounted) return;
+      setState(() => _loggedIn = hasLocal);
+    }
+  }
+
+  void _onPushOpenConversation(String conversationId) {
+    if (_loggedIn != true) return;
+    _pendingPushConversation.value = conversationId;
   }
 
   Future<void> _onLoggedIn() async {
     setState(() => _loggedIn = true);
+    unawaited(widget.notification.resumeAfterLogin());
   }
 
   Future<void> _onLogout() async {
+    await widget.notification.pauseForLogout();
     await widget.auth.logout();
     if (!mounted) return;
     setState(() => _loggedIn = false);
@@ -64,7 +104,12 @@ class _IHopeAppState extends State<IHopeApp> {
       ),
       home: switch (_loggedIn) {
         null => const Scaffold(body: Center(child: CircularProgressIndicator())),
-        true => ConversationsScreen(auth: widget.auth, onLogout: _onLogout),
+        true => ConversationsScreen(
+            auth: widget.auth,
+            notification: widget.notification,
+            onLogout: _onLogout,
+            pendingPushConversation: _pendingPushConversation,
+          ),
         false => LoginScreen(auth: widget.auth, onLoggedIn: _onLoggedIn),
       },
     );

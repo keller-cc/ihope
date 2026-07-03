@@ -13,6 +13,7 @@ import (
 	"github.com/ihope/ihope/internal/jwt"
 	"github.com/ihope/ihope/internal/mail"
 	"github.com/ihope/ihope/internal/message"
+	"github.com/ihope/ihope/internal/push"
 	"github.com/ihope/ihope/internal/server"
 	signalkds "github.com/ihope/ihope/internal/signal"
 	"github.com/ihope/ihope/internal/user"
@@ -62,6 +63,7 @@ func TestConfig() config.Config {
 		ResetTokenTTL:   30 * time.Minute,
 		UploadDir:       "uploads",
 		MaxAvatarBytes:  2 * 1024 * 1024,
+		PushDriver:      "log",
 	}
 }
 
@@ -81,7 +83,10 @@ func NewTestServer(t *testing.T) *server.Server {
 
 	hub := ws.NewHub()
 	msgSvc := message.NewService(msgRepo, convRepo)
-	wsHandler := ws.NewHandler(hub, jwtMgr, userRepo, convSvc, msgSvc)
+	pushSvc := push.New(cfg)
+	pushDispatch := push.NewDispatcher(pushSvc, userRepo, convRepo, hub)
+	msgNotify := server.NewMessageNotifier(hub, pushDispatch)
+	wsHandler := ws.NewHandler(hub, msgNotify, jwtMgr, userRepo, convSvc, msgSvc)
 	convNotify := server.NewConvRealtime(hub)
 	convSys := server.NewConvSystemMessenger(msgSvc)
 
@@ -95,7 +100,7 @@ func NewTestServer(t *testing.T) *server.Server {
 		userRepo,
 		jwtMgr,
 		conversation.NewHandler(convSvc, convNotify, convSys, cfg),
-		message.NewHandler(msgSvc, convSvc, hub),
+		message.NewHandler(msgSvc, convSvc, msgNotify),
 		wsHandler,
 		signalkds.NewHandler(signalSvc),
 	)

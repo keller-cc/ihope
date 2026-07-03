@@ -14,15 +14,30 @@ import (
 )
 
 type Handler struct {
-	hub     *Hub
-	jwt     *jwt.Manager
-	lookup  middleware.TokenVersionLookup
-	convSvc *conversation.Service
-	msgSvc  *message.Service
+	hub        *Hub
+	msgNotify  message.Notifier
+	jwt        *jwt.Manager
+	lookup     middleware.TokenVersionLookup
+	convSvc    *conversation.Service
+	msgSvc     *message.Service
 }
 
-func NewHandler(hub *Hub, jwtMgr *jwt.Manager, lookup middleware.TokenVersionLookup, convSvc *conversation.Service, msgSvc *message.Service) *Handler {
-	return &Handler{hub: hub, jwt: jwtMgr, lookup: lookup, convSvc: convSvc, msgSvc: msgSvc}
+func NewHandler(
+	hub *Hub,
+	msgNotify message.Notifier,
+	jwtMgr *jwt.Manager,
+	lookup middleware.TokenVersionLookup,
+	convSvc *conversation.Service,
+	msgSvc *message.Service,
+) *Handler {
+	return &Handler{
+		hub:       hub,
+		msgNotify: msgNotify,
+		jwt:       jwtMgr,
+		lookup:    lookup,
+		convSvc:   convSvc,
+		msgSvc:    msgSvc,
+	}
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -176,8 +191,8 @@ func (h *Handler) handleFrame(r *http.Request, c *Conn, userID string, data []by
 			h.hub.SendJSON(c, map[string]string{"event": "error", "error": "send_failed"})
 			return
 		}
-		if ids, err := h.convSvc.MemberUserIDs(r.Context(), frame.ConversationID); err == nil {
-			h.hub.NotifyMessage(ids, msg)
+		if ids, err := h.convSvc.MemberUserIDs(r.Context(), frame.ConversationID); err == nil && h.msgNotify != nil {
+			h.msgNotify.NotifyMessage(ids, msg)
 		}
 		h.hub.SendJSON(c, map[string]any{"event": "sent", "message": msg})
 

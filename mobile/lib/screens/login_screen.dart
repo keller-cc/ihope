@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 
+import '../config/server_config.dart';
 import '../services/auth_service.dart';
 import '../widgets/auth_form.dart';
 import 'forgot_password_screen.dart';
 import 'register_screen.dart';
+import 'server_settings_screen.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({
@@ -81,6 +83,21 @@ class _LoginScreenState extends State<LoginScreen> {
             loading: _loading,
             label: '登录',
             onPressed: _submit,
+          ),
+          TextButton(
+            onPressed: _loading
+                ? null
+                : () async {
+                    final result = await Navigator.of(context).push<Object?>(
+                      MaterialPageRoute(
+                        builder: (_) => ServerSettingsScreen(auth: widget.auth),
+                      ),
+                    );
+                    if (result == 'logout' && mounted) {
+                      setState(() => _error = null);
+                    }
+                  },
+            child: Text('服务器：${ServerConfig.apiBase}'),
           ),
           TextButton(
             onPressed: _loading

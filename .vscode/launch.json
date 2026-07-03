@@ -12,6 +12,30 @@
         "JWT_SECRET": "dev-only-change-in-production-min-32-chars",
         "MAIL_DRIVER": "log"
       }
+    },
+    {
+      "name": "Flutter Android 国内",
+      "type": "dart",
+      "request": "launch",
+      "program": "lib/main.dart",
+      "cwd": "${workspaceFolder}/mobile",
+      "args": [
+        "--flavor",
+        "domestic",
+        "--dart-define-from-file=config/domestic.json"
+      ]
+    },
+    {
+      "name": "Flutter Android 海外",
+      "type": "dart",
+      "request": "launch",
+      "program": "lib/main.dart",
+      "cwd": "${workspaceFolder}/mobile",
+      "args": [
+        "--flavor",
+        "global",
+        "--dart-define-from-file=config/global.json"
+      ]
     }
   ]
 }

@@ -10,6 +10,8 @@ const _kAccess = 'access_token';
 const _kRefresh = 'refresh_token';
 const _kDeviceId = 'device_id';
 const _kUserProfile = 'user_profile';
+const _kPushNotifications = 'push_notifications_enabled';
+const _kServerBaseUrl = 'server_base_url';
 
 class AuthStorage {
   AuthStorage({FlutterSecureStorage? storage})
@@ -55,6 +57,30 @@ class AuthStorage {
     if (raw == null || raw.isEmpty) return null;
     final json = jsonDecode(raw);
     return json is Map<String, dynamic> ? json : null;
+  }
+
+  /// 后台系统消息通知（FCM），默认关闭，用户在设置中开启。
+  Future<bool> readPushNotificationEnabled() async {
+    final raw = await _storage.read(key: _kPushNotifications);
+    if (raw == null) return false;
+    return raw == '1';
+  }
+
+  Future<void> writePushNotificationEnabled(bool enabled) async {
+    await _storage.write(
+      key: _kPushNotifications,
+      value: enabled ? '1' : '0',
+    );
+  }
+
+  Future<String?> readServerBaseUrl() => _storage.read(key: _kServerBaseUrl);
+
+  Future<void> writeServerBaseUrl(String url) async {
+    await _storage.write(key: _kServerBaseUrl, value: url);
+  }
+
+  Future<void> clearServerBaseUrl() async {
+    await _storage.delete(key: _kServerBaseUrl);
   }
 
   Future<Uint8List?> readIdentitySeedForUser(String userId) =>

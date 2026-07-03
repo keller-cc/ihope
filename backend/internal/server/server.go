@@ -4,6 +4,7 @@ package server
 import (
 	"net/http"
 
+	"github.com/ihope/ihope/internal/admin"
 	"github.com/ihope/ihope/internal/auth"
 	"github.com/ihope/ihope/internal/config"
 	"github.com/ihope/ihope/internal/conversation"
@@ -24,6 +25,7 @@ type Server struct {
 	messages      *message.Handler
 	ws            *ws.Handler
 	signal        *signal.Handler
+	admin         *admin.Handler
 	userRepo      *user.Repository
 	jwt           *jwt.Manager
 	loginLimit    *middleware.RateLimiter
@@ -39,6 +41,7 @@ func New(
 	msgHandler *message.Handler,
 	wsHandler *ws.Handler,
 	signalHandler *signal.Handler,
+	adminHandler *admin.Handler,
 ) *Server {
 	return &Server{
 		cfg:           cfg,
@@ -48,6 +51,7 @@ func New(
 		messages:      msgHandler,
 		ws:            wsHandler,
 		signal:        signalHandler,
+		admin:         adminHandler,
 		userRepo:      userRepo,
 		jwt:           jwtMgr,
 		loginLimit:    middleware.NewRateLimiter(cfg.LoginRateLimit, cfg.LoginRateWindow),
@@ -66,11 +70,13 @@ func (s *Server) Router() http.Handler {
 	mux.HandleFunc("POST /api/auth/forgot-password", s.auth.ForgotPassword)
 	mux.HandleFunc("POST /api/auth/reset-password", s.auth.ResetPassword)
 
-	authRequired := middleware.Auth(s.jwt, s.userRepo)
+	authRequired := middleware.AuthActive(s.jwt, s.userRepo)
+	adminRequired := middleware.Admin(s.userRepo)
 	mux.Handle("POST /api/auth/change-password", authRequired(http.HandlerFunc(s.auth.ChangePassword)))
 	mux.Handle("GET /api/users/me", authRequired(http.HandlerFunc(s.users.Me)))
 	mux.Handle("PATCH /api/users/me", authRequired(http.HandlerFunc(s.users.UpdateMe)))
 	mux.Handle("POST /api/users/me/avatar", authRequired(http.HandlerFunc(s.users.UploadAvatar)))
+	mux.Handle("PUT /api/users/me/push-token", authRequired(http.HandlerFunc(s.users.RegisterPushToken)))
 	mux.HandleFunc("GET /api/avatars/{filename}", s.users.ServeAvatar)
 	mux.Handle("GET /api/users", authRequired(http.HandlerFunc(s.users.List)))
 
@@ -100,6 +106,15 @@ func (s *Server) Router() http.Handler {
 	if s.ws != nil {
 		mux.Handle("GET /ws", s.ws)
 	}
+
+	if s.admin != nil {
+		mux.Handle("GET /api/admin/stats", authRequired(adminRequired(http.HandlerFunc(s.admin.Stats))))
+		mux.Handle("GET /api/admin/users", authRequired(adminRequired(http.HandlerFunc(s.admin.ListUsers))))
+		mux.Handle("POST /api/admin/users/{id}/disable", authRequired(adminRequired(http.HandlerFunc(s.admin.DisableUser))))
+		mux.Handle("POST /api/admin/users/{id}/enable", authRequired(adminRequired(http.HandlerFunc(s.admin.EnableUser))))
+	}
+
+	mountAdminWeb(mux)
 
 	return cors(s.cfg.CORSAllowOrigin, mux)
 }

@@ -1,7 +1,7 @@
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 
-import '../config/env.dart';
+import '../config/server_config.dart';
 
 class ApiException implements Exception {
   ApiException(this.message, {this.statusCode});
@@ -14,10 +14,10 @@ class ApiException implements Exception {
 }
 
 class ApiClient {
-  ApiClient({String? accessToken}) {
+  ApiClient({String? accessToken, String? baseUrl}) {
     _dio = Dio(
       BaseOptions(
-        baseUrl: Env.apiBase,
+        baseUrl: baseUrl ?? ServerConfig.apiBase,
         connectTimeout: const Duration(seconds: 15),
         receiveTimeout: const Duration(seconds: 30),
         headers: {'Content-Type': 'application/json'},
@@ -77,6 +77,12 @@ class ApiClient {
     }
     _dio.options.headers['Authorization'] = 'Bearer $token';
   }
+
+  void setBaseUrl(String url) {
+    _dio.options.baseUrl = ServerConfig.normalizeApiBase(url);
+  }
+
+  String get baseUrl => _dio.options.baseUrl;
 
   Future<Map<String, dynamic>> getJson(String path,
       {Map<String, dynamic>? query}) async {

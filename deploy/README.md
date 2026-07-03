@@ -24,6 +24,20 @@ deploy/
 
 ---
 
+## 管理后台（Web）
+
+后端启动后访问 **`http://localhost:8080/admin/`**（静态页在仓库 `admin/`）。
+
+在 `deploy/.env` 配置管理员邮箱：
+
+```env
+ADMIN_EMAILS=ops@example.com
+```
+
+使用该邮箱登录管理页或 App 后自动获得管理员权限。详见 [`admin/README.md`](../admin/README.md)。
+
+---
+
 ## 各文件详解
 
 ### `docker-compose.dev.yml`
@@ -65,6 +79,10 @@ docker logs ihope-postgres-dev --tail 30            # 日志
 | `SERVER_PORT` | 后端 HTTP 端口 |
 | `MAIL_DRIVER` | `log` = 开发打印邮件；生产用 `smtp` |
 | `SMTP_*` | 生产发信配置 |
+| `JPUSH_APP_KEY` / `JPUSH_MASTER_SECRET` | 国内极光推送（可选） |
+| `FCM_SERVER_KEY` | 海外 Firebase 推送（可选） |
+
+推送说明见 [docs/推送配置指南.md](../docs/推送配置指南.md)。
 
 首次使用：
 

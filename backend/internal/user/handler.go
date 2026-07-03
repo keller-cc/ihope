@@ -206,3 +206,37 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"users": users})
 }
+
+type pushTokenRequest struct {
+	PushToken string `json:"push_token"`
+	Platform  string `json:"platform"`
+}
+
+// RegisterPushToken PUT /api/users/me/push-token — 注册或清除 FCM 设备 token。
+func (h *Handler) RegisterPushToken(w http.ResponseWriter, r *http.Request) {
+	userID := middleware.UserIDFromContext(r.Context())
+	deviceID := middleware.DeviceIDFromContext(r.Context())
+	if userID == "" || deviceID == "" {
+		httpx.WriteError(w, http.StatusUnauthorized, "unauthorized", "missing user or device")
+		return
+	}
+
+	var req pushTokenRequest
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_json", "invalid request body")
+		return
+	}
+
+	if err := h.repo.UpdatePushToken(
+		r.Context(),
+		userID,
+		deviceID,
+		strings.TrimSpace(req.PushToken),
+		strings.TrimSpace(req.Platform),
+	); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "could not update push token")
+		return
+	}
+
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
+}

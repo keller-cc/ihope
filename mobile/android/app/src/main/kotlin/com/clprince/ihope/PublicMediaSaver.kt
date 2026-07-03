@@ -1,4 +1,4 @@
-package com.ihope.ihope
+package com.clprince.ihope
 
 import android.content.ContentValues
 import android.content.Context

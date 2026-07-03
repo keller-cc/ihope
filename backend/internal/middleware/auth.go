@@ -20,8 +20,23 @@ type TokenVersionLookup interface {
 	GetTokenVersion(ctx context.Context, userID string) (int, error)
 }
 
+// ActiveUserLookup 额外校验账号是否被禁用。
+type ActiveUserLookup interface {
+	TokenVersionLookup
+	IsUserDisabled(ctx context.Context, userID string) (bool, error)
+}
+
 // Auth 校验 Authorization: Bearer <access_token>，并核对 token_version 是否仍有效。
 func Auth(jwtMgr *jwt.Manager, lookup TokenVersionLookup) func(http.Handler) http.Handler {
+	return authHandler(jwtMgr, lookup, false)
+}
+
+// AuthActive 在 Auth 基础上拒绝已禁用账号。
+func AuthActive(jwtMgr *jwt.Manager, lookup ActiveUserLookup) func(http.Handler) http.Handler {
+	return authHandler(jwtMgr, lookup, true)
+}
+
+func authHandler(jwtMgr *jwt.Manager, lookup TokenVersionLookup, checkDisabled bool) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			header := r.Header.Get("Authorization")
@@ -44,6 +59,21 @@ func Auth(jwtMgr *jwt.Manager, lookup TokenVersionLookup) func(http.Handler) htt
 			if version != claims.TokenVersion {
 				httpx.WriteError(w, http.StatusUnauthorized, "session_revoked", "session expired, please sign in again")
 				return
+			}
+
+			if checkDisabled {
+				active, ok := lookup.(ActiveUserLookup)
+				if ok {
+					disabled, err := active.IsUserDisabled(r.Context(), claims.UserID)
+					if err != nil {
+						httpx.WriteError(w, http.StatusUnauthorized, "unauthorized", "invalid or expired token")
+						return
+					}
+					if disabled {
+						httpx.WriteError(w, http.StatusForbidden, "account_disabled", "account disabled")
+						return
+					}
+				}
 			}
 
 			ctx := context.WithValue(r.Context(), userIDKey, claims.UserID)

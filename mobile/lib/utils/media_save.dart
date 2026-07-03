@@ -20,7 +20,7 @@ class MediaSaveResult {
 
 /// 将媒体保存到系统公共目录（Pictures、Download、相册等）。
 class MediaSave {
-  static const _androidChannel = MethodChannel('com.ihope.ihope/media_save');
+  static const _androidChannel = MethodChannel('com.clprince.ihope/media_save');
 
   static String _safeName(String name) =>
       name.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');

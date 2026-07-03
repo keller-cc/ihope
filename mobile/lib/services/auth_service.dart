@@ -300,6 +300,39 @@ class AuthService {
     return currentUser!;
   }
 
+  String? get openConversationId => _openConversationId;
+
+  Future<bool> isPushNotificationEnabled() =>
+      storage.readPushNotificationEnabled();
+
+  Future<void> setPushNotificationEnabled(bool enabled) =>
+      storage.writePushNotificationEnabled(enabled);
+
+  /// 向服务端注册 FCM token（空字符串表示清除）。
+  Future<void> registerPushToken({
+    required String pushToken,
+    required String platform,
+  }) async {
+    await api.putJson('/api/users/me/push-token', body: {
+      'push_token': pushToken,
+      'platform': platform,
+    });
+  }
+
+  ConversationItem? getCachedConversation(String id) => _conversationCache[id];
+
+  Future<ConversationItem?> conversationForId(String id) async {
+    final cached = _conversationCache[id];
+    if (cached != null) return cached;
+    try {
+      final list = await listAllConversations();
+      for (final c in list) {
+        if (c.id == id) return c;
+      }
+    } catch (_) {}
+    return null;
+  }
+
   Future<ConversationItem> updateGroupName(
     ConversationItem conversation,
     String name,
@@ -625,6 +658,10 @@ class AuthService {
     }
     return out;
   }
+
+  /// 内存中各会话未读之和（WebSocket 实时路径够用）。
+  int totalUnreadCount() =>
+      _unreadCounts.values.fold<int>(0, (sum, n) => sum + n);
 
   int _countUnread(
     List<ChatMessage> messages,

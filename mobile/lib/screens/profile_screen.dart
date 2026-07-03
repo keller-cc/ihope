@@ -1,19 +1,25 @@
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
+import '../config/server_config.dart';
 import '../services/auth_service.dart';
+import '../services/notification_service.dart';
 import '../widgets/auth_form.dart';
 import '../widgets/user_avatar.dart';
 import 'change_password_screen.dart';
+import 'notification_settings_screen.dart';
+import 'server_settings_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({
     super.key,
     required this.auth,
+    required this.notification,
     required this.onProfileUpdated,
   });
 
   final AuthService auth;
+  final NotificationService notification;
   final VoidCallback onProfileUpdated;
 
   @override
@@ -163,6 +169,42 @@ class _ProfileScreenState extends State<ProfileScreen> {
           OutlinedButton(
             onPressed: _loading ? null : _openChangePassword,
             child: const Text('修改密码'),
+          ),
+          const SizedBox(height: 12),
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('服务器'),
+            subtitle: Text(ServerConfig.apiBase),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () async {
+              final result = await Navigator.of(context).push<Object?>(
+                MaterialPageRoute(
+                  builder: (_) => ServerSettingsScreen(
+                    auth: widget.auth,
+                    requireLogoutOnSave: true,
+                  ),
+                ),
+              );
+              if (result == 'logout' && mounted) {
+                Navigator.of(context).pop('logout');
+              }
+            },
+          ),
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('通知'),
+            subtitle: const Text('后台新消息系统横幅'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () {
+              Navigator.of(context).push<void>(
+                MaterialPageRoute(
+                  builder: (_) => NotificationSettingsScreen(
+                    auth: widget.auth,
+                    notification: widget.notification,
+                  ),
+                ),
+              );
+            },
           ),
         ],
       ),

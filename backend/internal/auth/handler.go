@@ -99,6 +99,10 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusUnauthorized, "invalid_credentials", "invalid email or password")
 		return
 	}
+	if errors.Is(err, ErrAccountDisabled) {
+		httpx.WriteError(w, http.StatusForbidden, "account_disabled", "account disabled")
+		return
+	}
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "login failed")
 		return

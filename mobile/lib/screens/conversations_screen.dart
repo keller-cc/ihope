@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import '../models/conversation.dart';
 import '../models/message.dart';
 import '../services/auth_service.dart';
+import '../services/notification_service.dart';
 import '../services/ws_service.dart';
 import '../utils/announcement_payload.dart';
 import '../utils/conversation_sort.dart';
@@ -26,10 +27,14 @@ class ConversationsScreen extends StatefulWidget {
     super.key,
     required this.auth,
     required this.onLogout,
+    required this.notification,
+    this.pendingPushConversation,
   });
 
   final AuthService auth;
+  final NotificationService notification;
   final Future<void> Function() onLogout;
+  final ValueNotifier<String?>? pendingPushConversation;
 
   @override
   State<ConversationsScreen> createState() => _ConversationsScreenState();
@@ -68,6 +73,7 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
   void initState() {
     super.initState();
     _load();
+    widget.pendingPushConversation?.addListener(_onPendingPushConversation);
     unawaited(widget.auth.ensureRealtimeConnected());
     _msgSub = widget.auth.ws.onMessage.listen(_onIncomingMessage);
     _connSub = widget.auth.ws.onConnectionChanged.listen((connected) {
@@ -134,6 +140,7 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
 
   @override
   void dispose() {
+    widget.pendingPushConversation?.removeListener(_onPendingPushConversation);
     _msgSub?.cancel();
     _connSub?.cancel();
     _dissolvedSub?.cancel();
@@ -698,6 +705,35 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
     }
   }
 
+  void _onPendingPushConversation() {
+    final id = widget.pendingPushConversation?.value;
+    if (id == null || id.isEmpty) return;
+    widget.pendingPushConversation!.value = null;
+    unawaited(_openConversationById(id));
+  }
+
+  Future<void> _openConversationById(String conversationId) async {
+    ConversationItem? conv;
+    for (final c in _items) {
+      if (c.id == conversationId) {
+        conv = c;
+        break;
+      }
+    }
+    if (conv == null) {
+      await _load();
+      for (final c in _items) {
+        if (c.id == conversationId) {
+          conv = c;
+          break;
+        }
+      }
+    }
+    if (conv != null && mounted) {
+      await _openChat(conv);
+    }
+  }
+
   Future<void> _openChat(ConversationItem conv, {String? focusMessageId}) async {
     if (_hiddenIds.contains(conv.id)) {
       await widget.auth.restoreConversationToList(conv.id);
@@ -762,6 +798,7 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
       MaterialPageRoute(
         builder: (_) => ProfileScreen(
           auth: widget.auth,
+          notification: widget.notification,
           onProfileUpdated: () => setState(() {}),
         ),
       ),

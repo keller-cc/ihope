@@ -1,0 +1,6 @@
+# 复制为 local.properties（勿提交 Git）
+sdk.dir=D:\\Android\\Sdk
+flutter.sdk=D:\\Flutter\\flutter
+
+# 国内包（domestic flavor）极光 AppKey，与极光控制台、后端 JPUSH_APP_KEY 一致
+JPUSH_APPKEY=

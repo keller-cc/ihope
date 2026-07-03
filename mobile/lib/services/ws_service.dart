@@ -4,7 +4,7 @@ import 'dart:math';
 
 import 'package:web_socket_channel/web_socket_channel.dart';
 
-import '../config/env.dart';
+import '../config/server_config.dart';
 import '../models/message.dart';
 
 class KeyRelayFrame {
@@ -250,7 +250,7 @@ class WsService {
       _setConnected(false);
     }
 
-    final base = Uri.parse(Env.wsBase);
+    final base = Uri.parse(ServerConfig.wsBase);
     final uri = Uri(
       scheme: base.scheme,
       host: base.host,

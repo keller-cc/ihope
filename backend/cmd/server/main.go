@@ -20,6 +20,7 @@ import (
 	signalkds "github.com/ihope/ihope/internal/signal"
 	"github.com/ihope/ihope/internal/user"
 	"github.com/ihope/ihope/internal/ws"
+	"github.com/ihope/ihope/internal/push"
 )
 
 func main() {
@@ -46,7 +47,10 @@ func main() {
 
 	hub := ws.NewHub()
 	msgSvc := message.NewService(msgRepo, convRepo)
-	wsHandler := ws.NewHandler(hub, jwtMgr, userRepo, convSvc, msgSvc)
+	pushSvc := push.New(cfg)
+	pushDispatch := push.NewDispatcher(pushSvc, userRepo, convRepo, hub)
+	msgNotify := server.NewMessageNotifier(hub, pushDispatch)
+	wsHandler := ws.NewHandler(hub, msgNotify, jwtMgr, userRepo, convSvc, msgSvc)
 	convNotify := server.NewConvRealtime(hub)
 	convSys := server.NewConvSystemMessenger(msgSvc)
 	signalRepo := signalkds.NewRepository(pool)
@@ -59,9 +63,10 @@ func main() {
 		userRepo,
 		jwtMgr,
 		conversation.NewHandler(convSvc, convNotify, convSys, cfg),
-		message.NewHandler(msgSvc, convSvc, hub),
+		message.NewHandler(msgSvc, convSvc, msgNotify),
 		wsHandler,
 		signalkds.NewHandler(signalSvc),
+		admin.NewHandler(userRepo),
 	)
 
 	httpServer := &http.Server{

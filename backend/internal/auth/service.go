@@ -17,6 +17,7 @@ var (
 	ErrInvalidCredentials = errors.New("invalid credentials")
 	ErrInvalidRefresh     = errors.New("invalid refresh token")
 	ErrInvalidResetToken  = errors.New("invalid or expired reset token")
+	ErrAccountDisabled    = errors.New("account disabled")
 )
 
 // Service 账号业务逻辑，依赖 user.Repository 持久化、JWTManager 签发令牌、mail.Sender 发信。
@@ -132,6 +133,18 @@ func (s *Service) Login(ctx context.Context, in LoginInput) (*TokenResponse, err
 		return nil, ErrInvalidCredentials
 	}
 
+	disabled, err := s.users.IsUserDisabled(ctx, u.ID)
+	if err != nil {
+		return nil, err
+	}
+	if disabled {
+		return nil, ErrAccountDisabled
+	}
+
+	if err := s.users.SyncAdminByEmail(ctx, u.ID, u.Email, s.cfg.AdminEmails); err != nil {
+		return nil, err
+	}
+
 	return s.issueTokens(ctx, u, deviceID, strings.TrimSpace(in.DeviceName))
 }
 
@@ -154,6 +167,14 @@ func (s *Service) Refresh(ctx context.Context, refreshToken, deviceID string) (*
 	u, err := s.users.GetByID(ctx, userID)
 	if err != nil {
 		return nil, ErrInvalidRefresh
+	}
+
+	disabled, err := s.users.IsUserDisabled(ctx, u.ID)
+	if err != nil {
+		return nil, ErrInvalidRefresh
+	}
+	if disabled {
+		return nil, ErrAccountDisabled
 	}
 
 	storedHash, err := s.users.GetDeviceRefreshHash(ctx, userID, deviceID)

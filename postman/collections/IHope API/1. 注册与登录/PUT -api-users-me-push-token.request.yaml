@@ -1,0 +1,23 @@
+$kind: http-request
+name: PUT /api/users/me/push-token
+url: "{{baseUrl}}/api/users/me/push-token"
+method: PUT
+headers:
+  Authorization: Bearer {{access_token}}
+  Content-Type: application/json
+body:
+  type: json
+  content: |-
+    {
+      "push_token": "dev-registration-id-example",
+      "platform": "android_cn"
+    }
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      pm.test('push token registered', function () {
+        pm.response.to.have.status(200);
+        pm.expect(pm.response.json().ok).to.eql(true);
+      });
+order: 3500
