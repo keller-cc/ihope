@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Release + HTTPS API：默认禁止明文 HTTP；debug 清单覆盖；http API 见 build.gradle.kts -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false" />
+</network-security-config>

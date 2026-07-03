@@ -113,6 +113,10 @@ class ChatOutgoingController {
     if (!msg.isLocalOutgoing || msg.sendStatus != MessageSendStatus.failed) {
       return;
     }
+    if (msg.type == 'image' || msg.type == 'file') {
+      await _resendAttachment(msg);
+      return;
+    }
     final plaintext = await _plaintextForSend(msg);
     if (plaintext == null) {
       onError('无法重发：消息内容已丢失');
@@ -120,13 +124,77 @@ class ChatOutgoingController {
     }
     onPending(msg.copyWith(sendStatus: MessageSendStatus.sending));
     try {
+      final fresh = await auth.prepareOutgoingSend(conversation());
       final server = await auth.sendChatMessage(
-        conversation(),
+        fresh,
         plaintext,
         type: msg.type,
         fileId: msg.fileId,
+        preparedConversation: fresh,
       );
       onSent(msg.id, server);
+    } catch (e) {
+      onFailed(msg.id, e.toString());
+    }
+  }
+
+  Future<void> _resendAttachment(ChatMessage msg) async {
+    final att = AttachmentPayload.fromPlaintext(msg.plaintext);
+    if (att == null) {
+      onError('无法重发：消息内容已丢失');
+      return;
+    }
+    final media = await MediaLocalCache.load(msg.id);
+    if (media == null) {
+      onError('无法重发：本地文件已丢失');
+      return;
+    }
+    onPending(msg.copyWith(sendStatus: MessageSendStatus.sending));
+    try {
+      final fresh = await auth.prepareOutgoingSend(conversation());
+      var fileId = msg.fileId;
+      if (fileId == null || fileId.isEmpty) {
+        final encrypted = await FileAttachmentCrypto.encrypt(
+          FileAttachmentCrypto.keyFromB64(att.fileKeyB64),
+          media.bytes,
+        );
+        fileId = await auth.fileUpload.uploadEncrypted(
+          conversationId: fresh.id,
+          encryptedBytes: encrypted,
+        );
+        onPending(
+          msg.copyWith(
+            sendStatus: MessageSendStatus.sending,
+            fileId: fileId,
+          ),
+        );
+      }
+      final plaintext = await _plaintextForSend(msg);
+      if (plaintext == null) {
+        onError('无法重发：消息内容已丢失');
+        return;
+      }
+      final server = await auth.sendChatMessage(
+        fresh,
+        plaintext,
+        type: msg.type,
+        fileId: fileId,
+        preparedConversation: fresh,
+      );
+      await MediaLocalCache.migrateMessageId(msg.id, server.id);
+      await MediaLocalCache.persistPayload(
+        server.id,
+        media,
+        originalSize: att.size,
+      );
+      final compact = await MediaLocalCache.persistPlaintext(server.id, plaintext);
+      onSent(
+        msg.id,
+        server.copyWith(
+          plaintext: compact ?? plaintext,
+          fileId: fileId,
+        ),
+      );
     } catch (e) {
       onFailed(msg.id, e.toString());
     }
@@ -180,7 +248,7 @@ class ChatOutgoingController {
 
   Future<void> _sendImageAttachment(MediaPayload media) async {
     final bytes = media.bytes;
-    final thumb = await ImageThumbnail.generate(bytes);
+    final preview = await ImageThumbnail.generatePreview(bytes);
     final key = await FileAttachmentCrypto.generateKey();
     final encrypted = await FileAttachmentCrypto.encrypt(key, bytes);
     final plaintext = AttachmentPayload(
@@ -189,22 +257,40 @@ class ChatOutgoingController {
       name: media.name,
       size: bytes.length,
       fileKeyB64: FileAttachmentCrypto.keyToB64(key),
-      thumbBytes: thumb,
+      previewBytes: preview,
     ).encodePlaintext();
     final local = _buildLocal(type: 'image', plaintext: plaintext);
+    await MediaLocalCache.persistPayload(
+      local.id,
+      media,
+      originalSize: bytes.length,
+    );
     onPending(local);
     try {
+      final fresh = await auth.prepareOutgoingSend(conversation());
       final fileId = await auth.fileUpload.uploadEncrypted(
-        conversationId: conversation().id,
+        conversationId: fresh.id,
         encryptedBytes: encrypted,
       );
+      onPending(
+        local.copyWith(
+          fileId: fileId,
+          sendStatus: MessageSendStatus.sending,
+        ),
+      );
       final msg = await auth.sendChatMessage(
-        conversation(),
+        fresh,
         plaintext,
         type: 'image',
         fileId: fileId,
+        preparedConversation: fresh,
       );
-      await MediaLocalCache.persistPayload(msg.id, media);
+      await MediaLocalCache.migrateMessageId(local.id, msg.id);
+      await MediaLocalCache.persistPayload(
+        msg.id,
+        media,
+        originalSize: bytes.length,
+      );
       final compact = await MediaLocalCache.persistPlaintext(msg.id, plaintext);
       onSent(
         local.id,
@@ -229,19 +315,37 @@ class ChatOutgoingController {
       fileKeyB64: FileAttachmentCrypto.keyToB64(key),
     ).encodePlaintext();
     final local = _buildLocal(type: 'file', plaintext: plaintext);
+    await MediaLocalCache.persistPayload(
+      local.id,
+      media,
+      originalSize: media.bytes.length,
+    );
     onPending(local);
     try {
+      final fresh = await auth.prepareOutgoingSend(conversation());
       final fileId = await auth.fileUpload.uploadEncrypted(
-        conversationId: conversation().id,
+        conversationId: fresh.id,
         encryptedBytes: encrypted,
       );
+      onPending(
+        local.copyWith(
+          fileId: fileId,
+          sendStatus: MessageSendStatus.sending,
+        ),
+      );
       final msg = await auth.sendChatMessage(
-        conversation(),
+        fresh,
         plaintext,
         type: 'file',
         fileId: fileId,
+        preparedConversation: fresh,
       );
-      await MediaLocalCache.persistPayload(msg.id, media);
+      await MediaLocalCache.migrateMessageId(local.id, msg.id);
+      await MediaLocalCache.persistPayload(
+        msg.id,
+        media,
+        originalSize: media.bytes.length,
+      );
       final compact = await MediaLocalCache.persistPlaintext(msg.id, plaintext);
       onSent(
         local.id,
@@ -355,22 +459,31 @@ class ChatOutgoingController {
     }
   }
 
-  Future<void> finishVoiceRecord({required bool cancel}) async {
-    if (!_recording) {
-      if (_voiceStartInProgress) _voiceCancelOnStart = true;
-      return;
+  Future<void> finishVoiceRecord({
+    required bool cancel,
+    int? holdDurationMs,
+  }) async {
+    if (_voiceStartInProgress) {
+      _voiceCancelOnStart = true;
+      for (var i = 0; i < 30 && _voiceStartInProgress; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      }
     }
+    if (!_recording) return;
     final path = await _recorder.stop();
     final started = _recordStartedAt;
     _recording = false;
     _recordStartedAt = null;
     if (cancel || path == null) return;
-    final durationMs =
-        started == null ? null : DateTime.now().difference(started).inMilliseconds;
-    if ((durationMs ?? 0) < 800) {
+    final rawMs = holdDurationMs ??
+        (started == null
+            ? null
+            : DateTime.now().difference(started).inMilliseconds);
+    if ((rawMs ?? 0) < 800) {
       onError('说话时间太短');
       return;
     }
+    final durationMs = normalizeVoiceDurationMs(rawMs!);
     await sendMedia(
       type: 'audio',
       media: MediaPayload(

@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:audioplayers/audioplayers.dart';
@@ -12,6 +11,7 @@ import '../utils/media_local_cache.dart';
 import '../utils/media_download_index.dart';
 import '../utils/media_payload.dart';
 import '../utils/media_save.dart';
+import 'app_page_route.dart';
 import 'image_viewer_screen.dart';
 import 'voice_message_bubble.dart';
 
@@ -63,14 +63,15 @@ class _MediaMessageBodyState extends State<MediaMessageBody> {
       _loadState = _MediaLoadState.ready;
     }
     unawaited(_loadMedia());
-    unawaited(_restoreFileState());
+    unawaited(_restoreExportState());
   }
 
   @override
   void didUpdateWidget(MediaMessageBody oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.msg.id != widget.msg.id ||
-        oldWidget.msg.plaintext != widget.msg.plaintext) {
+        oldWidget.msg.plaintext != widget.msg.plaintext ||
+        oldWidget.msg.sendStatus != widget.msg.sendStatus) {
       _media = widget.initialMedia;
       _loadState =
           _media != null ? _MediaLoadState.ready : _MediaLoadState.loading;
@@ -92,46 +93,80 @@ class _MediaMessageBodyState extends State<MediaMessageBody> {
     if (_media == null) {
       setState(() => _loadState = _MediaLoadState.loading);
     }
-    final resolved = await MediaLocalCache.resolve(
-      widget.msg.id,
-      widget.msg.plaintext,
-    );
+
+    if (widget.mine &&
+        widget.msg.sendStatus == MessageSendStatus.sent &&
+        widget.msg.fileId != null &&
+        widget.msg.type != 'image' &&
+        !await MediaLocalCache.hasPayloadFile(widget.msg.id) &&
+        widget.onMediaRetry != null) {
+      await widget.onMediaRetry!(widget.msg.id);
+    }
+
+    MediaPayload? resolved;
+    if (widget.msg.type == 'image') {
+      resolved = await MediaLocalCache.resolvePreview(
+        widget.msg.id,
+        widget.msg.plaintext,
+      );
+    } else {
+      resolved = await MediaLocalCache.resolve(
+        widget.msg.id,
+        widget.msg.plaintext,
+      );
+    }
+
     if (!mounted) return;
     if (resolved != null && resolved.bytes.isNotEmpty) {
-      final filePending = resolved.kind == 'file' &&
-          widget.msg.fileId != null &&
-          !await MediaLocalCache.hasPayloadFile(widget.msg.id);
-      if (!mounted) return;
       setState(() {
         _media = resolved;
         _loadState = _MediaLoadState.ready;
-        if (resolved.kind == 'file') {
-          _fileRecv = filePending
-              ? _FileReceiveState.pending
-              : _FileReceiveState.received;
-        }
       });
+      await _syncFileReceiveState(resolved);
+    } else if (widget.mine &&
+        widget.msg.sendStatus == MessageSendStatus.sending &&
+        (widget.msg.type == 'image' || widget.msg.type == 'file')) {
+      setState(() => _loadState = _MediaLoadState.loading);
     } else {
       setState(() => _loadState = _MediaLoadState.failed);
+      await _syncFileReceiveState(null);
     }
   }
 
-  int _durationSecondsFallback() {
-    final fromMedia = _media?.durationMs ??
-        MediaLocalCache.durationMsFromPlaintext(widget.msg.plaintext);
-    return math.max(1, ((fromMedia ?? 0) / 1000).round());
-  }
-
-  Future<void> _restoreFileState() async {
+  Future<void> _syncFileReceiveState(MediaPayload? media) async {
     if (widget.msg.type != 'file') return;
-    if (widget.msg.fileId != null) {
-      if (!mounted) return;
-      setState(() => _fileRecv = _FileReceiveState.pending);
+    if (!mounted) return;
+
+    if (media != null && media.bytes.isNotEmpty) {
+      setState(() => _fileRecv = _FileReceiveState.received);
       return;
     }
     if (await MediaLocalCache.hasPayloadFile(widget.msg.id)) {
-      if (mounted) setState(() => _fileRecv = _FileReceiveState.received);
+      setState(() => _fileRecv = _FileReceiveState.received);
+      return;
     }
+    if (widget.mine) {
+      setState(() {
+        _fileRecv = widget.msg.sendStatus == MessageSendStatus.sending
+            ? _FileReceiveState.receiving
+            : _FileReceiveState.pending;
+      });
+      return;
+    }
+    if (widget.msg.fileId != null) {
+      setState(() => _fileRecv = _FileReceiveState.pending);
+    }
+  }
+
+  int? get _effectiveDurationMs =>
+      _media?.durationMs ??
+      MediaLocalCache.durationMsFromPlaintext(widget.msg.plaintext);
+
+  int get _totalSeconds =>
+      voiceDurationSecondsFromMs(_effectiveDurationMs);
+
+  Future<void> _restoreExportState() async {
+    if (widget.msg.type != 'file') return;
     final record = await MediaDownloadIndex.lookup(widget.msg.id);
     if (!mounted || record == null) return;
     setState(() {
@@ -151,11 +186,6 @@ class _MediaMessageBodyState extends State<MediaMessageBody> {
   }
 
   Uint8List get _bytes => Uint8List.fromList(_media?.bytes ?? const []);
-
-  int get _totalSeconds => math.max(
-        1,
-        ((_media?.durationMs ?? 0) / 1000).round(),
-      );
 
   Future<void> _stopPlayback({bool notifyHub = true}) async {
     await _player.stop();
@@ -228,34 +258,45 @@ class _MediaMessageBodyState extends State<MediaMessageBody> {
     }
   }
 
-  Future<void> _openImage() async {
-    var bytes = _bytes;
-    if (widget.msg.fileId != null &&
-        !await MediaLocalCache.hasPayloadFile(widget.msg.id)) {
-      setState(() => _loadState = _MediaLoadState.loading);
-      if (widget.onMediaRetry != null) {
-        await widget.onMediaRetry!(widget.msg.id);
+  Future<Uint8List> _loadFullImageBytes() async {
+    if (await MediaLocalCache.needsFullImageDownload(
+      messageId: widget.msg.id,
+      plaintext: widget.msg.plaintext,
+      fileId: widget.msg.fileId,
+    )) {
+      if (widget.onMediaRetry == null) {
+        throw StateError('无法下载原图');
       }
-      await _loadMedia();
-      bytes = _bytes;
+      await widget.onMediaRetry!(widget.msg.id);
     }
-    if (bytes.isEmpty) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('图片加载失败，请重试')),
-      );
-      return;
+    final full = await MediaLocalCache.loadFullImage(
+      widget.msg.id,
+      widget.msg.plaintext,
+      widget.msg.fileId,
+    );
+    if (full != null && full.bytes.isNotEmpty) {
+      return Uint8List.fromList(full.bytes);
     }
+    throw StateError('原图不可用');
+  }
+
+  Future<void> _openImage() async {
     if (!mounted) return;
+    final name = _media?.name ?? 'image.jpg';
+
     await Navigator.of(context).push<void>(
-      MaterialPageRoute(
+      appPageRoute(
         builder: (_) => ImageViewerScreen(
-          bytes: bytes,
-          name: _media?.name ?? 'image.jpg',
+          bytesFuture: () => _loadFullImageBytes(),
+          onRetryLoad: () => _loadFullImageBytes(),
+          name: name,
           messageId: widget.msg.id,
         ),
       ),
     );
+
+    if (!mounted) return;
+    await _loadMedia();
   }
 
   Future<void> _onFileTap() async {
@@ -381,7 +422,7 @@ class _MediaMessageBodyState extends State<MediaMessageBody> {
           : null;
       if (map != null && map['name'] is String) return map['name'] as String;
     } catch (_) {}
-    final att = AttachmentPayload.tryParse(widget.msg.plaintext);
+    final att = AttachmentPayload.fromPlaintext(widget.msg.plaintext);
     if (att != null) return att.name;
     return '文件';
   }
@@ -389,6 +430,11 @@ class _MediaMessageBodyState extends State<MediaMessageBody> {
   String _fileSubtitle() {
     switch (_fileRecv) {
       case _FileReceiveState.pending:
+        if (widget.mine) {
+          return widget.msg.sendStatus == MessageSendStatus.sending
+              ? '正在发送…'
+              : '点击打开';
+        }
         return '点击接收文件';
       case _FileReceiveState.receiving:
         return '正在接收…';
@@ -421,7 +467,7 @@ class _MediaMessageBodyState extends State<MediaMessageBody> {
     }
     if (media == null || _loadState == _MediaLoadState.failed) {
       final kind = MediaLocalCache.localKind(widget.msg.plaintext) ??
-          AttachmentPayload.tryParse(widget.msg.plaintext)?.kind ??
+          AttachmentPayload.fromPlaintext(widget.msg.plaintext)?.kind ??
           widget.msg.type;
       if (kind == 'file') {
         return _buildFileCard(pending: true);
@@ -432,7 +478,7 @@ class _MediaMessageBodyState extends State<MediaMessageBody> {
           child: VoiceMessageBubble(
             messageId: widget.msg.id,
             mine: widget.mine,
-            totalSeconds: _durationSecondsFallback(),
+            totalSeconds: _totalSeconds,
             playing: false,
             positionMs: 0,
             onTap: () => unawaited(_retryLoadMedia()),

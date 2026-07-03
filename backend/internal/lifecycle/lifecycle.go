@@ -41,7 +41,9 @@ func RequestDrain() {
 		return
 	}
 	go func() {
-		time.Sleep(drainWait)
+		if drainWait > 0 {
+			time.Sleep(drainWait)
+		}
 		shutdownFn()
 	}()
 }

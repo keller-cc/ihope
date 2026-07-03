@@ -6,6 +6,7 @@ import 'package:qr_flutter/qr_flutter.dart';
 
 import '../services/auth_service.dart';
 import '../services/device_link_service.dart';
+import '../widgets/app_page_route.dart';
 import '../widgets/auth_form.dart';
 
 /// 多设备链接入口：展示二维码 / 扫描其它设备。
@@ -34,7 +35,7 @@ class DeviceLinkScreen extends StatelessWidget {
             trailing: const Icon(Icons.chevron_right),
             onTap: () {
               Navigator.of(context).push<void>(
-                MaterialPageRoute(
+                appPageRoute(
                   builder: (_) => DeviceLinkHostScreen(auth: auth),
                 ),
               );
@@ -49,7 +50,7 @@ class DeviceLinkScreen extends StatelessWidget {
             trailing: const Icon(Icons.chevron_right),
             onTap: () async {
               final ok = await Navigator.of(context).push<bool>(
-                MaterialPageRoute(
+                appPageRoute(
                   builder: (_) => DeviceLinkScanScreen(auth: auth),
                 ),
               );

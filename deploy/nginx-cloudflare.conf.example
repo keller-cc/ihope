@@ -1,0 +1,68 @@
+# IHope + Cloudflare 橙云代理 — 源站 Nginx 示例
+# 复制为 nginx.conf 挂载到 compose 的 nginx 容器
+#
+# 用户 ──HTTPS──► Cloudflare ──HTTP/HTTPS──► 本 Nginx:80 ──► backend:8080
+#
+# Cloudflare 控制台：
+#   SSL/TLS → Full (strict)（推荐，源站用下方 origin 证书）
+#   Network → WebSockets = ON
+#   DNS → im.example.com 橙云开启
+#
+# 大文件：橙云代理单请求上限约 100MB；IM 附件最大 300MB 见 docs/Cloudflare部署指南.md
+
+upstream ihope_backend {
+    server backend:8080;
+    keepalive 32;
+}
+
+# 还原真实客户端 IP（限流 / 日志）。IP 段需定期更新：
+# curl -s https://www.cloudflare.com/ips-v4 -o /etc/nginx/cloudflare-ips-v4.conf
+# 每行转为 set_real_ip_from <ip>;
+include /etc/nginx/cloudflare-ips-v4.conf;
+
+real_ip_header CF-Connecting-IP;
+real_ip_recursive on;
+
+server {
+    listen 80;
+    server_name im.example.com;
+
+    client_max_body_size 320m;
+
+    location /ws {
+        proxy_pass http://ihope_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header CF-Connecting-IP $http_cf_connecting_ip;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+    }
+
+    location / {
+        proxy_pass http://ihope_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header CF-Connecting-IP $http_cf_connecting_ip;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+        proxy_request_buffering off;
+    }
+}
+
+# Full (strict) 时在 Cloudflare 控制台生成 Origin Certificate，取消注释并挂载：
+#
+# server {
+#     listen 443 ssl http2;
+#     server_name im.example.com;
+#     ssl_certificate     /etc/nginx/certs/origin.pem;
+#     ssl_certificate_key /etc/nginx/certs/origin-key.pem;
+#     ... 同上 location ...
+# }

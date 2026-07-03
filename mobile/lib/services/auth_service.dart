@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:connectivity_plus/connectivity_plus.dart';
+
 import '../crypto/chat_crypto.dart';
 import '../crypto/e2ee_exception.dart';
 import '../crypto/identity.dart';
@@ -74,19 +76,36 @@ class AuthService {
   final Set<String> _memberDirectorySynced = {};
   final Set<String> _messageCacheMigrated = {};
   String? _openConversationId;
+  bool _appInForeground = true;
   final Map<String, int> _unreadCounts = {};
   final Map<String, DateTime> _conversationReadAtCache = {};
   final Map<String, DateTime> _removalUiClaimed = {};
 
   DateTime? _accessExpiresAt;
+  String? _activeAccessToken;
   Future<bool>? _refreshInFlight;
   Future<List<ConversationItem>>? _listConversationsInFlight;
   Future<bool>? _sessionRestoreInFlight;
   Future<void>? _cryptoInitInFlight;
 
+  StreamSubscription<List<ConnectivityResult>>? _connectivitySub;
+  Timer? _connectivityDebounce;
+  bool _networkOnline = true;
+  bool _networkWatchActive = false;
+  final _realtimeRestoredController = StreamController<void>.broadcast();
+  final _conversationPatchedController =
+      StreamController<ConversationItem>.broadcast();
+
   static const _refreshSkew = Duration(minutes: 2);
 
   bool get isCryptoReady => _crypto != null;
+
+  /// 网络恢复并完成 WS 重连尝试后发出（供会话列表等刷新）。
+  Stream<void> get onRealtimeRestored => _realtimeRestoredController.stream;
+
+  /// 本地会话元数据变更（如群头像上传），供会话列表即时刷新。
+  Stream<ConversationItem> get onConversationPatched =>
+      _conversationPatchedController.stream;
 
   /// 群 GMK 就绪（当前打开的会话可据此重新解密）。
   Stream<String> get onGroupKeyReady => groupKeys.onKeysReady;
@@ -157,8 +176,8 @@ class AuthService {
   Future<bool> restoreLocalSession() async {
     final token = await storage.accessToken();
     if (token == null || token.isEmpty) return false;
-    api.setAccessToken(token);
-    _accessExpiresAt = _expiryFromJwt(token);
+    _syncAccessToken(token);
+    _accessExpiresAt ??= _expiryFromJwt(token);
     final profile = await storage.readUserProfile();
     if (profile != null) {
       currentUser = User.fromJson(profile);
@@ -181,7 +200,7 @@ class AuthService {
     try {
       final token = await storage.accessToken();
       if (token == null || token.isEmpty) return false;
-      api.setAccessToken(token);
+      _syncAccessToken(token);
       _accessExpiresAt ??= _expiryFromJwt(token);
       unawaited(AppConfig.refresh(api));
       if (currentUser == null) {
@@ -226,6 +245,7 @@ class AuthService {
   Future<void> _clearAuthSession() async {
     await _disconnectRealtime();
     await storage.clear();
+    _activeAccessToken = null;
     api.setAccessToken(null);
     _crypto = null;
     _signalDm = null;
@@ -330,6 +350,7 @@ class AuthService {
       bytes: bytes,
     );
     currentUser = User.fromJson(data);
+    await storage.saveUserProfile(currentUser!.toJson());
     return currentUser!;
   }
 
@@ -385,8 +406,12 @@ class AuthService {
       bytes,
       filename: filename,
     );
-    _cacheConversation(conv);
-    return conv;
+    final merged = mergeConversationUpdate(conversation, conv);
+    unawaited(_upsertConversationInListSnapshot(merged));
+    if (!_conversationPatchedController.isClosed) {
+      _conversationPatchedController.add(merged);
+    }
+    return merged;
   }
 
   Future<void> changePassword({
@@ -433,15 +458,29 @@ class AuthService {
   /// 供 WS 重连与 API 401 拦截器使用：必要时 refresh 后返回有效 token。
   Future<String?> ensureValidAccessToken() async {
     await _ensureAccessExpiryLoaded();
-    if (_shouldRefreshProactively()) {
+    final inFlight = _refreshInFlight;
+    if (inFlight != null) {
+      final ok = await inFlight;
+      if (!ok) return null;
+    } else if (_shouldRefreshProactively()) {
       final ok = await _tryRefreshTokens();
       if (!ok) return null;
     }
+    if (_activeAccessToken != null && _activeAccessToken!.isNotEmpty) {
+      api.setAccessToken(_activeAccessToken);
+      return _activeAccessToken;
+    }
     final token = await storage.accessToken();
     if (token != null && token.isNotEmpty) {
-      api.setAccessToken(token);
+      _syncAccessToken(token);
     }
     return token;
+  }
+
+  void _syncAccessToken(String access) {
+    _activeAccessToken = access;
+    api.setAccessToken(access);
+    _accessExpiresAt = _expiryFromJwt(access);
   }
 
   Future<void> _ensureAccessExpiryLoaded() async {
@@ -476,6 +515,7 @@ class AuthService {
         'refresh_token': refreshToken,
         'device_id': deviceId,
       });
+      _syncAccessToken(data['access_token'] as String);
       await _saveTokenResponse(data);
       final access = await storage.accessToken();
       if (access != null && access.isNotEmpty) {
@@ -519,8 +559,13 @@ class AuthService {
   Future<void> _saveTokenResponse(Map<String, dynamic> data) async {
     final access = data['access_token'] as String;
     final refresh = data['refresh_token'] as String;
+    _syncAccessToken(access);
+    final expiresIn = data['expires_in'];
+    if (expiresIn is num) {
+      _accessExpiresAt =
+          DateTime.now().add(Duration(seconds: expiresIn.toInt()));
+    }
     await storage.saveTokens(accessToken: access, refreshToken: refresh);
-    api.setAccessToken(access);
     final priorUserId = currentUser?.id;
     currentUser = User.fromJson(data['user'] as Map<String, dynamic>);
     await storage.saveUserProfile(currentUser!.toJson());
@@ -531,11 +576,6 @@ class AuthService {
     )) {
       _crypto = null;
       _signalDm = null;
-    }
-    _accessExpiresAt = _expiryFromJwt(access);
-    final expiresIn = data['expires_in'];
-    if (expiresIn is num) {
-      _accessExpiresAt = DateTime.now().add(Duration(seconds: expiresIn.toInt()));
     }
   }
 
@@ -571,6 +611,14 @@ class AuthService {
   void setOpenConversation(String? conversationId) {
     _openConversationId = conversationId;
   }
+
+  /// App 是否仍可见（与 [setOpenConversation] 一起判断是否抑制通知）。
+  void setAppInForeground(bool inForeground) {
+    _appInForeground = inForeground;
+  }
+
+  bool isActivelyViewingConversation(String conversationId) =>
+      _openConversationId == conversationId && _appInForeground;
 
   bool isConversationOpen(String conversationId) =>
       _openConversationId == conversationId;
@@ -718,7 +766,7 @@ class AuthService {
   }
 
   Future<void> noteIncomingMessage(ChatMessage msg) async {
-    if (_openConversationId == msg.conversationId) {
+    if (isActivelyViewingConversation(msg.conversationId)) {
       return;
     }
     final me = currentUser;
@@ -730,31 +778,43 @@ class AuthService {
 
   void resetUnreadCounts() => _unreadCounts.clear();
 
-  /// 离线期间的消息不会经 WS 写入本地；根据会话 lastMessage 拉取并合并。
+  /// 离线/后台期间的消息不会经 WS 写入本地；拉取服务端最新消息并合并。
   Future<void> syncMissedMessages(List<ConversationItem> items) async {
     final me = currentUser;
     if (me == null) return;
+
+    // 先刷新会话元数据，避免 UI 仍持有旧的 lastMessage 导致误判「已同步」。
+    Map<String, ConversationItem> freshById;
+    try {
+      final freshList = await _fetchActiveConversations();
+      for (final c in freshList) {
+        _cacheConversation(c);
+      }
+      freshById = {for (final c in freshList) c.id: c};
+    } catch (_) {
+      freshById = {for (final c in items) c.id: c};
+    }
 
     final convApi = conversations;
     var synced = false;
     for (final conv in items) {
       if (conv.isArchived) continue;
-      final last = conv.lastMessage;
+      final fresh = freshById[conv.id] ?? conv;
+      final last = fresh.lastMessage;
       if (last == null) continue;
 
-      final readAt =
-          await storage.readConversationReadAt(me.id, conv.id);
+      final readAt = await storage.readConversationReadAt(me.id, fresh.id);
       if (readAt != null && !last.createdAt.isAfter(readAt)) continue;
 
-      final cached = await loadCachedMessages(conv.id);
+      final cached = await loadCachedMessages(fresh.id);
       if (cached.any((m) => m.id == last.id)) continue;
 
       try {
-        final remote = await convApi.listMessages(conv.id, limit: 100);
+        final remote = await convApi.listMessages(fresh.id, limit: 100);
         final merged = _mergeMessageCaches(remote, cached);
-        final visible = conv.messagesVisibleToMember(me.id, merged);
+        final visible = fresh.messagesVisibleToMember(me.id, merged);
         if (visible.isNotEmpty) {
-          await cacheMessages(conv.id, visible);
+          await cacheMessages(fresh.id, visible);
           synced = true;
         }
       } catch (_) {}
@@ -813,12 +873,11 @@ class AuthService {
     return items.where((c) => !hiddenIds.contains(c.id)).toList();
   }
 
-  Future<ChatMessage> sendChatMessage(
+  /// 发送前确保 token、会话与 E2EE（含群密钥）就绪。
+  /// 图片/文件应先调用再上传，避免 blob 已上传却因加密未就绪而发送失败。
+  Future<ConversationItem> prepareOutgoingSend(
     ConversationItem conversation,
-    String plaintext, {
-    String type = 'text',
-    String? fileId,
-  }) async {
+  ) async {
     if (conversation.isArchived) {
       throw StateError('已退出群聊，无法发送消息');
     }
@@ -826,12 +885,26 @@ class AuthService {
     if (me == null || !isValidIdentityPublicKey(me.identityPublicKey)) {
       throw E2eeException('本机加密密钥未就绪，请退出后重新登录');
     }
+    await ensureValidAccessToken();
+    await ensureCryptoReady();
     var fresh = await _refreshConversation(conversation);
     if (fresh.type == 'group') {
       fresh = await groupKeys.maybeRotateBeforeSend(fresh);
       await groupKeys.ensureReadyForSend(fresh);
     }
-    final crypto = await ensureCryptoReady();
+    return fresh;
+  }
+
+  Future<ChatMessage> sendChatMessage(
+    ConversationItem conversation,
+    String plaintext, {
+    String type = 'text',
+    String? fileId,
+    ConversationItem? preparedConversation,
+  }) async {
+    final fresh =
+        preparedConversation ?? await prepareOutgoingSend(conversation);
+    final crypto = chatCrypto;
     final payload = await crypto.encryptOutgoing(fresh, plaintext);
     if (!crypto.isEncryptedPayload(payload)) {
       throw E2eeException('消息未能加密，已取消发送');
@@ -899,12 +972,23 @@ class AuthService {
     final updated = result.conversation.copyWith(epoch: result.epoch);
     _cacheConversation(updated);
     final me = currentUser!;
-    if (updated.isOwner(me.id)) {
+    if (updated.canManageGroup(me.id)) {
       final crypto = await ensureCryptoReady();
       final gmk = await crypto.rotateGroupEpoch(updated.id, result.epoch);
       await groupKeys.publishEpochKeys(updated, gmk);
       await groupKeys.resetRotationMeta(updated.id);
     }
+    return updated;
+  }
+
+  Future<ConversationItem> setGroupMemberRole(
+    ConversationItem conversation,
+    String targetUserId,
+    String role,
+  ) async {
+    final updated =
+        await conversations.setMemberRole(conversation.id, targetUserId, role);
+    _cacheConversation(updated);
     return updated;
   }
 
@@ -1056,6 +1140,20 @@ class AuthService {
     );
   }
 
+  Future<void> _upsertConversationInListSnapshot(
+    ConversationItem updated,
+  ) async {
+    final me = currentUser;
+    if (me == null) return;
+    final raw = await storage.readConversationListSnapshot(me.id);
+    if (raw.isEmpty) return;
+    final items = raw.map((e) => ConversationItem.fromJson(e)).toList();
+    final idx = items.indexWhere((c) => c.id == updated.id);
+    if (idx < 0) return;
+    items[idx] = mergeConversationUpdate(items[idx], updated);
+    await persistConversationList(items);
+  }
+
   /// 离线或刷新失败时读取上次成功的会话列表快照。
   Future<List<ConversationItem>> listCachedConversations() async {
     final me = currentUser;
@@ -1080,7 +1178,7 @@ class AuthService {
       for (final m in mem) {
         if (m.id != messageId) continue;
         final pt = m.plaintext;
-        if (_isValidCachedPlaintext(pt)) return pt;
+        if (_isValidCachedPlaintext(m.type, pt)) return pt;
         break;
       }
     }
@@ -1088,23 +1186,23 @@ class AuthService {
     for (final m in cached) {
       if (m.id != messageId) continue;
       final pt = m.plaintext;
-      if (_isValidCachedPlaintext(pt)) return pt;
+      if (_isValidCachedPlaintext(m.type, pt)) return pt;
     }
     return null;
   }
 
-  bool _isValidCachedPlaintext(String? pt) {
+  bool _isValidCachedPlaintext(String type, String? pt) {
     if (pt == null || pt.isEmpty) return false;
     if (ChatMessage.isDecryptPlaceholder(pt)) return false;
     if (ChatMessage.isDecryptFailure(pt)) return false;
-    return true;
+    return _isUsableMediaPlaintext(type, pt);
   }
 
   /// 若消息缓存里已有明文，直接生成列表预览（避免重复解密）。
   String? previewIfCached(ChatMessage message) {
     if (message.type == 'system') return message.ciphertext;
     final pt = message.plaintext;
-    if (!_isValidCachedPlaintext(pt)) return null;
+    if (!_isValidCachedPlaintext(message.type, pt)) return null;
     return _previewBody(message, pt!);
   }
 
@@ -1126,7 +1224,7 @@ class AuthService {
       return m.copyWith(plaintext: m.ciphertext);
     }
     final pt = m.plaintext;
-    if (_isValidCachedPlaintext(pt)) return m;
+    if (_isValidCachedPlaintext(m.type, pt)) return m;
     return m.copyWith(plaintext: ChatMessage.decryptPlaceholder);
   }
 
@@ -1135,7 +1233,7 @@ class AuthService {
     ChatMessage message,
   ) async {
     if (message.type != 'system' &&
-        !_isValidCachedPlaintext(message.plaintext)) {
+        !_isValidCachedPlaintext(message.type, message.plaintext)) {
       return;
     }
     final stored = message.type == 'system'
@@ -1310,8 +1408,9 @@ class AuthService {
       if (ChatMessage.isDecryptPlaceholder(pt)) return true;
       if (ChatMessage.isDecryptFailure(pt)) return true;
       if (msg.fileId != null) {
-        return AttachmentPayload.tryParse(pt) == null &&
-            !MediaLocalCache.isLocalRef(pt);
+        if (AttachmentPayload.tryParse(pt) != null) return false;
+        if (MediaLocalCache.isAttachmentRef(pt)) return false;
+        return true;
       }
       return !await MediaLocalCache.hasPayloadFile(msg.id);
     }
@@ -1328,8 +1427,23 @@ class AuthService {
       type == 'audio' ||
       type == 'file' ||
       MediaLocalCache.isLocalRef(pt) ||
+      MediaLocalCache.isAttachmentRef(pt) ||
       MediaPayload.tryParse(pt) != null ||
       AttachmentPayload.tryParse(pt) != null;
+
+  /// 可解密/落盘的媒体明文（非列表预览标签）。
+  bool _isUsableMediaPlaintext(String type, String? pt) {
+    if (pt == null || pt.isEmpty) return false;
+    if (type == 'text' || type == 'system' || type == 'announcement') {
+      return true;
+    }
+    if (MediaPayload.tryParse(pt) != null) return true;
+    if (AttachmentPayload.tryParse(pt) != null) return true;
+    if (MediaLocalCache.isAttachmentRef(pt)) return true;
+    // 语音 local 引用可无 file_key；图片/文件远程附件须含 file_key。
+    if (MediaLocalCache.isLocalRef(pt)) return type == 'audio';
+    return false;
+  }
 
   Future<ChatMessage> _finalizeDecryptedMedia(
     String conversationId,
@@ -1380,7 +1494,8 @@ class AuthService {
       if (inline != null &&
           inline.isNotEmpty &&
           !ChatMessage.isDecryptPlaceholder(inline) &&
-          !ChatMessage.isDecryptFailure(inline)) {
+          !ChatMessage.isDecryptFailure(inline) &&
+          _isUsableMediaPlaintext(base.type, inline)) {
         if (base.type == 'image' || base.type == 'audio') {
           return _finalizeDecryptedMedia(conversation.id, base);
         }
@@ -1390,16 +1505,58 @@ class AuthService {
       if (stored != null) {
         return base.copyWith(plaintext: stored);
       }
+      if (base.type == 'image' ||
+          base.type == 'file' ||
+          base.type == 'audio') {
+        if (await MediaLocalCache.hasPayloadFile(base.id)) {
+          final ref = await MediaLocalCache.attachmentLocalRef(
+            base.id,
+            base.plaintext,
+          );
+          if (ref != null) {
+            return base.copyWith(plaintext: ref);
+          }
+          if (base.type == 'audio') {
+            final diskRef = await MediaLocalCache.localRefFromDisk(base.id);
+            if (diskRef != null) {
+              return base.copyWith(plaintext: diskRef);
+            }
+          }
+        }
+      }
       return base.copyWith(plaintext: ChatMessage.decryptPlaceholder);
     }
     final cached = await _resolvePlaintext(conversation.id, base.id);
     if (cached != null) {
-      final withPt = base.copyWith(plaintext: cached);
-      if ((base.type == 'image' || base.type == 'audio') &&
-          MediaPayload.tryParse(cached) != null) {
-        return _finalizeDecryptedMedia(conversation.id, withPt);
+      if (base.type == 'image' || base.type == 'audio') {
+        if (MediaPayload.tryParse(cached) != null) {
+          return _finalizeDecryptedMedia(
+            conversation.id,
+            base.copyWith(plaintext: cached),
+          );
+        }
+        if (base.type == 'image' &&
+            (AttachmentPayload.tryParse(cached) != null ||
+                MediaLocalCache.isAttachmentRef(cached))) {
+          return _finalizeDecryptedMedia(
+            conversation.id,
+            base.copyWith(plaintext: cached),
+          );
+        }
+        if (MediaLocalCache.isLocalRef(cached) &&
+            await MediaLocalCache.isPlaintextAvailable(base.id, cached)) {
+          return base.copyWith(plaintext: cached);
+        }
+      } else if (base.type == 'file') {
+        if (AttachmentPayload.tryParse(cached) != null ||
+            MediaLocalCache.isAttachmentRef(cached) ||
+            (MediaLocalCache.isLocalRef(cached) &&
+                await MediaLocalCache.hasPayloadFile(base.id))) {
+          return base.copyWith(plaintext: cached);
+        }
+      } else if (_isUsableMediaPlaintext(base.type, cached)) {
+        return base.copyWith(plaintext: cached);
       }
-      return withPt;
     }
     if (conv.type == 'group') {
       try {
@@ -1414,6 +1571,9 @@ class AuthService {
           dec,
           persistFile: true,
         );
+      }
+      if (AttachmentPayload.tryParse(dec.plaintext) != null) {
+        return _finalizeDecryptedMedia(conversation.id, dec);
       }
       if (await MediaLocalCache.hasPayloadFile(dec.id)) {
         final ref = MediaLocalCache.isLocalRef(dec.plaintext)
@@ -1435,10 +1595,8 @@ class AuthService {
       for (final m in thread) {
         if (m.id != messageId) continue;
         final pt = m.plaintext;
-        if (pt == null || pt.isEmpty) break;
-        if (ChatMessage.isDecryptPlaceholder(pt)) break;
-        if (ChatMessage.isDecryptFailure(pt)) break;
-        return pt;
+        if (_isValidCachedPlaintext(m.type, pt)) return pt;
+        break;
       }
     }
     return cachedPlaintextForMessage(conversationId, messageId);
@@ -1464,7 +1622,7 @@ class AuthService {
       final decrypted = await _decryptOneLocal(conversation, message);
       pt = decrypted.plaintext;
     }
-    final att = AttachmentPayload.tryParse(pt);
+    final att = AttachmentPayload.fromPlaintext(pt);
     if (att == null) return null;
 
     final encrypted = await fileUpload.downloadEncrypted(
@@ -1481,7 +1639,11 @@ class AuthService {
       name: att.name,
       bytes: clear,
     );
-    await MediaLocalCache.persistPayload(message.id, media);
+    await MediaLocalCache.persistPayload(
+      message.id,
+      media,
+      originalSize: att.size,
+    );
     return media;
   }
 
@@ -1494,9 +1656,10 @@ class AuthService {
     if (message.fileId != null &&
         (message.type == 'file' || message.type == 'image')) {
       if (await MediaLocalCache.hasPayloadFile(message.id)) {
-        final ref = MediaLocalCache.isLocalRef(message.plaintext)
-            ? message.plaintext
-            : await MediaLocalCache.localRefFromDisk(message.id);
+        final ref = await MediaLocalCache.attachmentLocalRef(
+          message.id,
+          message.plaintext,
+        );
         if (ref != null) {
           final fixed = message.copyWith(plaintext: ref);
           unawaited(upsertCachedMessage(conversation.id, fixed));
@@ -1504,24 +1667,29 @@ class AuthService {
         }
       }
       try {
-        await fetchAttachmentMedia(conversation, message);
-        final ref = MediaLocalCache.isLocalRef(message.plaintext)
-            ? message.plaintext
-            : await MediaLocalCache.localRefFromDisk(message.id);
+        final media =
+            await fetchAttachmentMedia(conversation, message);
+        if (media == null) return null;
+        final ref = await MediaLocalCache.attachmentLocalRef(
+          message.id,
+          message.plaintext,
+        );
         if (ref != null) {
           final fixed = message.copyWith(plaintext: ref);
           unawaited(upsertCachedMessage(conversation.id, fixed));
           return fixed;
         }
+        return message;
       } catch (_) {
         return null;
       }
     }
     if (message.type == 'file') {
       if (await MediaLocalCache.hasPayloadFile(message.id)) {
-        final ref = MediaLocalCache.isLocalRef(message.plaintext)
-            ? message.plaintext
-            : await MediaLocalCache.localRefFromDisk(message.id);
+        final ref = await MediaLocalCache.attachmentLocalRef(
+          message.id,
+          message.plaintext,
+        );
         if (ref != null) {
           final fixed = message.copyWith(plaintext: ref);
           unawaited(upsertCachedMessage(conversation.id, fixed));
@@ -1585,8 +1753,19 @@ class AuthService {
             ref = await MediaLocalCache.localRefFromDisk(msg.id);
           }
           out.add(ref != null ? msg.copyWith(plaintext: ref) : msg);
+        } else if (msg.plaintext != null &&
+            msg.plaintext!.isNotEmpty &&
+            !ChatMessage.isDecryptPlaceholder(msg.plaintext) &&
+            !ChatMessage.isDecryptFailure(msg.plaintext) &&
+            (AttachmentPayload.tryParse(msg.plaintext) != null ||
+                MediaLocalCache.isAttachmentRef(msg.plaintext))) {
+          out.add(msg);
         } else {
-          out.add(msg.copyWith(plaintext: ChatMessage.decryptPlaceholder));
+          try {
+            out.add(await _decryptOneLocal(conversation, msg));
+          } catch (_) {
+            out.add(msg.copyWith(plaintext: ChatMessage.decryptPlaceholder));
+          }
         }
         continue;
       }
@@ -1730,7 +1909,10 @@ class AuthService {
     var changed = false;
     for (final m in results) {
       if (!m.isCacheable) continue;
-      if (m.type != 'system' && !_isValidCachedPlaintext(m.plaintext)) continue;
+      if (m.type != 'system' &&
+          !_isValidCachedPlaintext(m.type, m.plaintext)) {
+        continue;
+      }
       final prev = byId[m.id];
       if (prev?.plaintext == m.plaintext) continue;
       byId[m.id] = m;
@@ -1875,7 +2057,9 @@ class AuthService {
         hydrated.id,
         thread: cachedThread,
       );
-      if (stored != null) return _previewBody(hydrated, stored);
+      if (stored != null && _isUsableMediaPlaintext(hydrated.type, stored)) {
+        return _previewBody(hydrated, stored);
+      }
       return hydrated.type == 'text'
           ? ChatMessage.decryptPlaceholder
           : MediaPayload.previewLabel('', hydrated.type);
@@ -1885,7 +2069,9 @@ class AuthService {
       hydrated.id,
       thread: cachedThread,
     );
-    if (stored != null) return _previewBody(hydrated, stored);
+    if (stored != null && _isUsableMediaPlaintext(hydrated.type, stored)) {
+      return _previewBody(hydrated, stored);
+    }
     if (conv.type == 'group') {
       await ensureGroupKeys(conv, epochs: [hydrated.epoch]);
     }
@@ -1893,6 +2079,7 @@ class AuthService {
       conv,
       hydrated.ciphertext,
       messageEpoch: hydrated.epoch,
+      senderUserId: hydrated.senderId,
     );
     if (ChatMessage.isDecryptFailure(text)) {
       final retry = await _resolvePlaintext(
@@ -1900,20 +2087,18 @@ class AuthService {
         hydrated.id,
         thread: cachedThread,
       );
-      if (retry != null) return _previewBody(hydrated, retry);
+      if (retry != null && _isUsableMediaPlaintext(hydrated.type, retry)) {
+        return _previewBody(hydrated, retry);
+      }
       if (hydrated.type == 'announcement') {
         return AnnouncementPayload.previewFromPlaintext(null);
       }
       return text;
     }
     final preview = _previewBody(hydrated, text);
-    final storedPlaintext =
-        hydrated.type == 'announcement' ? text : preview;
-    unawaited(
-      upsertCachedMessage(
-        conversation.id,
-        hydrated.copyWith(plaintext: storedPlaintext),
-      ),
+    await upsertCachedMessage(
+      conversation.id,
+      hydrated.copyWith(plaintext: text),
     );
     return preview;
   }
@@ -1959,7 +2144,7 @@ class AuthService {
   }
 
   /// 登录/进首页时确保 WS 已连上；失败则指数退避重试。
-  Future<void> ensureRealtimeConnected({int maxAttempts = 4}) async {
+  Future<void> ensureRealtimeConnected({int maxAttempts = 8}) async {
     if (ws.isConnected) return;
     for (var attempt = 0; attempt < maxAttempts; attempt++) {
       await reconnectRealtime();
@@ -2007,6 +2192,11 @@ class AuthService {
           existing.username != m.username ||
           existing.avatarUrl != m.avatarUrl ||
           existing.identityPublicKey != m.identityPublicKey) {
+        if (existing != null &&
+            existing.identityPublicKey != m.identityPublicKey &&
+            isValidIdentityPublicKey(m.identityPublicKey)) {
+          unawaited(_invalidateDmPeerSession(m.userId));
+        }
         dir[m.userId] = m;
         changed = true;
       }
@@ -2087,10 +2277,18 @@ class AuthService {
     return knownGroupMember(conversation, userId)?.avatarUrl;
   }
 
+  Future<void> _invalidateDmPeerSession(String peerUserId) async {
+    try {
+      final dm = _signalDm ?? await _ensureSignalDm();
+      await dm.invalidatePeer(peerUserId);
+    } catch (_) {}
+  }
+
   Future<void> _connectRealtime() async {
     final token = await ensureValidAccessToken();
     if (token == null || token.isEmpty) return;
     await ws.connect(token);
+    startRealtimeNetworkWatch();
     groupKeys.attachWsHandlers();
     try {
       final items = await _listActiveConversations();
@@ -2102,8 +2300,61 @@ class AuthService {
   }
 
   Future<void> _disconnectRealtime() async {
+    stopRealtimeNetworkWatch();
     groupKeys.detachWsHandlers();
     await ws.disconnect();
+  }
+
+  /// 登录后监听系统网络变化，离线→在线时自动重连 WS。
+  void startRealtimeNetworkWatch() {
+    if (_networkWatchActive) return;
+    _networkWatchActive = true;
+    unawaited(_checkInitialConnectivity());
+    _connectivitySub?.cancel();
+    _connectivitySub =
+        Connectivity().onConnectivityChanged.listen(_onConnectivityChanged);
+  }
+
+  void stopRealtimeNetworkWatch() {
+    _networkWatchActive = false;
+    _connectivitySub?.cancel();
+    _connectivitySub = null;
+    _connectivityDebounce?.cancel();
+    _connectivityDebounce = null;
+  }
+
+  Future<void> _checkInitialConnectivity() async {
+    try {
+      final results = await Connectivity().checkConnectivity();
+      _networkOnline =
+          results.any((r) => r != ConnectivityResult.none);
+    } catch (_) {
+      _networkOnline = true;
+    }
+  }
+
+  void _onConnectivityChanged(List<ConnectivityResult> results) {
+    final online = results.any((r) => r != ConnectivityResult.none);
+    if (online && !_networkOnline) {
+      _networkOnline = true;
+      _connectivityDebounce?.cancel();
+      _connectivityDebounce = Timer(const Duration(milliseconds: 800), () {
+        unawaited(_onNetworkRestored());
+      });
+    } else if (!online) {
+      _networkOnline = false;
+      _connectivityDebounce?.cancel();
+    }
+  }
+
+  Future<void> _onNetworkRestored() async {
+    if (currentUser == null) return;
+    await wakeRealtimeFromBackground();
+    ws.nudgeReconnect();
+    await ensureRealtimeConnected(maxAttempts: 12);
+    if (!_realtimeRestoredController.isClosed) {
+      _realtimeRestoredController.add(null);
+    }
   }
 
   /// 登录后上传 Signal 预密钥并同步身份公钥。

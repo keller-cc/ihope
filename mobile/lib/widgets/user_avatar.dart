@@ -20,19 +20,28 @@ class UserAvatar extends StatelessWidget {
   Widget build(BuildContext context) {
     final resolved = resolveAvatarUrl(imageUrl);
     final initial = name.isNotEmpty ? name[0].toUpperCase() : '?';
+    final size = radius * 2;
 
-    final avatar = CircleAvatar(
-      key: ValueKey(resolved ?? name),
-      radius: radius,
-      backgroundImage:
-          resolved != null ? NetworkImage(resolved) : null,
-      child: resolved == null
-          ? Text(
-              initial,
-              style: TextStyle(fontSize: radius * 0.85),
-            )
-          : null,
-    );
+    Widget avatar;
+    if (resolved != null) {
+      avatar = ClipOval(
+        child: Image.network(
+          resolved,
+          key: ValueKey(resolved),
+          width: size,
+          height: size,
+          fit: BoxFit.cover,
+          gaplessPlayback: true,
+          errorBuilder: (_, _, _) => _initialAvatar(initial, size),
+          loadingBuilder: (context, child, progress) {
+            if (progress == null) return child;
+            return _initialAvatar(initial, size);
+          },
+        ),
+      );
+    } else {
+      avatar = _initialAvatar(initial, size);
+    }
 
     final count = badgeCount ?? 0;
     if (count <= 0) return avatar;
@@ -72,6 +81,16 @@ class UserAvatar extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+
+  Widget _initialAvatar(String initial, double size) {
+    return CircleAvatar(
+      radius: radius,
+      child: Text(
+        initial,
+        style: TextStyle(fontSize: radius * 0.85),
+      ),
     );
   }
 }

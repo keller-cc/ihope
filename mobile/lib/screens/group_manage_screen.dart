@@ -1,17 +1,17 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:image_picker/image_picker.dart';
 
 import '../models/conversation.dart';
 import '../models/message.dart';
 import '../models/user.dart';
 import '../services/auth_service.dart';
 import '../utils/announcement_read.dart';
+import '../utils/avatar_picker.dart';
+import '../widgets/app_page_route.dart';
+import '../widgets/conversation_common_settings.dart';
 import '../widgets/member_title_badge.dart';
 import '../widgets/user_avatar.dart';
-import 'chat_history/chat_history_hub_screen.dart';
-import 'chat_history/chat_history_jump.dart';
 import 'announcement_edit_screen.dart';
 import 'group_announcements_screen.dart';
 
@@ -33,6 +33,7 @@ class GroupManageScreen extends StatefulWidget {
 class _GroupManageScreenState extends State<GroupManageScreen> {
   late ConversationItem _conversation;
   bool _busy = false;
+  bool _uploadingAvatar = false;
   bool _pinned = false;
   bool _announcementUnread = false;
   ChatMessage? _latestAnnouncement;
@@ -81,20 +82,6 @@ class _GroupManageScreenState extends State<GroupManageScreen> {
     );
   }
 
-  Future<void> _openSearch() async {
-    final jump = await Navigator.of(context).push<ChatHistoryJump>(
-      MaterialPageRoute(
-        builder: (_) => ChatHistoryHubScreen(
-          auth: widget.auth,
-          conversation: _conversation,
-        ),
-      ),
-    );
-    if (jump != null && mounted) {
-      Navigator.of(context).pop(jump);
-    }
-  }
-
   Future<void> _reload() async {
     final fresh = await widget.auth.refreshConversation(_conversation);
     if (mounted) setState(() => _conversation = fresh);
@@ -105,9 +92,110 @@ class _GroupManageScreenState extends State<GroupManageScreen> {
     return _conversation.isOwner(me.id);
   }
 
+  bool get _canManage {
+    final me = widget.auth.currentUser!;
+    return _conversation.canManageGroup(me.id);
+  }
+
+  bool _canRemoveMember(ConversationMember member) {
+    final me = widget.auth.currentUser!;
+    if (member.userId == me.id) return true;
+    if (_conversation.isOwner(member.userId)) return false;
+    if (_isOwner) return true;
+    if (_canManage && !member.isAdmin) return true;
+    return false;
+  }
+
+  Future<void> _toggleAdmin(ConversationMember member) async {
+    final me = widget.auth.currentUser!;
+    if (!_isOwner ||
+        member.userId == me.id ||
+        _conversation.isOwner(member.userId)) {
+      return;
+    }
+    final makeAdmin = !member.isAdmin;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(makeAdmin ? '设为管理员' : '取消管理员'),
+        content: Text(makeAdmin
+            ? '确定将 ${member.username} 设为管理员？管理员可邀请成员、移除普通成员、发布群公告。'
+            : '确定取消 ${member.username} 的管理员身份？'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('确定'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+
+    setState(() => _busy = true);
+    try {
+      final updated = await widget.auth.setGroupMemberRole(
+        _conversation,
+        member.userId,
+        makeAdmin ? 'admin' : 'member',
+      );
+      if (!mounted) return;
+      setState(() => _conversation = updated);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e.toString())),
+      );
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  void _showMemberMenu(ConversationMember member) {
+    final me = widget.auth.currentUser!;
+    if (!_isOwner ||
+        member.userId == me.id ||
+        _conversation.isOwner(member.userId)) {
+      return;
+    }
+    showModalBottomSheet<void>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: Icon(
+                member.isAdmin
+                    ? Icons.admin_panel_settings_outlined
+                    : Icons.admin_panel_settings,
+              ),
+              title: Text(member.isAdmin ? '取消管理员' : '设为管理员'),
+              onTap: () {
+                Navigator.pop(ctx);
+                unawaited(_toggleAdmin(member));
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.person_remove_outlined),
+              title: const Text('移除成员'),
+              onTap: () {
+                Navigator.pop(ctx);
+                unawaited(_removeMember(member));
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Future<void> _openAnnouncements() async {
     await Navigator.of(context).push<void>(
-      MaterialPageRoute(
+      appPageRoute(
         builder: (_) => GroupAnnouncementsScreen(
           auth: widget.auth,
           conversation: _conversation,
@@ -120,7 +208,7 @@ class _GroupManageScreenState extends State<GroupManageScreen> {
 
   Future<void> _publishAnnouncement() async {
     final sent = await Navigator.of(context).push<ChatMessage>(
-      MaterialPageRoute(
+      appPageRoute(
         builder: (_) => AnnouncementEditScreen(
           auth: widget.auth,
           conversation: _conversation,
@@ -160,22 +248,15 @@ class _GroupManageScreenState extends State<GroupManageScreen> {
   }
 
   Future<void> _pickGroupAvatar() async {
-    final picker = ImagePicker();
-    final file = await picker.pickImage(
-      source: ImageSource.gallery,
-      maxWidth: 1024,
-      maxHeight: 1024,
-      imageQuality: 85,
-    );
-    if (file == null) return;
+    final cropped = await pickAndCropAvatar(context);
+    if (cropped == null || !mounted) return;
 
-    setState(() => _busy = true);
+    setState(() => _uploadingAvatar = true);
     try {
-      final bytes = await file.readAsBytes();
       final updated = await widget.auth.uploadGroupAvatar(
         _conversation,
-        bytes,
-        filename: file.name.isNotEmpty ? file.name : 'avatar.jpg',
+        cropped,
+        filename: 'avatar.jpg',
       );
       if (!mounted) return;
       setState(() => _conversation = updated);
@@ -188,10 +269,9 @@ class _GroupManageScreenState extends State<GroupManageScreen> {
         SnackBar(content: Text(e.toString())),
       );
     } finally {
-      if (mounted) setState(() => _busy = false);
+      if (mounted) setState(() => _uploadingAvatar = false);
     }
   }
-
   Future<void> _inviteMembers() async {
     final me = widget.auth.currentUser!.id;
     final existing = _conversation.members.map((m) => m.userId).toSet();
@@ -238,7 +318,7 @@ class _GroupManageScreenState extends State<GroupManageScreen> {
   Future<void> _removeMember(ConversationMember member) async {
     final me = widget.auth.currentUser!;
     final isSelf = member.userId == me.id;
-    if (!_isOwner && !isSelf) return;
+    if (!_canRemoveMember(member)) return;
 
     final ok = await showDialog<bool>(
       context: context,
@@ -343,7 +423,9 @@ class _GroupManageScreenState extends State<GroupManageScreen> {
             child: Column(
               children: [
                 GestureDetector(
-                  onTap: _isOwner && !_busy ? _pickGroupAvatar : null,
+                  onTap: _isOwner && !_busy && !_uploadingAvatar
+                      ? _pickGroupAvatar
+                      : null,
                   child: Stack(
                     alignment: Alignment.bottomRight,
                     children: [
@@ -352,9 +434,14 @@ class _GroupManageScreenState extends State<GroupManageScreen> {
                         imageUrl: _conversation.avatarUrl,
                         radius: 40,
                       ),
-                      if (_isOwner)
-                        CircleAvatar(
-                          radius: 14,
+                      if (_uploadingAvatar)
+                        const SizedBox(
+                          width: 80,
+                          height: 80,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                      if (_isOwner && !_uploadingAvatar)
+                        CircleAvatar(                          radius: 14,
                           child: Icon(
                             Icons.camera_alt,
                             size: 16,
@@ -379,22 +466,14 @@ class _GroupManageScreenState extends State<GroupManageScreen> {
             ),
           ),
           const Divider(height: 1),
-          SwitchListTile(
-            secondary: Icon(
-              _pinned ? Icons.push_pin : Icons.push_pin_outlined,
-            ),
-            title: const Text('置顶会话'),
-            subtitle: const Text('置顶后在首页列表靠前显示'),
-            value: _pinned,
-            onChanged: _busy ? null : (v) => unawaited(_togglePin(v)),
+          ConversationCommonSettings(
+            auth: widget.auth,
+            conversation: _conversation,
+            pinned: _pinned,
+            enabled: !_busy,
+            onPinChanged: (v) => unawaited(_togglePin(v)),
           ),
-          ListTile(
-            leading: const Icon(Icons.search),
-            title: const Text('查找聊天记录'),
-            subtitle: const Text('按日期、成员、图片与文件查找'),
-            onTap: _busy ? null : _openSearch,
-          ),
-          if (_isOwner)
+          if (_canManage)
             ListTile(
               leading: Badge(
                 isLabelVisible: _announcementUnread,
@@ -411,14 +490,12 @@ class _GroupManageScreenState extends State<GroupManageScreen> {
                         : '查看全部历史公告或发布新公告',
               ),
               onTap: _busy ? null : () => unawaited(_openAnnouncements()),
-              trailing: _isOwner
-                  ? TextButton(
-                      onPressed: _busy ? null : () => unawaited(_publishAnnouncement()),
-                      child: const Text('发布'),
-                    )
-                  : null,
+              trailing: TextButton(
+                onPressed: _busy ? null : () => unawaited(_publishAnnouncement()),
+                child: const Text('发布'),
+              ),
             ),
-          if (!_isOwner)
+          if (!_canManage)
             ListTile(
               leading: Badge(
                 isLabelVisible: _announcementUnread,
@@ -441,8 +518,8 @@ class _GroupManageScreenState extends State<GroupManageScreen> {
           const Divider(height: 1),
           ..._conversation.members.map((m) {
             final title = _conversation.memberTitle(m.userId);
-            final canRemove = _isOwner && m.userId != me.id;
-            final canLeave = !_isOwner && m.userId == me.id;
+            final canRemove = _canRemoveMember(m) && m.userId != me.id;
+            final canLeave = m.userId == me.id && !_isOwner;
             return ListTile(
               leading: UserAvatar(
                 name: m.username,
@@ -460,6 +537,11 @@ class _GroupManageScreenState extends State<GroupManageScreen> {
                 ],
               ),
               subtitle: m.userId == me.id ? const Text('我') : null,
+              onLongPress: _isOwner &&
+                      m.userId != me.id &&
+                      !_conversation.isOwner(m.userId)
+                  ? () => _showMemberMenu(m)
+                  : null,
               trailing: canRemove || canLeave
                   ? IconButton(
                       icon: Icon(canLeave ? Icons.logout : Icons.person_remove),
@@ -470,7 +552,7 @@ class _GroupManageScreenState extends State<GroupManageScreen> {
             );
           }),
           const SizedBox(height: 16),
-          if (_isOwner)
+          if (_canManage)
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
               child: FilledButton.icon(

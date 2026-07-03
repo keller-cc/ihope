@@ -28,6 +28,9 @@ migrate_working_dir/
 .pub/
 /build/
 
+# 本地生产编译配置（从 prod.json.example 复制）
+config/prod.json
+
 # Symbolication related
 app.*.symbols
 

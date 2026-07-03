@@ -106,6 +106,7 @@ func (s *Server) Router() http.Handler {
 		mux.Handle("POST /api/conversations/{id}/members", authRequired(http.HandlerFunc(s.conversations.AddMembers)))
 		mux.Handle("POST /api/conversations/{id}/rotate-keys", authRequired(http.HandlerFunc(s.conversations.RotateKeys)))
 		mux.Handle("DELETE /api/conversations/{id}/members/{userId}", authRequired(http.HandlerFunc(s.conversations.RemoveMember)))
+		mux.Handle("PATCH /api/conversations/{id}/members/{userId}/role", authRequired(http.HandlerFunc(s.conversations.SetMemberRole)))
 		mux.Handle("DELETE /api/conversations/{id}", authRequired(http.HandlerFunc(s.conversations.Delete)))
 		mux.Handle("PATCH /api/conversations/{id}", authRequired(http.HandlerFunc(s.conversations.Patch)))
 		mux.Handle("POST /api/conversations/{id}/avatar", authRequired(http.HandlerFunc(s.conversations.UploadAvatar)))

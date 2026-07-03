@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/ihope/ihope/internal/avatarutil"
 	"github.com/ihope/ihope/internal/config"
@@ -163,7 +164,7 @@ func (h *Handler) UploadAvatar(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-  avatarURL := "/api/avatars/" + filename
+	avatarURL := fmt.Sprintf("/api/avatars/%s?v=%d", filename, time.Now().UnixMilli())
 	u, err := h.repo.UpdateAvatarURL(r.Context(), userID, avatarURL)
 	if err != nil {
 		_ = os.Remove(destPath)
@@ -189,7 +190,11 @@ func (h *Handler) ServeAvatar(w http.ResponseWriter, r *http.Request) {
 // List GET /api/users
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	userID := middleware.UserIDFromContext(r.Context())
+	query := strings.TrimSpace(r.URL.Query().Get("q"))
 	limit := 50
+	if query != "" {
+		limit = 100
+	}
 	if v := r.URL.Query().Get("limit"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			limit = n
@@ -199,7 +204,7 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 		limit = 100
 	}
 
-	users, err := h.repo.ListPublic(r.Context(), userID, r.URL.Query().Get("q"), limit)
+	users, err := h.repo.ListPublic(r.Context(), userID, query, limit)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "could not list users")
 		return

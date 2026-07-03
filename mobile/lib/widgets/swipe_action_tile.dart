@@ -101,11 +101,9 @@ class _SwipeActionTileState extends State<SwipeActionTile> {
               children: widget.actions.map(_buildActionButton).toList(),
             ),
           ),
-          GestureDetector(
-            onHorizontalDragUpdate: _onHorizontalDragUpdate,
-            onHorizontalDragEnd: _onHorizontalDragEnd,
-            onTap: _isOpen ? _close : null,
-            behavior: HitTestBehavior.opaque,
+          // 手势层必须在 Transform 内部，否则平移只改视觉位置，整行仍拦截右侧按钮点击。
+          Transform.translate(
+            offset: Offset(_offset, 0),
             child: RawGestureDetector(
               gestures: {
                 if (widget.onLongPress != null)
@@ -118,8 +116,11 @@ class _SwipeActionTileState extends State<SwipeActionTile> {
                     },
                   ),
               },
-              child: Transform.translate(
-                offset: Offset(_offset, 0),
+              child: GestureDetector(
+                onHorizontalDragUpdate: _onHorizontalDragUpdate,
+                onHorizontalDragEnd: _onHorizontalDragEnd,
+                onTap: _isOpen ? _close : null,
+                behavior: HitTestBehavior.opaque,
                 child: Material(
                   color: surface,
                   child: widget.child,

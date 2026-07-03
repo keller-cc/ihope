@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../services/auth_service.dart';
 import '../widgets/auth_form.dart';
+import '../widgets/app_page_route.dart';
 import 'reset_password_screen.dart';
 
 class ForgotPasswordScreen extends StatefulWidget {
@@ -57,7 +58,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
 
   void _goResetWithToken() {
     Navigator.of(context).push(
-      MaterialPageRoute(
+      appPageRoute(
         builder: (_) => ResetPasswordScreen(
           auth: widget.auth,
           initialToken: _devToken ?? '',
@@ -110,7 +111,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                 ? null
                 : () {
                     Navigator.of(context).push(
-                      MaterialPageRoute(
+                      appPageRoute(
                         builder: (_) => ResetPasswordScreen(auth: widget.auth),
                       ),
                     );

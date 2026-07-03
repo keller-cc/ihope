@@ -100,6 +100,48 @@ void main() {
     expect(await bob.decrypt('alice', wire2), 'after reset');
   });
 
+  test('encrypt decrypt after peer identity rotation on server', () async {
+    final kdsA = _FakeKds();
+    final kdsB = _FakeKds();
+    final storeA = <String, String>{};
+    final storeB = <String, String>{};
+
+    final alice = SignalDmService(
+      kds: kdsA,
+      myUserId: 'alice',
+      deviceId: 'dev-a',
+      readStore: () async => Map.from(storeA),
+      writeStore: (d) async => storeA.addAll(d),
+    );
+    final bob = SignalDmService(
+      kds: kdsB,
+      myUserId: 'bob',
+      deviceId: 'dev-b',
+      readStore: () async => Map.from(storeB),
+      writeStore: (d) async => storeB.addAll(d),
+    );
+
+    kdsA.bundles['bob'] = await bob.exportPublicBundle();
+    kdsB.bundles['alice'] = await alice.exportPublicBundle();
+
+    final first = await alice.encrypt('bob', 'before rotate');
+    expect(await bob.decrypt('alice', first), 'before rotate');
+
+    // Bob 换机：服务端 bundle 身份变更，Alice 本地仍保留旧会话。
+    final bobRotated = SignalDmService(
+      kds: kdsB,
+      myUserId: 'bob',
+      deviceId: 'dev-b2',
+      readStore: () async => {},
+      writeStore: (d) async => storeB.addAll(d),
+    );
+    kdsA.bundles['bob'] = await bobRotated.exportPublicBundle();
+    kdsB.bundles['alice'] = await alice.exportPublicBundle();
+
+    final second = await alice.encrypt('bob', 'after rotate');
+    expect(await bobRotated.decrypt('alice', second), 'after rotate');
+  });
+
   test('signal identity key is 33 bytes', () async {
     final dm = SignalDmService(
       kds: _FakeKds(),

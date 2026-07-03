@@ -49,7 +49,7 @@ Future<void> presentRemotePush(
   final me = session.currentUser;
   if (me == null || msg.senderId == me.id) return;
   if (msg.type == 'announcement' || msg.type == 'system') return;
-  if (session.isConversationOpen(msg.conversationId)) return;
+  if (session.isActivelyViewingConversation(msg.conversationId)) return;
 
   try {
     await session.ensureCryptoReady();
@@ -67,13 +67,16 @@ Future<void> presentRemotePush(
       : notificationTypeFallback(msg.type);
 
   await session.noteIncomingMessage(msg);
+  final convCount = local.bumpConversationCount(msg.conversationId);
   final badge = session.totalUnreadCount();
 
   await local.showMessage(
     conversationId: msg.conversationId,
     title: title,
     body: body,
-    badgeNumber: badge > 0 ? badge : 1,
+    conversationMessageCount: convCount,
+    totalBadge: badge > 0 ? badge : convCount,
+    isGroup: conv?.type == 'group',
   );
 }
 
@@ -85,8 +88,12 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   } catch (_) {}
   final local = LocalNotificationService();
   await local.initialize();
+  final session = AuthService();
+  session.setAppInForeground(false);
+  if (!await session.restoreLocalSession()) return;
   await presentRemotePush(
     Map<String, dynamic>.from(message.data),
     local: local,
+    auth: session,
   );
 }

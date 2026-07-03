@@ -115,6 +115,10 @@ func (h *Handler) AddMembers(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusForbidden, "forbidden", "only group owner can add members")
 		return
 	}
+	if errors.Is(err, ErrForbidden) {
+		httpx.WriteError(w, http.StatusForbidden, "forbidden", "not allowed to add members")
+		return
+	}
 	if errors.Is(err, ErrNotGroup) {
 		httpx.WriteError(w, http.StatusBadRequest, "validation_error", "not a group conversation")
 		return
@@ -165,6 +169,10 @@ func (h *Handler) RemoveMember(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusForbidden, "forbidden", "not allowed to remove member")
 		return
 	}
+	if errors.Is(err, ErrForbidden) {
+		httpx.WriteError(w, http.StatusForbidden, "forbidden", "not allowed to remove member")
+		return
+	}
 	if errors.Is(err, ErrNotGroup) {
 		httpx.WriteError(w, http.StatusBadRequest, "validation_error", "not a group conversation")
 		return
@@ -190,6 +198,54 @@ func (h *Handler) RemoveMember(w http.ResponseWriter, r *http.Request) {
 		resp["system_message"] = sysMsg
 	}
 	httpx.WriteJSON(w, http.StatusOK, resp)
+}
+
+type memberRoleRequest struct {
+	Role string `json:"role"`
+}
+
+// SetMemberRole PATCH /api/conversations/{id}/members/{userId}/role — 群主设置/取消管理员
+func (h *Handler) SetMemberRole(w http.ResponseWriter, r *http.Request) {
+	conversationID := r.PathValue("id")
+	targetID := r.PathValue("userId")
+	userID := middleware.UserIDFromContext(r.Context())
+
+	var req memberRoleRequest
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_json", "invalid request body")
+		return
+	}
+
+	item, err := h.svc.SetMemberRole(r.Context(), userID, conversationID, targetID, req.Role)
+	if errors.Is(err, ErrNotMember) {
+		httpx.WriteError(w, http.StatusNotFound, "not_member", "user not in group")
+		return
+	}
+	if errors.Is(err, ErrNotOwner) {
+		httpx.WriteError(w, http.StatusForbidden, "forbidden", "only group owner can set admin")
+		return
+	}
+	if errors.Is(err, ErrForbidden) {
+		httpx.WriteError(w, http.StatusForbidden, "forbidden", "cannot change this member role")
+		return
+	}
+	if errors.Is(err, ErrInvalidInput) {
+		httpx.WriteError(w, http.StatusBadRequest, "validation_error", "role must be admin or member")
+		return
+	}
+	if errors.Is(err, ErrNotGroup) {
+		httpx.WriteError(w, http.StatusBadRequest, "validation_error", "not a group conversation")
+		return
+	}
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "could not set member role")
+		return
+	}
+
+	h.onMemberRoleChanged(r.Context(), userID, targetID, item, req.Role)
+	h.notifyConversationUpdated(r.Context(), conversationID)
+
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"conversation": item})
 }
 
 // RotateKeys POST /api/conversations/{id}/rotate-keys — Megolm 定期 GMK 轮换（epoch+1）
@@ -486,7 +542,7 @@ func (h *Handler) UploadAvatar(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	avatarURL := fmt.Sprintf("/api/avatars/%s?v=%d", filename, time.Now().Unix())
+	avatarURL := fmt.Sprintf("/api/avatars/%s?v=%d", filename, time.Now().UnixMilli())
 	item, err := h.svc.UpdateGroupAvatarURL(r.Context(), userID, conversationID, avatarURL)
 	if errors.Is(err, ErrNotMember) {
 		httpx.WriteError(w, http.StatusForbidden, "forbidden", "not a conversation member")

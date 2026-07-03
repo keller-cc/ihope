@@ -6,7 +6,21 @@ E2EE 单聊 / 群聊、媒体消息、WebSocket 实时推送。
 
 依赖选型原则：通用能力优先用成熟库（dio、intl、uuid 等），业务与 E2EE 编排自研。见 [开发指南](../docs/开发指南.md) 与 `.cursor/rules/prefer-libraries.mdc`。
 
-## 初始化
+## 构建（Android）
+
+与 **Flutter 3.44** 模板对齐：**Gradle 9.1**、**AGP 9.0.1**、**Kotlin 2.3.20**。极光已暂移除，可正常用 Gradle 9。
+
+```powershell
+cd D:\IHope\mobile
+flutter clean
+flutter pub get
+flutter run -d <设备ID> --flavor domestic
+# 或 global：flutter run --flavor global --dart-define-from-file=config/global.json
+```
+
+若出现 AGP 9 / newDsl 提示，可先加：`--android-skip-build-dependency-validation`（或按 Flutter 文档开启 `android.newDsl`）。
+
+---
 
 ```powershell
 cd D:\IHope\mobile
@@ -31,25 +45,70 @@ flutter pub get
 
 源图 `assets/icon/app_icon.png`（1024×1024 满幅方形，摩西 · 燃烧荆棘）。系统会自动圆角裁剪；改图后执行 `dart run flutter_launcher_icons`。
 
+## 运行（Android）
+
+**必须先指定 flavor**（`domestic` 国内 / `global` 海外）。JSON 配置**可选**（仅影响离线推送通道）。
+
+```powershell
+cd D:\IHope\mobile
+flutter pub get
+
+# 日常开发（模拟器，默认连 http://10.0.2.2:8080）
+flutter run --flavor domestic -d emulator-5556
+
+# 可选：启用极光/FCM 推送通道
+flutter run --flavor domestic --dart-define-from-file=config/domestic.json
+```
+
+后端需先启动（见上文或 `docs/Windows开发环境.md`）。构建失败若提示 `jcenter` / Gradle 9，请确认 `android/gradle/wrapper/gradle-wrapper.properties` 为 **Gradle 8.x**（非 9.x）。
+
 ## 后台系统通知（国内 / 海外）
 
 类似 QQ 的分层：
 
 1. **前台聊天**：WebSocket，当前会话不弹横幅  
-2. **后台进程存活**：前台服务保 WebSocket + **本地系统通知**（无需极光/FCM）  
-3. **App 被系统杀掉**：极光（国内）/ FCM（海外）离线兜底  
+2. **后台进程存活**：前台服务保 WebSocket + **本地系统通知**（无需第三方）  
+3. **App 被系统杀掉**：**FCM**（海外 `global`）；国内离线兜底 **暂不含极光**（见下）
 
-用户在 **个人资料 → 通知** 开启并授权后，**零第三方配置** 即可测第 2 层。第 3 层见 **[docs/推送配置指南.md](../docs/推送配置指南.md)**。
+用户在 **个人资料 → 通知** 开启并授权后，**零第三方配置** 即可测第 2 层。
 
 ```powershell
-# 国内 Android（离线兜底：极光）
-flutter run --flavor domestic --dart-define-from-file=config/domestic.json
+# 国内 Android（包名 .cn；离线极光暂不可用）
+flutter run --flavor domestic
 
 # 海外 Android（离线兜底：FCM，需 google-services.json）
 flutter run --flavor global --dart-define-from-file=config/global.json
 ```
 
-后端不配 `JPUSH_*` / `FCM_SERVER_KEY` 时：在线设备仍可通过 WebSocket + 本地通知收横幅；仅 **被杀进程** 后无离线兜底。
+### 极光推送（暂移除）
+
+`jpush_flutter` 3.4.6 仍含 `jcenter()`，与 **Gradle 8.14+** 不兼容，已从依赖移除。国内内测用 **WebSocket + 本地通知**；待官方修复后见 [docs/推送配置指南.md](../docs/推送配置指南.md)。
+
+后端不配 `FCM_SERVER_KEY` 时：在线设备仍可通过 WebSocket + 本地通知收横幅。
+
+## 生产 release APK
+
+1. 复制配置并填写生产 API 地址：
+
+```powershell
+cd D:\IHope\mobile
+copy config\prod.json.example config\prod.json
+# 编辑 prod.json：API_BASE 设为 https://你的域名
+```
+
+2. 打 release 包（国内 / 海外 flavor）：
+
+```powershell
+.\scripts\build-release.ps1                    # domestic + global
+.\scripts\build-release.ps1 -Flavor domestic   # 仅国内
+.\scripts\build-release.ps1 -ApiBase "https://im.example.com"  # 覆盖 prod.json
+```
+
+输出：`build\app\outputs\flutter-apk\app-<flavor>-release.apk`。
+
+**Android 网络安全：** release 且 `API_BASE` 为 `https://` 时禁止明文 HTTP；debug 始终允许；release 若 `--dart-define=API_BASE=http://...` 则允许 HTTP（局域网联调包）。
+
+上传到服务器：见 [deploy/README.md](../deploy/README.md)「发布 APK」。
 
 ## 双模拟器联调
 

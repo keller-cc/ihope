@@ -3,6 +3,8 @@ import 'dart:async';
 import '../../models/conversation.dart';
 import '../../models/message.dart';
 import '../../services/auth_service.dart';
+import '../../utils/media_local_cache.dart';
+import '../../utils/media_payload.dart';
 
 /// 会话消息加载、合并、解密（私聊/群聊共用）。
 class ChatThreadLoader {
@@ -13,6 +15,19 @@ class ChatThreadLoader {
 
   final AuthService auth;
   final ConversationItem conversation;
+
+  static bool _shouldPreferCachedPlaintext(String type, String pt) {
+    if (type == 'text' ||
+        type == 'system' ||
+        type == 'announcement') {
+      return true;
+    }
+    if (MediaLocalCache.isLocalRef(pt)) return true;
+    if (MediaPayload.tryParse(pt) != null) return true;
+    if (AttachmentPayload.tryParse(pt) != null) return true;
+    if (MediaLocalCache.isAttachmentRef(pt)) return true;
+    return false;
+  }
 
   bool get isGroup => conversation.type == 'group';
 
@@ -27,7 +42,11 @@ class ChatThreadLoader {
         byId[cached.id] = cached;
       } else {
         final pt = cached.plaintext;
-        if (pt != null && pt.isNotEmpty) {
+        if (pt != null &&
+            pt.isNotEmpty &&
+            !ChatMessage.isDecryptPlaceholder(pt) &&
+            !ChatMessage.isDecryptFailure(pt) &&
+            _shouldPreferCachedPlaintext(remote.type, pt)) {
           byId[cached.id] = remote.copyWith(plaintext: pt);
         }
       }

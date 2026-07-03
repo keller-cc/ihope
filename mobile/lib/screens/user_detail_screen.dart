@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../crypto/identity.dart';
 import '../models/conversation.dart';
 import '../services/auth_service.dart';
+import '../widgets/app_page_route.dart';
 import '../widgets/member_title_badge.dart';
 import '../widgets/user_avatar.dart';
 import 'chat_screen.dart';
@@ -38,7 +39,7 @@ class UserDetailScreen extends StatelessWidget {
       final conv = await auth.conversations.createPrivateChat(userId);
       if (!context.mounted) return;
       await Navigator.of(context).pushReplacement(
-        MaterialPageRoute(
+        appPageRoute(
           builder: (_) => ChatScreen(auth: auth, conversation: conv),
         ),
       );
@@ -145,7 +146,7 @@ void openUserDetailFromMember(
   ConversationItem? groupContext,
 }) {
   Navigator.of(context).push(
-    MaterialPageRoute(
+    appPageRoute(
       builder: (_) => UserDetailScreen(
         auth: auth,
         userId: member.userId,

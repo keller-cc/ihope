@@ -37,6 +37,10 @@ func DecodeJSON(r *http.Request, dst any) error {
 }
 
 func ClientIP(r *http.Request) string {
+	// Cloudflare 橙云：Nginx real_ip 还原后转发；源站应仅允许 CF IP 直连
+	if cf := r.Header.Get("CF-Connecting-IP"); cf != "" {
+		return strings.TrimSpace(cf)
+	}
 	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
 		return strings.TrimSpace(strings.Split(xff, ",")[0])
 	}

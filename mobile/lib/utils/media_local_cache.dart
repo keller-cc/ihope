@@ -82,15 +82,129 @@ class MediaLocalCache {
         'size': att.size,
         'file_key_b64': att.fileKeyB64,
         if (att.thumbBytes != null) 'thumb_b64': base64Encode(att.thumbBytes!),
+        if (att.previewBytes != null)
+          'preview_b64': base64Encode(att.previewBytes!),
       });
     }
     return null;
   }
 
+  static int? expectedAttachmentBytes(String? plaintext) {
+    if (plaintext == null || plaintext.isEmpty) return null;
+    final att = AttachmentPayload.tryParse(plaintext);
+    if (att != null) return att.size;
+    if (isLocalRef(plaintext)) {
+      try {
+        final map = jsonDecode(plaintext) as Map<String, dynamic>;
+        if (map['file_key_b64'] is String) {
+          final size = map['size'];
+          if (size is int) return size;
+          if (size is num) return size.round();
+        }
+      } catch (_) {}
+    }
+    return null;
+  }
+
+  static bool isRemoteImage(String? plaintext, String? fileId) {
+    if (fileId != null && fileId.isNotEmpty) return true;
+    final att = AttachmentPayload.tryParse(plaintext);
+    if (att != null && att.kind == 'image') return true;
+    if (isLocalRef(plaintext)) {
+      try {
+        final map = jsonDecode(plaintext!) as Map<String, dynamic>;
+        return map['media'] == 'image' && map['file_key_b64'] is String;
+      } catch (_) {}
+    }
+    return false;
+  }
+
+  /// 远程图片附件是否尚未拉取原图（仅有缩略图或本地文件体积不足）。
+  static Future<bool> needsFullImageDownload({
+    required String messageId,
+    required String? plaintext,
+    required String? fileId,
+  }) async {
+    if (!isRemoteImage(plaintext, fileId)) return false;
+    if (!await hasPayloadFile(messageId)) return true;
+    final expected = expectedAttachmentBytes(plaintext);
+    if (expected == null || expected <= 0) return false;
+    try {
+      final len = await (await _bytesFile(messageId)).length();
+      return len < expected * 0.9;
+    } catch (_) {
+      return true;
+    }
+  }
+
+  /// 读取已落盘的原图；不含缩略图回退。
+  static Future<MediaPayload?> loadFullImage(
+    String messageId,
+    String? plaintext,
+    String? fileId,
+  ) async {
+    if (isRemoteImage(plaintext, fileId)) {
+      if (!await hasPayloadFile(messageId)) return null;
+      final local = await load(messageId);
+      if (local == null) return null;
+      final expected = expectedAttachmentBytes(plaintext);
+      if (expected != null &&
+          expected > 0 &&
+          local.bytes.length < expected * 0.9) {
+        return null;
+      }
+      return local;
+    }
+    final local = await load(messageId);
+    if (local != null) return local;
+    return MediaPayload.tryParse(plaintext);
+  }
+
+  /// 将 local 消息 ID 的缓存迁移到服务端 ID（乐观发送 → 发送成功）。
+  static Future<void> migrateMessageId(String fromId, String toId) async {
+    if (fromId == toId) return;
+    final fromBytes = await _bytesFile(fromId);
+    if (!await fromBytes.exists()) return;
+    final toBytes = await _bytesFile(toId);
+    await fromBytes.copy(toBytes.path);
+    final fromMeta = await _metaFile(fromId);
+    if (await fromMeta.exists()) {
+      await fromMeta.copy((await _metaFile(toId)).path);
+      await fromMeta.delete();
+    }
+    await fromBytes.delete();
+  }
+
+  /// 原图/文件已落盘后，生成保留 file_key 的 local 引用。
+  static Future<String?> attachmentLocalRef(
+    String messageId,
+    String? existingPlaintext,
+  ) async {
+    if (!await hasPayloadFile(messageId)) return null;
+    final media = await load(messageId);
+    if (media == null) return null;
+    final att = AttachmentPayload.fromPlaintext(existingPlaintext);
+    return jsonEncode({
+      'media': media.kind,
+      'local': true,
+      'mime': media.mime,
+      'name': media.name,
+      if (att != null) ...{
+        'size': att.size,
+        'file_key_b64': att.fileKeyB64,
+        if (att.thumbBytes != null)
+          'thumb_b64': base64Encode(att.thumbBytes!),
+        if (att.previewBytes != null)
+          'preview_b64': base64Encode(att.previewBytes!),
+      },
+    });
+  }
+
   static Future<void> persistPayload(
     String messageId,
-    MediaPayload media,
-  ) async {
+    MediaPayload media, {
+    int? originalSize,
+  }) async {
     await (await _bytesFile(messageId)).writeAsBytes(media.bytes, flush: true);
     await (await _metaFile(messageId)).writeAsString(
       jsonEncode({
@@ -98,6 +212,8 @@ class MediaLocalCache {
         'mime': media.mime,
         'name': media.name,
         if (media.durationMs != null) 'duration_ms': media.durationMs,
+        if (originalSize != null) 'size': originalSize,
+        if (originalSize != null) 'full': true,
       }),
       flush: true,
     );
@@ -114,7 +230,7 @@ class MediaLocalCache {
         mime: map['mime'] as String? ?? 'application/octet-stream',
         name: map['name'] as String? ?? 'file',
         bytes: await bytesFile.readAsBytes(),
-        durationMs: map['duration_ms'] as int?,
+        durationMs: readDurationMs(map['duration_ms']),
       );
     } catch (_) {
       return null;
@@ -125,7 +241,7 @@ class MediaLocalCache {
     if (plaintext == null || plaintext.isEmpty) return null;
     try {
       final map = jsonDecode(plaintext) as Map<String, dynamic>;
-      return map['duration_ms'] as int?;
+      return readDurationMs(map['duration_ms']);
     } catch (_) {
       return null;
     }
@@ -176,26 +292,83 @@ class MediaLocalCache {
     return MediaPayload.tryParse(plaintext) != null;
   }
 
+  /// 聊天列表/气泡用预览图：优先消息内 preview，不拉取服务端原图。
+  static Future<MediaPayload?> resolvePreview(
+    String messageId,
+    String? plaintext,
+  ) async {
+    if (plaintext == null || plaintext.isEmpty) return null;
+
+    if (await hasPayloadFile(messageId)) {
+      final local = await load(messageId);
+      if (local != null && local.kind == 'image') return local;
+    }
+
+    final fromInline = _imageFromPlaintextMap(plaintext);
+    if (fromInline != null) return fromInline;
+
+    final att = AttachmentPayload.fromPlaintext(plaintext);
+    if (att != null && att.kind == 'image') {
+      if (att.previewBytes != null && att.previewBytes!.isNotEmpty) {
+        return MediaPayload(
+          kind: 'image',
+          mime: att.mime,
+          name: att.name,
+          bytes: att.previewBytes!,
+        );
+      }
+      if (att.thumbBytes != null && att.thumbBytes!.isNotEmpty) {
+        return MediaPayload(
+          kind: 'image',
+          mime: att.mime,
+          name: att.name,
+          bytes: att.thumbBytes!,
+        );
+      }
+    }
+    return null;
+  }
+
+  static MediaPayload? _imageFromPlaintextMap(String plaintext) {
+    final inline = MediaPayload.tryParse(plaintext);
+    if (inline != null && inline.kind == 'image') return inline;
+    if (!isLocalRef(plaintext)) return null;
+    try {
+      final map = jsonDecode(plaintext) as Map<String, dynamic>;
+      if (map['media'] != 'image') return null;
+      if (map['preview_b64'] is String) {
+        return MediaPayload(
+          kind: 'image',
+          mime: map['mime'] as String? ?? 'image/jpeg',
+          name: map['name'] as String? ?? 'image.jpg',
+          bytes: base64Decode(map['preview_b64'] as String),
+        );
+      }
+      if (map['thumb_b64'] is String) {
+        return MediaPayload(
+          kind: 'image',
+          mime: map['mime'] as String? ?? 'image/jpeg',
+          name: map['name'] as String? ?? 'image.jpg',
+          bytes: base64Decode(map['thumb_b64'] as String),
+        );
+      }
+    } catch (_) {}
+    return null;
+  }
+
   /// 从 plaintext 解析媒体：优先读应用内落盘；否则解析 inline b64（内存）。
   static Future<MediaPayload?> resolve(
     String messageId,
     String? plaintext,
   ) async {
-    if (plaintext == null || plaintext.isEmpty) return null;
+    if (plaintext == null || plaintext.isEmpty) {
+      return load(messageId);
+    }
     if (isLocalRef(plaintext)) {
       final local = await load(messageId);
       if (local != null) return local;
-      try {
-        final map = jsonDecode(plaintext) as Map<String, dynamic>;
-        if (map['media'] == 'image' && map['thumb_b64'] is String) {
-          return MediaPayload(
-            kind: 'image',
-            mime: map['mime'] as String? ?? 'image/jpeg',
-            name: map['name'] as String? ?? 'image.jpg',
-            bytes: base64Decode(map['thumb_b64'] as String),
-          );
-        }
-      } catch (_) {}
+      final preview = _imageFromPlaintextMap(plaintext);
+      if (preview != null) return preview;
     }
     final inline = MediaPayload.tryParse(plaintext);
     if (inline != null) return inline;
@@ -203,13 +376,23 @@ class MediaLocalCache {
     if (att != null) {
       final local = await load(messageId);
       if (local != null) return local;
-      if (att.kind == 'image' && att.thumbBytes != null) {
-        return MediaPayload(
-          kind: 'image',
-          mime: att.mime,
-          name: att.name,
-          bytes: att.thumbBytes!,
-        );
+      if (att.kind == 'image') {
+        if (att.previewBytes != null && att.previewBytes!.isNotEmpty) {
+          return MediaPayload(
+            kind: 'image',
+            mime: att.mime,
+            name: att.name,
+            bytes: att.previewBytes!,
+          );
+        }
+        if (att.thumbBytes != null && att.thumbBytes!.isNotEmpty) {
+          return MediaPayload(
+            kind: 'image',
+            mime: att.mime,
+            name: att.name,
+            bytes: att.thumbBytes!,
+          );
+        }
       }
       return null;
     }

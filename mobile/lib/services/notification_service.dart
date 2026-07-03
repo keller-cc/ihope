@@ -1,4 +1,5 @@
 import 'dart:async';
+
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
@@ -10,7 +11,7 @@ import 'local_notification_service.dart';
 import 'message_notification_coordinator.dart';
 import 'push_service.dart';
 
-/// 后台通知编排：WebSocket + 本地横幅 + 前台保活；进程被杀后靠极光/FCM。
+/// 后台通知编排：WebSocket + 系统横幅 + 应用内横幅 + 前台保活；进程被杀后靠 FCM。
 class NotificationService {
   NotificationService({PushService? push}) : push = push ?? PushService();
 
@@ -20,11 +21,15 @@ class NotificationService {
   MessageNotificationCoordinator? _coordinator;
   AuthService? _auth;
 
-  /// 本地通知 + 保活（无需第三方密钥）。
+  final StreamController<InAppMessageBannerEvent> _inAppBannerController =
+      StreamController<InAppMessageBannerEvent>.broadcast();
+
+  Stream<InAppMessageBannerEvent> get inAppBannerStream =>
+      _inAppBannerController.stream;
+
   bool get isLocalAvailable =>
       !kIsWeb && (Platform.isAndroid || Platform.isIOS);
 
-  /// 进程被杀后的离线推送通道是否已编入安装包。
   bool get isRemotePushAvailable => push.isAvailable;
 
   String get remoteChannelLabel => push.channelLabel;
@@ -35,15 +40,17 @@ class NotificationService {
   }) async {
     _auth = auth;
     await _local.initialize(onTap: onOpenConversation);
-    await push.initialize(
-      auth: auth,
-      local: _local,
-      onOpenConversation: onOpenConversation,
-    );
     _coordinator = MessageNotificationCoordinator(
       auth: auth,
       local: _local,
       keepAlive: _keepAlive,
+      onInAppBanner: _inAppBannerController.add,
+    );
+    await push.initialize(
+      auth: auth,
+      local: _local,
+      onOpenConversation: onOpenConversation,
+      onForegroundMessage: (msg) => _coordinator!.handlePushMessage(msg),
     );
     await _coordinator!.startIfEnabled();
 
@@ -55,6 +62,10 @@ class NotificationService {
 
   void onLifecycleChanged(AppLifecycleState state) {
     _coordinator?.onLifecycleChanged(state);
+  }
+
+  void onConversationOpened(String conversationId) {
+    _coordinator?.onConversationOpened(conversationId);
   }
 
   Future<bool> enableNotifications() async {
@@ -89,4 +100,8 @@ class NotificationService {
   Future<void> syncRemoteTokenIfEnabled() => push.syncTokenIfEnabled();
 
   Future<void> clearRemoteToken() => push.clearToken();
+
+  void dispose() {
+    unawaited(_inAppBannerController.close());
+  }
 }

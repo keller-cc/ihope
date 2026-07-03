@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../models/conversation.dart';
 import '../../models/message.dart';
 import '../../services/auth_service.dart';
+import '../../widgets/app_page_route.dart';
 import 'home_search_category_screen.dart';
 import 'home_search_messages_screen.dart';
 import 'home_search_models.dart';
@@ -53,7 +54,7 @@ class _HomeSearchScreenState extends State<HomeSearchScreen> {
 
   Future<void> _openCategory(HomeSearchCategory kind) async {
     await Navigator.of(context).push<void>(
-      MaterialPageRoute(
+      appPageRoute(
         builder: (_) => HomeSearchCategoryScreen(
           kind: kind,
           auth: widget.auth,
@@ -83,7 +84,7 @@ class _HomeSearchScreenState extends State<HomeSearchScreen> {
       return;
     }
     await Navigator.of(context).push<void>(
-      MaterialPageRoute(
+      appPageRoute(
         builder: (_) => HomeSearchMessagesScreen(
           conversation: hit.conversation,
           messages: hit.messages,

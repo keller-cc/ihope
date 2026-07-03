@@ -4,9 +4,11 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 
+import '../../models/conversation.dart';
 import '../../models/message.dart';
 import '../../services/auth_service.dart';
 import '../../utils/media_local_cache.dart';
+import '../../widgets/app_page_route.dart';
 import '../../widgets/image_viewer_screen.dart';
 import 'chat_history_loader.dart';
 
@@ -15,10 +17,12 @@ class ChatHistoryMediaTab extends StatefulWidget {
   const ChatHistoryMediaTab({
     super.key,
     required this.auth,
+    required this.conversation,
     required this.messages,
   });
 
   final AuthService auth;
+  final ConversationItem conversation;
   final List<ChatMessage> messages;
 
   @override
@@ -39,21 +43,44 @@ class _ChatHistoryMediaTabState extends State<ChatHistoryMediaTab> {
       ..sort((a, b) => b.compareTo(a));
   }
 
-  Future<void> _openImage(ChatMessage msg) async {
-    final resolved = await MediaLocalCache.resolve(msg.id, msg.plaintext);
-    if (!mounted) return;
-    if (resolved == null || resolved.bytes.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('图片尚未缓存，请先在会话中查看')),
+  Future<Uint8List> _loadFullImageBytes(ChatMessage msg) async {
+    var current = msg;
+    if (await MediaLocalCache.needsFullImageDownload(
+      messageId: current.id,
+      plaintext: current.plaintext,
+      fileId: current.fileId,
+    )) {
+      final repaired = await widget.auth.repairMessageMedia(
+        widget.conversation,
+        current,
       );
-      return;
+      if (repaired == null) {
+        throw StateError('无法下载原图');
+      }
+      current = repaired;
     }
-    final name = resolved.name.isNotEmpty ? resolved.name : 'image.jpg';
+    final full = await MediaLocalCache.loadFullImage(
+      current.id,
+      current.plaintext,
+      current.fileId,
+    );
+    if (full == null || full.bytes.isEmpty) {
+      throw StateError('原图不可用');
+    }
+    return Uint8List.fromList(full.bytes);
+  }
+
+  Future<void> _openImage(ChatMessage msg) async {
+    final preview = await MediaLocalCache.resolve(msg.id, msg.plaintext);
+    final displayName =
+        preview?.name.isNotEmpty == true ? preview!.name : 'image.jpg';
+
+    if (!mounted) return;
     await Navigator.of(context).push<void>(
-      MaterialPageRoute(
+      appPageRoute(
         builder: (_) => ImageViewerScreen(
-          bytes: Uint8List.fromList(resolved.bytes),
-          name: name,
+          bytesFuture: () => _loadFullImageBytes(msg),
+          name: displayName,
           messageId: msg.id,
         ),
       ),
@@ -79,9 +106,7 @@ class _ChatHistoryMediaTabState extends State<ChatHistoryMediaTab> {
             children: [
               Text(
                 key,
-                style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                      fontWeight: FontWeight.w700,
-                    ),
+                style: Theme.of(context).textTheme.titleSmall,
               ),
               const SizedBox(height: 8),
               GridView.builder(
@@ -95,7 +120,10 @@ class _ChatHistoryMediaTabState extends State<ChatHistoryMediaTab> {
                 itemCount: items.length,
                 itemBuilder: (context, i) {
                   final msg = items[i];
-                  return _MediaThumb(msg: msg, onTap: () => _openImage(msg));
+                  return _MediaThumb(
+                    msg: msg,
+                    onTap: () => unawaited(_openImage(msg)),
+                  );
                 },
               ),
             ],
@@ -106,47 +134,41 @@ class _ChatHistoryMediaTabState extends State<ChatHistoryMediaTab> {
   }
 }
 
-class _MediaThumb extends StatefulWidget {
+class _MediaThumb extends StatelessWidget {
   const _MediaThumb({required this.msg, required this.onTap});
 
   final ChatMessage msg;
   final VoidCallback onTap;
 
   @override
-  State<_MediaThumb> createState() => _MediaThumbState();
-}
-
-class _MediaThumbState extends State<_MediaThumb> {
-  Uint8List? _bytes;
-
-  @override
-  void initState() {
-    super.initState();
-    unawaited(_load());
-  }
-
-  Future<void> _load() async {
-    final resolved =
-        await MediaLocalCache.resolve(widget.msg.id, widget.msg.plaintext);
-    if (!mounted || resolved == null) return;
-    setState(() => _bytes = Uint8List.fromList(resolved.bytes));
-  }
-
-  @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Material(
-      color: scheme.surfaceContainerHighest,
-      clipBehavior: Clip.antiAlias,
-      borderRadius: BorderRadius.circular(6),
-      child: InkWell(
-        onTap: widget.onTap,
-        child: _bytes != null
-            ? Image.memory(_bytes!, fit: BoxFit.cover)
-            : Center(
-                child: Icon(Icons.image_outlined, color: scheme.onSurfaceVariant),
-              ),
-      ),
+    return FutureBuilder(
+      future: MediaLocalCache.resolve(msg.id, msg.plaintext),
+      builder: (context, snapshot) {
+        final media = snapshot.data;
+        return GestureDetector(
+          onTap: onTap,
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              color: Theme.of(context).colorScheme.surfaceContainerHighest,
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: media != null && media.bytes.isNotEmpty
+                ? ClipRRect(
+                    borderRadius: BorderRadius.circular(4),
+                    child: Image.memory(
+                      Uint8List.fromList(media.bytes),
+                      fit: BoxFit.cover,
+                      width: double.infinity,
+                      height: double.infinity,
+                    ),
+                  )
+                : const Center(
+                    child: Icon(Icons.image_outlined, size: 28),
+                  ),
+          ),
+        );
+      },
     );
   }
 }

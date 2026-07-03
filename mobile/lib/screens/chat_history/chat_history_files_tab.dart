@@ -7,6 +7,7 @@ import '../../utils/file_size_format.dart';
 import '../../utils/media_payload.dart';
 import '../../utils/message_time.dart';
 import '../../utils/text_search.dart';
+import '../../widgets/app_page_route.dart';
 import 'chat_history_file_detail_screen.dart';
 import 'chat_history_loader.dart';
 
@@ -77,7 +78,7 @@ class _ChatHistoryFilesTabState extends State<ChatHistoryFilesTab> {
 
   void _openFile(ChatMessage msg) {
     Navigator.of(context).push<void>(
-      MaterialPageRoute(
+      appPageRoute(
         builder: (_) => ChatHistoryFileDetailScreen(
           auth: widget.auth,
           conversation: widget.conversation,

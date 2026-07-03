@@ -1,32 +1,21 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:image_picker/image_picker.dart';
 
-import '../config/app_version.dart';
-import '../config/server_config.dart';
 import '../services/auth_service.dart';
-import '../services/notification_service.dart';
+import '../utils/avatar_picker.dart';
 import '../widgets/auth_form.dart';
 import '../widgets/user_avatar.dart';
-import 'change_password_screen.dart';
-import 'notification_settings_screen.dart';
-import 'device_link_screen.dart';
-import 'devices_screen.dart';
-import 'server_settings_screen.dart';
-import 'storage_settings_screen.dart';
-import 'version_check_screen.dart';
 
+/// 个人资料：头像与用户名（设置项已移至 [SettingsScreen]）。
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({
     super.key,
     required this.auth,
-    required this.notification,
     required this.onProfileUpdated,
   });
 
   final AuthService auth;
-  final NotificationService notification;
   final VoidCallback onProfileUpdated;
 
   @override
@@ -38,18 +27,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
   bool _loading = false;
   bool _uploadingAvatar = false;
   String? _error;
-  String _appVersionLabel = '…';
 
   @override
   void initState() {
     super.initState();
     _username = TextEditingController(text: widget.auth.currentUser!.username);
-    unawaited(_loadAppVersion());
-  }
-
-  Future<void> _loadAppVersion() async {
-    final label = await AppVersionInfo.displayLabel();
-    if (mounted) setState(() => _appVersionLabel = label);
   }
 
   @override
@@ -83,24 +65,17 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Future<void> _pickAvatar() async {
-    final picker = ImagePicker();
-    final file = await picker.pickImage(
-      source: ImageSource.gallery,
-      maxWidth: 1024,
-      maxHeight: 1024,
-      imageQuality: 85,
-    );
-    if (file == null) return;
+    final cropped = await pickAndCropAvatar(context);
+    if (cropped == null || !mounted) return;
 
     setState(() {
       _uploadingAvatar = true;
       _error = null;
     });
     try {
-      final bytes = await file.readAsBytes();
       await widget.auth.uploadAvatar(
-        bytes,
-        filename: file.name.isNotEmpty ? file.name : 'avatar.jpg',
+        cropped,
+        filename: 'avatar.jpg',
       );
       if (!mounted) return;
       setState(() {});
@@ -112,17 +87,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
       setState(() => _error = e.toString());
     } finally {
       if (mounted) setState(() => _uploadingAvatar = false);
-    }
-  }
-
-  Future<void> _openChangePassword() async {
-    final changed = await Navigator.of(context).push<bool>(
-      MaterialPageRoute(
-        builder: (_) => ChangePasswordScreen(auth: widget.auth),
-      ),
-    );
-    if (changed == true && mounted) {
-      Navigator.of(context).pop('logout');
     }
   }
 
@@ -178,102 +142,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
             loading: _loading,
             label: '保存用户名',
             onPressed: _saveUsername,
-          ),
-          const SizedBox(height: 12),
-          OutlinedButton(
-            onPressed: _loading ? null : _openChangePassword,
-            child: const Text('修改密码'),
-          ),
-          const SizedBox(height: 12),
-          ListTile(
-            contentPadding: EdgeInsets.zero,
-            title: const Text('服务器'),
-            subtitle: Text(ServerConfig.apiBase),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () async {
-              final result = await Navigator.of(context).push<Object?>(
-                MaterialPageRoute(
-                  builder: (_) => ServerSettingsScreen(
-                    auth: widget.auth,
-                    requireLogoutOnSave: true,
-                  ),
-                ),
-              );
-              if (result == 'logout' && mounted) {
-                Navigator.of(context).pop('logout');
-              }
-            },
-          ),
-          ListTile(
-            contentPadding: EdgeInsets.zero,
-            title: const Text('通知'),
-            subtitle: const Text('后台新消息系统横幅'),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () {
-              Navigator.of(context).push<void>(
-                MaterialPageRoute(
-                  builder: (_) => NotificationSettingsScreen(
-                    auth: widget.auth,
-                    notification: widget.notification,
-                  ),
-                ),
-              );
-            },
-          ),
-          ListTile(
-            contentPadding: EdgeInsets.zero,
-            title: const Text('已登录设备'),
-            subtitle: const Text('查看并踢下线其它设备'),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () async {
-              final result = await Navigator.of(context).push<Object?>(
-                MaterialPageRoute(
-                  builder: (_) => DevicesScreen(auth: widget.auth),
-                ),
-              );
-              if (result == 'logout' && mounted) {
-                Navigator.of(context).pop('logout');
-              }
-            },
-          ),
-          ListTile(
-            contentPadding: EdgeInsets.zero,
-            title: const Text('链接设备'),
-            subtitle: const Text('扫码同步加密密钥到其它设备'),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () {
-              Navigator.of(context).push<void>(
-                MaterialPageRoute(
-                  builder: (_) => DeviceLinkScreen(auth: widget.auth),
-                ),
-              );
-            },
-          ),
-          ListTile(
-            contentPadding: EdgeInsets.zero,
-            title: const Text('检查版本'),
-            subtitle: Text(_appVersionLabel),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () {
-              Navigator.of(context).push<void>(
-                MaterialPageRoute(
-                  builder: (_) => VersionCheckScreen(auth: widget.auth),
-                ),
-              );
-            },
-          ),
-          ListTile(
-            contentPadding: EdgeInsets.zero,
-            title: const Text('存储与缓存'),
-            subtitle: const Text('清除本地消息与媒体缓存'),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () {
-              Navigator.of(context).push<void>(
-                MaterialPageRoute(
-                  builder: (_) => StorageSettingsScreen(auth: widget.auth),
-                ),
-              );
-            },
           ),
         ],
       ),

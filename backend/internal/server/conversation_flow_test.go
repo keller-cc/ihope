@@ -284,6 +284,185 @@ func TestConversationFlowIntegration(t *testing.T) {
 	}
 }
 
+func TestGroupAdminFlowIntegration(t *testing.T) {
+	handler := testutil.NewTestServer(t).Router()
+	password := "password123"
+	deviceID := "admin-flow-device"
+	ts := time.Now().UnixNano()
+
+	owner := registerUser(t, handler,
+		fmt.Sprintf("admin_owner_%d@example.com", ts),
+		fmt.Sprintf("owner_%d", ts%1_000_000_000),
+		password,
+	)
+	adminUser := registerUser(t, handler,
+		fmt.Sprintf("admin_mgr_%d@example.com", ts),
+		fmt.Sprintf("admin_%d", ts%1_000_000_000),
+		password,
+	)
+	regular := registerUser(t, handler,
+		fmt.Sprintf("admin_reg_%d@example.com", ts),
+		fmt.Sprintf("regular_%d", ts%1_000_000_000),
+		password,
+	)
+	otherAdmin := registerUser(t, handler,
+		fmt.Sprintf("admin_other_%d@example.com", ts),
+		fmt.Sprintf("other_admin_%d", ts%1_000_000_000),
+		password,
+	)
+	inviteTarget := registerUser(t, handler,
+		fmt.Sprintf("admin_invite_%d@example.com", ts),
+		fmt.Sprintf("invitee_%d", ts%1_000_000_000),
+		password,
+	)
+
+	ownerToken := loginToken(t, handler, fmt.Sprintf("admin_owner_%d@example.com", ts), password, deviceID)
+	adminToken := loginToken(t, handler, fmt.Sprintf("admin_mgr_%d@example.com", ts), password, deviceID+"-a")
+	regularToken := loginToken(t, handler, fmt.Sprintf("admin_reg_%d@example.com", ts), password, deviceID+"-r")
+
+	groupRec := doJSON(t, handler, http.MethodPost, "/api/conversations", map[string]any{
+		"type":       "group",
+		"name":       "Admin Test Group",
+		"member_ids": []string{adminUser.ID, regular.ID, otherAdmin.ID},
+	}, ownerToken)
+	if groupRec.Code != http.StatusCreated {
+		t.Fatalf("create group status = %d body = %s", groupRec.Code, groupRec.Body.String())
+	}
+
+	var groupResp struct {
+		Conversation struct {
+			ID      string `json:"id"`
+			OwnerID string `json:"owner_id"`
+			Members []struct {
+				UserID string `json:"user_id"`
+				Role   string `json:"role"`
+			} `json:"members"`
+		} `json:"conversation"`
+	}
+	decodeBody(t, groupRec.Body, &groupResp)
+	groupID := groupResp.Conversation.ID
+	if groupID == "" {
+		t.Fatal("missing group id")
+	}
+	if groupResp.Conversation.OwnerID != owner.ID {
+		t.Fatalf("owner_id = %q, want %q", groupResp.Conversation.OwnerID, owner.ID)
+	}
+
+	setAdminRec := doJSON(t, handler, http.MethodPatch,
+		"/api/conversations/"+groupID+"/members/"+adminUser.ID+"/role",
+		map[string]string{"role": "admin"},
+		ownerToken,
+	)
+	if setAdminRec.Code != http.StatusOK {
+		t.Fatalf("set admin status = %d body = %s", setAdminRec.Code, setAdminRec.Body.String())
+	}
+	var setAdminResp struct {
+		Conversation struct {
+			Members []struct {
+				UserID string `json:"user_id"`
+				Role   string `json:"role"`
+			} `json:"members"`
+		} `json:"conversation"`
+	}
+	decodeBody(t, setAdminRec.Body, &setAdminResp)
+	if role := memberRoleOf(setAdminResp.Conversation.Members, adminUser.ID); role != "admin" {
+		t.Fatalf("admin user role = %q, want admin", role)
+	}
+
+	regularAddRec := doJSON(t, handler, http.MethodPost,
+		"/api/conversations/"+groupID+"/members",
+		map[string]any{"member_ids": []string{inviteTarget.ID}},
+		regularToken,
+	)
+	if regularAddRec.Code != http.StatusForbidden {
+		t.Fatalf("regular add member status = %d, want 403", regularAddRec.Code)
+	}
+
+	addByAdminRec := doJSON(t, handler, http.MethodPost,
+		"/api/conversations/"+groupID+"/members",
+		map[string]any{"member_ids": []string{inviteTarget.ID}},
+		adminToken,
+	)
+	if addByAdminRec.Code != http.StatusOK {
+		t.Fatalf("admin add member status = %d body = %s", addByAdminRec.Code, addByAdminRec.Body.String())
+	}
+
+	removeOwnerRec := doJSON(t, handler, http.MethodDelete,
+		"/api/conversations/"+groupID+"/members/"+owner.ID,
+		nil, adminToken,
+	)
+	if removeOwnerRec.Code != http.StatusForbidden {
+		t.Fatalf("admin remove owner status = %d, want 403", removeOwnerRec.Code)
+	}
+
+	setOtherAdminRec := doJSON(t, handler, http.MethodPatch,
+		"/api/conversations/"+groupID+"/members/"+otherAdmin.ID+"/role",
+		map[string]string{"role": "admin"},
+		ownerToken,
+	)
+	if setOtherAdminRec.Code != http.StatusOK {
+		t.Fatalf("owner set second admin status = %d body = %s", setOtherAdminRec.Code, setOtherAdminRec.Body.String())
+	}
+
+	removeOtherAdminRec := doJSON(t, handler, http.MethodDelete,
+		"/api/conversations/"+groupID+"/members/"+otherAdmin.ID,
+		nil, adminToken,
+	)
+	if removeOtherAdminRec.Code != http.StatusForbidden {
+		t.Fatalf("admin remove other admin status = %d, want 403", removeOtherAdminRec.Code)
+	}
+
+	adminSetRoleRec := doJSON(t, handler, http.MethodPatch,
+		"/api/conversations/"+groupID+"/members/"+inviteTarget.ID+"/role",
+		map[string]string{"role": "admin"},
+		adminToken,
+	)
+	if adminSetRoleRec.Code != http.StatusForbidden {
+		t.Fatalf("admin set role status = %d, want 403", adminSetRoleRec.Code)
+	}
+
+	regularSetRoleRec := doJSON(t, handler, http.MethodPatch,
+		"/api/conversations/"+groupID+"/members/"+inviteTarget.ID+"/role",
+		map[string]string{"role": "admin"},
+		regularToken,
+	)
+	if regularSetRoleRec.Code != http.StatusForbidden {
+		t.Fatalf("regular set role status = %d, want 403", regularSetRoleRec.Code)
+	}
+
+	removeRegularRec := doJSON(t, handler, http.MethodDelete,
+		"/api/conversations/"+groupID+"/members/"+regular.ID,
+		nil, adminToken,
+	)
+	if removeRegularRec.Code != http.StatusOK {
+		t.Fatalf("admin remove regular status = %d body = %s", removeRegularRec.Code, removeRegularRec.Body.String())
+	}
+
+	announceRec := doJSON(t, handler, http.MethodPost,
+		"/api/conversations/"+groupID+"/messages",
+		map[string]string{
+			"type":       "announcement",
+			"ciphertext": "ann:v1:{\"title\":\"Notice\",\"body\":\"Admin posted\"}",
+		},
+		adminToken,
+	)
+	if announceRec.Code != http.StatusCreated {
+		t.Fatalf("admin post announcement status = %d body = %s", announceRec.Code, announceRec.Body.String())
+	}
+}
+
+func memberRoleOf(members []struct {
+	UserID string `json:"user_id"`
+	Role   string `json:"role"`
+}, userID string) string {
+	for _, m := range members {
+		if m.UserID == userID {
+			return m.Role
+		}
+	}
+	return ""
+}
+
 func registerUser(t *testing.T, handler http.Handler, email, username, password string) struct{ ID string } {
 	t.Helper()
 	rec := doJSON(t, handler, http.MethodPost, "/api/auth/register", map[string]string{

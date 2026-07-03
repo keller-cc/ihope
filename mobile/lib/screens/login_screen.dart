@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../config/server_config.dart';
 import '../services/auth_service.dart';
 import '../widgets/auth_form.dart';
+import '../widgets/app_page_route.dart';
 import 'forgot_password_screen.dart';
 import 'register_screen.dart';
 import 'server_settings_screen.dart';
@@ -89,7 +90,7 @@ class _LoginScreenState extends State<LoginScreen> {
                 ? null
                 : () async {
                     final result = await Navigator.of(context).push<Object?>(
-                      MaterialPageRoute(
+                      appPageRoute(
                         builder: (_) => ServerSettingsScreen(auth: widget.auth),
                       ),
                     );
@@ -104,7 +105,7 @@ class _LoginScreenState extends State<LoginScreen> {
                 ? null
                 : () {
                     Navigator.of(context).push(
-                      MaterialPageRoute(
+                      appPageRoute(
                         builder: (_) => ForgotPasswordScreen(auth: widget.auth),
                       ),
                     );
@@ -116,7 +117,7 @@ class _LoginScreenState extends State<LoginScreen> {
                 ? null
                 : () {
                     Navigator.of(context).push(
-                      MaterialPageRoute(
+                      appPageRoute(
                         builder: (_) => RegisterScreen(
                           auth: widget.auth,
                           onRegistered: widget.onLoggedIn,

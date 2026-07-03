@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../models/conversation.dart';
 import '../../models/message.dart';
 import '../../services/auth_service.dart';
+import '../../widgets/app_page_route.dart';
 import '../../widgets/member_title_badge.dart';
 import '../../widgets/user_avatar.dart';
 import 'chat_history_loader.dart';
@@ -67,7 +68,13 @@ class _ChatHistoryMembersTabState extends State<ChatHistoryMembersTab> {
     final owner = ownerId == null
         ? <ConversationMember>[]
         : members.where((m) => m.userId == ownerId).toList();
-    final rest = members.where((m) => m.userId != ownerId).toList()
+    final admins = members
+        .where((m) => m.userId != ownerId && m.isAdmin)
+        .toList()
+      ..sort((a, b) => a.username.compareTo(b.username));
+    final rest = members
+        .where((m) => m.userId != ownerId && !m.isAdmin)
+        .toList()
       ..sort((a, b) => a.username.compareTo(b.username));
 
     final map = <String, List<ConversationMember>>{};
@@ -86,6 +93,9 @@ class _ChatHistoryMembersTabState extends State<ChatHistoryMembersTab> {
     if (owner.isNotEmpty) {
       sections.add(_MemberSection(label: '群主', members: owner));
     }
+    if (admins.isNotEmpty) {
+      sections.add(_MemberSection(label: '管理员', members: admins));
+    }
     for (final k in keys) {
       sections.add(_MemberSection(label: k, members: map[k]!));
     }
@@ -95,7 +105,7 @@ class _ChatHistoryMembersTabState extends State<ChatHistoryMembersTab> {
   List<String> get _indexLetters {
     final letters = <String>[];
     for (final s in _sections) {
-      if (s.label == '群主') continue;
+      if (s.label == '群主' || s.label == '管理员') continue;
       letters.add(s.label);
     }
     return letters;
@@ -114,7 +124,7 @@ class _ChatHistoryMembersTabState extends State<ChatHistoryMembersTab> {
 
   void _openMember(ConversationMember member) {
     Navigator.of(context).push<void>(
-      MaterialPageRoute(
+      appPageRoute(
         builder: (_) => ChatHistoryMemberMessagesScreen(
           auth: widget.auth,
           conversation: widget.conversation,

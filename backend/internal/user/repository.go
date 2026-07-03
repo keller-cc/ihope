@@ -27,9 +27,8 @@ type User struct {
 	Email             string     `json:"email"`
 	Username          string     `json:"username"`
 	AvatarURL         *string    `json:"avatar_url"`
-	IdentityPublicKey string     `json:"identity_public_key"`
-	EmailVerifiedAt   *time.Time `json:"email_verified_at,omitempty"`
-	CreatedAt         time.Time  `json:"created_at"`
+	IdentityPublicKey string    `json:"identity_public_key"`
+	CreatedAt         time.Time `json:"created_at"`
 	UpdatedAt         time.Time  `json:"updated_at"`
 }
 
@@ -93,7 +92,7 @@ func (r *Repository) Create(ctx context.Context, email, username, passwordHash, 
 	row := r.pool.QueryRow(ctx, `
 		INSERT INTO users (email, username, password_hash, identity_public_key)
 		VALUES ($1, $2, $3, $4)
-		RETURNING id, email, username, avatar_url, identity_public_key, email_verified_at, created_at, updated_at`,
+		RETURNING id, email, username, avatar_url, identity_public_key, created_at, updated_at`,
 		email, username, passwordHash, identityPublicKey,
 	)
 	u, err := scanUser(row)
@@ -115,7 +114,7 @@ func (r *Repository) Create(ctx context.Context, email, username, passwordHash, 
 
 func (r *Repository) GetByID(ctx context.Context, id string) (*User, error) {
 	row := r.pool.QueryRow(ctx, `
-		SELECT id, email, username, avatar_url, identity_public_key, email_verified_at, created_at, updated_at
+		SELECT id, email, username, avatar_url, identity_public_key, created_at, updated_at
 		FROM users WHERE id = $1`, id)
 	u, err := scanUser(row)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -184,22 +183,31 @@ func (r *Repository) PublicNamesByIDs(ctx context.Context, ids []string) (map[st
 }
 
 func (r *Repository) ListPublic(ctx context.Context, excludeUserID, query string, limit int) ([]PublicUser, error) {
+	query = strings.TrimSpace(query)
 	var rows pgx.Rows
 	var err error
 
 	if query != "" {
 		pattern := "%" + query + "%"
+		prefix := query + "%"
 		rows, err = r.pool.Query(ctx, `
 			SELECT id, username, avatar_url, identity_public_key
 			FROM users
-			WHERE id <> $1 AND username ILIKE $2
-			ORDER BY username
-			LIMIT $3`, excludeUserID, pattern, limit)
+			WHERE id <> $1 AND disabled_at IS NULL
+			  AND (username ILIKE $2 OR email ILIKE $2)
+			ORDER BY
+			  CASE
+			    WHEN lower(username) = lower($3) OR lower(email) = lower($3) THEN 0
+			    WHEN username ILIKE $4 OR email ILIKE $4 THEN 1
+			    ELSE 2
+			  END,
+			  username
+			LIMIT $5`, excludeUserID, pattern, query, prefix, limit)
 	} else {
 		rows, err = r.pool.Query(ctx, `
 			SELECT id, username, avatar_url, identity_public_key
 			FROM users
-			WHERE id <> $1
+			WHERE id <> $1 AND disabled_at IS NULL
 			ORDER BY username
 			LIMIT $2`, excludeUserID, limit)
 	}
@@ -224,7 +232,7 @@ func (r *Repository) ListPublic(ctx context.Context, excludeUserID, query string
 
 func (r *Repository) GetByEmail(ctx context.Context, email string) (*User, string, error) {
 	row := r.pool.QueryRow(ctx, `
-		SELECT id, email, username, avatar_url, identity_public_key, email_verified_at, created_at, updated_at, password_hash
+		SELECT id, email, username, avatar_url, identity_public_key, created_at, updated_at, password_hash
 		FROM users WHERE email = $1`, email)
 	var passwordHash string
 	u, err := scanUserWithPassword(row, &passwordHash)
@@ -256,7 +264,7 @@ func (r *Repository) UpdateUsername(ctx context.Context, userID, username string
 	row := r.pool.QueryRow(ctx, `
 		UPDATE users SET username = $2, updated_at = now()
 		WHERE id = $1
-		RETURNING id, email, username, avatar_url, identity_public_key, email_verified_at, created_at, updated_at`,
+		RETURNING id, email, username, avatar_url, identity_public_key, created_at, updated_at`,
 		userID, username,
 	)
 	u, err := scanUser(row)
@@ -276,7 +284,7 @@ func (r *Repository) UpdateAvatarURL(ctx context.Context, userID string, avatarU
 	row := r.pool.QueryRow(ctx, `
 		UPDATE users SET avatar_url = $2, updated_at = now()
 		WHERE id = $1
-		RETURNING id, email, username, avatar_url, identity_public_key, email_verified_at, created_at, updated_at`,
+		RETURNING id, email, username, avatar_url, identity_public_key, created_at, updated_at`,
 		userID, avatarURL,
 	)
 	u, err := scanUser(row)
@@ -290,7 +298,7 @@ func (r *Repository) UpdateIdentityPublicKey(ctx context.Context, userID, identi
 	row := r.pool.QueryRow(ctx, `
 		UPDATE users SET identity_public_key = $2, updated_at = now()
 		WHERE id = $1
-		RETURNING id, email, username, avatar_url, identity_public_key, email_verified_at, created_at, updated_at`,
+		RETURNING id, email, username, avatar_url, identity_public_key, created_at, updated_at`,
 		userID, identityPublicKey,
 	)
 	u, err := scanUser(row)
@@ -445,7 +453,7 @@ type scannable interface {
 
 func scanUser(row scannable) (*User, error) {
 	var u User
-	err := row.Scan(&u.ID, &u.Email, &u.Username, &u.AvatarURL, &u.IdentityPublicKey, &u.EmailVerifiedAt, &u.CreatedAt, &u.UpdatedAt)
+	err := row.Scan(&u.ID, &u.Email, &u.Username, &u.AvatarURL, &u.IdentityPublicKey, &u.CreatedAt, &u.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -454,7 +462,7 @@ func scanUser(row scannable) (*User, error) {
 
 func scanUserWithPassword(row scannable, passwordHash *string) (*User, error) {
 	var u User
-	err := row.Scan(&u.ID, &u.Email, &u.Username, &u.AvatarURL, &u.IdentityPublicKey, &u.EmailVerifiedAt, &u.CreatedAt, &u.UpdatedAt, passwordHash)
+	err := row.Scan(&u.ID, &u.Email, &u.Username, &u.AvatarURL, &u.IdentityPublicKey, &u.CreatedAt, &u.UpdatedAt, passwordHash)
 	if err != nil {
 		return nil, err
 	}

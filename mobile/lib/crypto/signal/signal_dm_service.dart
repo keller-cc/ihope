@@ -110,6 +110,12 @@ class SignalDmService {
       out['session:${addr.getName()}#${addr.getDeviceId()}'] =
           base64Encode(rec.serialize());
     }
+    final existing = await _readStore();
+    for (final entry in existing.entries) {
+      if (entry.key.startsWith('peer_ik:')) {
+        out[entry.key] = entry.value;
+      }
+    }
     await _writeStore(out);
   }
 
@@ -174,7 +180,54 @@ class SignalDmService {
 
   bool isEncrypted(String value) => value.startsWith(signalWirePrefix);
 
+  static String _peerIdentityCacheKey(SignalProtocolAddress remote) =>
+      'peer_ik:${remote.getName()}#${remote.getDeviceId()}';
+
+  /// 拉取对方当前 Signal 身份公钥（KDS），用于校验是否可 E2EE。
+  Future<String> fetchPeerIdentityKey(String peerUserId) async {
+    final bundle = await _kds.fetchBundle(peerUserId);
+    return bundle.identityKey;
+  }
+
+  /// 对方在服务端轮换身份/换机重登后，丢弃本地旧会话并重建。
+  Future<void> invalidatePeer(String peerUserId) async {
+    final store = await _protocolStore();
+    final bundle = await _kds.fetchBundle(peerUserId);
+    final remote = _remoteAddressFromBundle(peerUserId, bundle);
+    await _resetSession(store, remote);
+    await store.saveIdentity(
+      remote,
+      IdentityKey.fromBytes(base64Decode(bundle.identityKey), 0),
+    );
+    await _clearPeerIdentityCache(remote);
+  }
+
+  Future<void> _clearPeerIdentityCache(SignalProtocolAddress remote) async {
+    final data = Map<String, String>.from(await _readStore());
+    data.remove(_peerIdentityCacheKey(remote));
+    await _writeStore(data);
+  }
+
+  /// 若 KDS 身份与缓存不一致，清除旧 Double Ratchet 会话。
+  Future<SignalProtocolAddress> _syncPeerSession(String peerUserId) async {
+    final bundle = await _kds.fetchBundle(peerUserId);
+    final remote = _remoteAddressFromBundle(peerUserId, bundle);
+    final cacheKey = _peerIdentityCacheKey(remote);
+    final data = await _readStore();
+    final cached = data[cacheKey];
+    if (cached != null && cached != bundle.identityKey) {
+      final store = await _protocolStore();
+      await _resetSession(store, remote);
+    }
+    if (cached != bundle.identityKey) {
+      data[cacheKey] = bundle.identityKey;
+      await _writeStore(data);
+    }
+    return remote;
+  }
+
   Future<String> encrypt(String peerUserId, String plaintext) async {
+    await _syncPeerSession(peerUserId);
     try {
       return await _encryptOnce(peerUserId, plaintext);
     } catch (_) {
@@ -188,7 +241,7 @@ class SignalDmService {
 
   Future<String> _encryptOnce(String peerUserId, String plaintext) async {
     final store = await _protocolStore();
-    final remote = await _remoteAddress(peerUserId);
+    final remote = await _syncPeerSession(peerUserId);
     if (!await store.containsSession(remote)) {
       await _buildSession(store, peerUserId, remote);
     }
@@ -201,7 +254,7 @@ class SignalDmService {
   Future<String> decrypt(String peerUserId, String payload) async {
     if (!isEncrypted(payload)) return payload;
     final store = await _protocolStore();
-    final remote = await _remoteAddress(peerUserId);
+    final remote = await _syncPeerSession(peerUserId);
     final body = _decodeWire(payload);
     try {
       return await _decryptOnce(store, remote, body);
@@ -209,7 +262,8 @@ class SignalDmService {
       await _buildSession(store, peerUserId, remote);
       return decrypt(peerUserId, payload);
     } catch (_) {
-      if (body.type == CiphertextMessage.prekeyType) {
+      if (body.type == CiphertextMessage.prekeyType &&
+          await store.containsSession(remote)) {
         return '[无法解密]';
       }
       await _resetSession(store, remote);
@@ -274,13 +328,27 @@ class SignalDmService {
       base64Decode(bundle.signedPreKeySignature),
       IdentityKey.fromBytes(base64Decode(bundle.identityKey), 0),
     );
+    final remoteIdentity =
+        IdentityKey.fromBytes(base64Decode(bundle.identityKey), 0);
     final builder = SessionBuilder.fromSignalStore(store, remote);
-    await builder.processPreKeyBundle(retrieved);
+    try {
+      await builder.processPreKeyBundle(retrieved);
+    } on UntrustedIdentityException {
+      await store.saveIdentity(remote, remoteIdentity);
+      await builder.processPreKeyBundle(retrieved);
+    }
     await _persist();
   }
 
   Future<SignalProtocolAddress> _remoteAddress(String peerUserId) async {
     final bundle = await _kds.fetchBundle(peerUserId);
+    return _remoteAddressFromBundle(peerUserId, bundle);
+  }
+
+  SignalProtocolAddress _remoteAddressFromBundle(
+    String peerUserId,
+    SignalPreKeyBundle bundle,
+  ) {
     return SignalProtocolAddress(peerUserId, bundle.signalDeviceId);
   }
 

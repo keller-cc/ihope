@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../widgets/app_page_route.dart';
 import '../models/message.dart';
 import '../utils/announcement_payload.dart';
 import '../utils/message_time.dart';
@@ -23,7 +24,7 @@ class AnnouncementDetailScreen extends StatelessWidget {
   }) {
     onMarkRead?.call();
     return Navigator.of(context).push<void>(
-      MaterialPageRoute(
+      appPageRoute(
         builder: (_) => AnnouncementDetailScreen(
           msg: msg,
           publisherName: publisherName,

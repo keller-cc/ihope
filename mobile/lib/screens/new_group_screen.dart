@@ -1,6 +1,7 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
-import '../models/conversation.dart';
 import '../models/user.dart';
 import '../services/auth_service.dart';
 import '../widgets/user_avatar.dart';
@@ -21,32 +22,40 @@ class _NewGroupScreenState extends State<NewGroupScreen> {
   final Set<String> _selected = {};
   bool _loading = true;
   bool _submitting = false;
+  bool _listTruncated = false;
   String? _error;
+  Timer? _debounce;
 
   @override
   void initState() {
     super.initState();
-    _load();
+    _load('');
   }
 
   @override
   void dispose() {
+    _debounce?.cancel();
     _name.dispose();
     _search.dispose();
     super.dispose();
   }
 
-  Future<void> _load() async {
+  Future<void> _load(String query) async {
     setState(() {
       _loading = true;
       _error = null;
     });
     try {
-      final users = await widget.auth.conversations.listUsers();
+      final trimmed = query.trim();
+      final users = await widget.auth.conversations.listUsers(
+        query: trimmed.isEmpty ? null : trimmed,
+        limit: 100,
+      );
       final me = widget.auth.currentUser!.id;
       if (!mounted) return;
       setState(() {
         _users = users.where((u) => u.id != me).toList();
+        _listTruncated = trimmed.isEmpty && users.length >= 100;
       });
     } catch (e) {
       setState(() => _error = e.toString());
@@ -55,10 +64,11 @@ class _NewGroupScreenState extends State<NewGroupScreen> {
     }
   }
 
-  List<PublicUser> get _filtered {
-    final q = _search.text.trim().toLowerCase();
-    if (q.isEmpty) return _users;
-    return _users.where((u) => u.username.toLowerCase().contains(q)).toList();
+  void _onSearchChanged(String value) {
+    _debounce?.cancel();
+    _debounce = Timer(const Duration(milliseconds: 300), () {
+      _load(value);
+    });
   }
 
   Future<void> _create() async {
@@ -94,9 +104,19 @@ class _NewGroupScreenState extends State<NewGroupScreen> {
     }
   }
 
+  String _emptyMessage() {
+    final q = _search.text.trim();
+    if (q.isNotEmpty) {
+      return '没有匹配「$q」的用户，请用用户名或邮箱搜索。';
+    }
+    if (_listTruncated) {
+      return '用户较多，仅显示前 100 位。请在搜索框输入用户名。';
+    }
+    return '没有可添加的用户';
+  }
+
   @override
   Widget build(BuildContext context) {
-    final visible = _filtered;
     return Scaffold(
       appBar: AppBar(
         title: const Text('创建群聊'),
@@ -130,10 +150,11 @@ class _NewGroupScreenState extends State<NewGroupScreen> {
             child: TextField(
               controller: _search,
               decoration: const InputDecoration(
-                labelText: '搜索成员',
+                labelText: '搜索用户名或邮箱',
+                hintText: '例如 qqq',
                 prefixIcon: Icon(Icons.search),
               ),
-              onChanged: (_) => setState(() {}),
+              onChanged: _onSearchChanged,
             ),
           ),
           if (_selected.isNotEmpty)
@@ -149,14 +170,14 @@ class _NewGroupScreenState extends State<NewGroupScreen> {
                 ? const Center(child: CircularProgressIndicator())
                 : _error != null
                     ? Center(child: Text(_error!))
-                    : visible.isEmpty
-                        ? const Center(child: Text('没有匹配的用户'))
+                    : _users.isEmpty
+                        ? Center(child: Text(_emptyMessage()))
                         : ListView.separated(
-                            itemCount: visible.length,
+                            itemCount: _users.length,
                             separatorBuilder: (_, __) =>
                                 const Divider(height: 1),
                             itemBuilder: (context, index) {
-                              final u = visible[index];
+                              final u = _users[index];
                               final checked = _selected.contains(u.id);
                               return CheckboxListTile(
                                 secondary: UserAvatar(

@@ -104,6 +104,7 @@ class _ChatHistoryCategoryScreenState extends State<ChatHistoryCategoryScreen> {
         if (_loading) return const Center(child: CircularProgressIndicator());
         return ChatHistoryMediaTab(
           auth: widget.auth,
+          conversation: widget.conversation,
           messages: _messages,
         );
       case ChatHistoryCategoryKind.files:

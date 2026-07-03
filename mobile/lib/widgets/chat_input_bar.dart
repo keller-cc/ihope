@@ -26,7 +26,8 @@ class ChatInputBar extends StatefulWidget {
   final bool sending;
   final VoidCallback onSend;
   final Future<bool> Function() onVoiceHoldStart;
-  final Future<void> Function({required bool cancel}) onVoiceHoldEnd;
+  final Future<void> Function({required bool cancel, int? holdDurationMs})
+      onVoiceHoldEnd;
   final VoidCallback onImage;
   final VoidCallback onCamera;
   final VoidCallback onFile;
@@ -119,8 +120,13 @@ class _ChatInputBarState extends State<ChatInputBar> {
   }
 
   void _onPlaceholder(String label) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('$label 功能即将上线')),
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.hideCurrentSnackBar();
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text('$label 功能即将上线'),
+        duration: const Duration(milliseconds: 1200),
+      ),
     );
   }
 
@@ -363,7 +369,8 @@ class _HoldToTalkButton extends StatefulWidget {
   final bool sending;
   final ValueChanged<bool> onHoldingChanged;
   final Future<bool> Function() onHoldStart;
-  final Future<void> Function({required bool cancel}) onHoldEnd;
+  final Future<void> Function({required bool cancel, int? holdDurationMs})
+      onHoldEnd;
 
   @override
   State<_HoldToTalkButton> createState() => _HoldToTalkButtonState();
@@ -372,17 +379,25 @@ class _HoldToTalkButton extends StatefulWidget {
 class _HoldToTalkButtonState extends State<_HoldToTalkButton> {
   bool _holding = false;
   bool _willCancel = false;
-  Offset? _startPos;
-  int? _activePointer;
+  Offset? _startGlobalPos;
   OverlayEntry? _overlayEntry;
   Timer? _tickTimer;
   DateTime? _holdStartedAt;
   final _overlayElapsed = ValueNotifier<int>(0);
   final _overlayWillCancel = ValueNotifier<bool>(false);
 
+  static const _cancelSlideThreshold = 72.0;
+
+  @override
+  void deactivate() {
+    if (_holding) {
+      unawaited(_finishHold(cancel: true));
+    }
+    super.deactivate();
+  }
+
   @override
   void dispose() {
-    _removePointerRoute();
     _stopTick();
     _removeOverlay();
     _overlayElapsed.dispose();
@@ -411,8 +426,15 @@ class _HoldToTalkButtonState extends State<_HoldToTalkButton> {
     _holdStartedAt = null;
   }
 
-  void _insertOverlay() {
-    if (!mounted) return;
+  OverlayState? _resolveOverlay() {
+    if (!mounted) return null;
+    return Overlay.maybeOf(context, rootOverlay: true) ??
+        Overlay.maybeOf(context) ??
+        Navigator.maybeOf(context, rootNavigator: true)?.overlay;
+  }
+
+  void _insertOverlay({bool postFrameRetry = false}) {
+    if (!mounted || !_holding) return;
     _removeOverlay();
     _overlayWillCancel.value = _willCancel;
     _overlayElapsed.value = 0;
@@ -425,8 +447,16 @@ class _HoldToTalkButtonState extends State<_HoldToTalkButton> {
         ),
       ),
     );
-    final overlay = Overlay.maybeOf(context, rootOverlay: true);
-    overlay?.insert(_overlayEntry!);
+    final overlay = _resolveOverlay();
+    if (overlay == null) {
+      if (!postFrameRetry) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted && _holding) _insertOverlay(postFrameRetry: true);
+        });
+      }
+      return;
+    }
+    overlay.insert(_overlayEntry!);
   }
 
   void _removeOverlay() {
@@ -434,50 +464,20 @@ class _HoldToTalkButtonState extends State<_HoldToTalkButton> {
     _overlayEntry = null;
   }
 
-  int? _routePointer;
-
-  void _addPointerRoute() {
-    final pointer = _activePointer;
-    if (pointer == null) return;
-    _routePointer = pointer;
-    GestureBinding.instance.pointerRouter.addRoute(pointer, _onGlobalPointer);
-  }
-
-  void _removePointerRoute() {
-    final pointer = _routePointer;
-    if (pointer == null) return;
-    GestureBinding.instance.pointerRouter.removeRoute(pointer, _onGlobalPointer);
-    _routePointer = null;
-  }
-
-  void _onGlobalPointer(PointerEvent event) {
-    if (_activePointer == null || event.pointer != _activePointer) return;
-    if (event is PointerMoveEvent) {
-      _handlePointerMove(event.position);
-    } else if (event is PointerUpEvent) {
-      _removePointerRoute();
-      final cancel = _willCancel;
-      _activePointer = null;
-      unawaited(_finishHold(cancel: cancel));
-    } else if (event is PointerCancelEvent) {
-      _removePointerRoute();
-      _activePointer = null;
-      unawaited(_finishHold(cancel: true));
-    }
-  }
-
   void _handlePointerMove(Offset globalPosition) {
-    if (!_holding || _startPos == null) return;
-    final cancel = globalPosition.dy - _startPos!.dy < -72;
+    if (!_holding || _startGlobalPos == null) return;
+    final cancel =
+        globalPosition.dy - _startGlobalPos!.dy < -_cancelSlideThreshold;
     if (cancel != _willCancel) {
       _willCancel = cancel;
       _overlayWillCancel.value = cancel;
     }
   }
 
-  Future<void> _beginHold() async {
+  Future<void> _beginHold(LongPressStartDetails details) async {
     if (_holding || widget.sending) return;
     if (!mounted) return;
+    _startGlobalPos = details.globalPosition;
     setState(() {
       _holding = true;
       _willCancel = false;
@@ -489,8 +489,11 @@ class _HoldToTalkButtonState extends State<_HoldToTalkButton> {
 
     final started = await widget.onHoldStart();
     if (!mounted) {
-      unawaited(widget.onHoldEnd(cancel: true));
+      unawaited(widget.onHoldEnd(cancel: true, holdDurationMs: null));
       return;
+    }
+    if (_holding && _overlayEntry == null) {
+      _insertOverlay();
     }
     if (!started && _holding) {
       await _finishHold(cancel: true);
@@ -499,46 +502,62 @@ class _HoldToTalkButtonState extends State<_HoldToTalkButton> {
 
   Future<void> _finishHold({required bool cancel}) async {
     if (!_holding) return;
-    _removePointerRoute();
     final shouldCancel = cancel || _willCancel;
 
     _holding = false;
     _willCancel = false;
-    _startPos = null;
-    _activePointer = null;
+    _startGlobalPos = null;
+    final holdDurationMs = _holdStartedAt == null
+        ? null
+        : DateTime.now().difference(_holdStartedAt!).inMilliseconds;
     _stopTick();
     _removeOverlay();
 
     if (mounted) {
       widget.onHoldingChanged(false);
-      setState(() => _holding = false);
+      setState(() {});
     }
 
-    unawaited(widget.onHoldEnd(cancel: shouldCancel));
-  }
-
-  void _onPointerDown(PointerDownEvent event) {
-    if (_activePointer != null || widget.sending || _holding) return;
-    if (event.kind == PointerDeviceKind.mouse &&
-        event.buttons != kPrimaryMouseButton) {
-      return;
-    }
-    _activePointer = event.pointer;
-    _startPos = event.position;
-    _addPointerRoute();
-    unawaited(_beginHold());
+    unawaited(
+      widget.onHoldEnd(
+        cancel: shouldCancel,
+        holdDurationMs: holdDurationMs,
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
 
-    return Listener(
+    return RawGestureDetector(
       behavior: HitTestBehavior.opaque,
-      onPointerDown: _onPointerDown,
+      gestures: <Type, GestureRecognizerFactory>{
+        LongPressGestureRecognizer:
+            GestureRecognizerFactoryWithHandlers<LongPressGestureRecognizer>(
+          () => LongPressGestureRecognizer(
+            duration: const Duration(milliseconds: 180),
+          ),
+          (LongPressGestureRecognizer recognizer) {
+            recognizer
+              ..onLongPressStart = (details) {
+                unawaited(_beginHold(details));
+              }
+              ..onLongPressMoveUpdate = (details) {
+                _handlePointerMove(details.globalPosition);
+              }
+              ..onLongPressEnd = (details) {
+                unawaited(_finishHold(cancel: _willCancel));
+              }
+              ..onLongPressCancel = () {
+                unawaited(_finishHold(cancel: true));
+              };
+          },
+        ),
+      },
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 80),
-        height: 40,
+        height: 44,
         alignment: Alignment.center,
         decoration: BoxDecoration(
           color: _holding
@@ -552,7 +571,14 @@ class _HoldToTalkButtonState extends State<_HoldToTalkButton> {
           ),
         ),
         child: _holding
-            ? const SizedBox.shrink()
+            ? Text(
+                '松开 发送',
+                style: TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w600,
+                  color: scheme.onSurface.withValues(alpha: 0.72),
+                ),
+              )
             : Text(
                 '按住 说话',
                 style: TextStyle(

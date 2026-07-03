@@ -87,6 +87,7 @@ func main() {
 	done := make(chan struct{})
 	lifecycle.SetDrainWait(time.Duration(cfg.DrainSeconds) * time.Second)
 	lifecycle.SetShutdownFunc(func() {
+		hub.CloseAll()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), time.Duration(cfg.DrainSeconds+5)*time.Second)
 		defer cancel()
 		if err := httpServer.Shutdown(shutdownCtx); err != nil {
@@ -104,8 +105,15 @@ func main() {
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	<-quit
-	log.Printf("signal received, draining...")
+	sig := <-quit
+	// Ctrl+C：本地开发快速退出；SIGTERM：生产滚动升级保留完整排空。
+	wait := time.Duration(cfg.DrainSeconds) * time.Second
+	if sig == syscall.SIGINT && wait > time.Second {
+		wait = time.Second
+	}
+	lifecycle.SetDrainWait(wait)
+	log.Printf("signal received (%v), draining %s...", sig, wait)
 	lifecycle.RequestDrain()
 	<-done
+	log.Printf("server stopped")
 }

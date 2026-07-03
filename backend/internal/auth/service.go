@@ -83,7 +83,12 @@ func (s *Service) ForgotPassword(ctx context.Context, email string) (string, err
 		return "", err
 	}
 
-	return plain, nil
+	// 仅开发 log 驱动时在 API 中返回 token；生产 smtp 只走邮件。
+	driver := strings.ToLower(strings.TrimSpace(s.cfg.MailDriver))
+	if driver == "" || driver == "log" {
+		return plain, nil
+	}
+	return "", nil
 }
 
 func (s *Service) Register(ctx context.Context, in RegisterInput) (*user.User, error) {

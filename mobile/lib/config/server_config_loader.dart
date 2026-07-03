@@ -1,6 +1,6 @@
 import '../config/env.dart';
 import '../config/server_config.dart';
-import 'auth_storage.dart';
+import '../services/auth_storage.dart';
 
 /// 启动时从安全存储恢复用户自定义服务器地址。
 Future<void> bootstrapServerConfig(AuthStorage storage) async {

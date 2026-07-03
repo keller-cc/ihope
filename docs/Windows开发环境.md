@@ -103,7 +103,29 @@ flutter run
 
 ## 5. 构建排错
 
-**Gradle 下载超时** — 项目已配国内镜像；仍失败时删 `%USERPROFILE%\.gradle\wrapper\dists\gradle-9.1.0-all` 后 `flutter clean && flutter pub get`。
+**Gradle / jpush `jcenter()` 报错** — 勿用 Gradle 9（已移除 `jcenter()`）。项目应使用 `gradle-wrapper.properties` 里的 **Gradle 8.14** + AGP **8.11.x**。改完后：
+
+```powershell
+cd D:\IHope\mobile\android
+.\gradlew.bat --stop
+cd ..
+flutter clean
+flutter pub get
+flutter run --flavor domestic -d emulator-5556
+```
+
+**`sqlite3` 从 GitHub 下载超时**（`libsqlite3.*.so` / 信号灯超时）— 构建时会访问 `github.com/simolus3/sqlite3.dart`。国内需 **代理/VPN**，或在 PowerShell 里设系统代理后再 build：
+
+```powershell
+$env:HTTPS_PROXY="http://127.0.0.1:7890"   # 改成你的代理端口
+cd D:\IHope\mobile
+flutter pub get
+flutter run --flavor domestic -d emulator-5556
+```
+
+成功一次后 `.dart_tool/hooks_runner/sqlite3/` 会缓存，后续可不再下载。
+
+**Gradle 下载超时** — 项目已配国内镜像；仍失败时删 `%USERPROFILE%\.gradle\wrapper\dists\` 下对应版本目录后 `flutter clean && flutter pub get`。
 
 **Kotlin 缓存损坏**（`incremental caches` 等）：
 

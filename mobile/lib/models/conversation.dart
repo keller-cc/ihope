@@ -7,6 +7,7 @@ class ConversationMember {
     this.avatarUrl,
     this.identityPublicKey = '',
     this.joinedEpoch = 0,
+    this.role = 'member',
   });
 
   final String userId;
@@ -14,6 +15,9 @@ class ConversationMember {
   final String? avatarUrl;
   final String identityPublicKey;
   final int joinedEpoch;
+  final String role;
+
+  bool get isAdmin => role == 'admin';
 
   factory ConversationMember.fromJson(Map<String, dynamic> json) {
     return ConversationMember(
@@ -22,6 +26,7 @@ class ConversationMember {
       avatarUrl: json['avatar_url'] as String?,
       identityPublicKey: json['identity_public_key'] as String? ?? '',
       joinedEpoch: json['joined_epoch'] as int? ?? 0,
+      role: json['role'] as String? ?? 'member',
     );
   }
 
@@ -31,7 +36,19 @@ class ConversationMember {
         if (avatarUrl != null) 'avatar_url': avatarUrl,
         'identity_public_key': identityPublicKey,
         'joined_epoch': joinedEpoch,
+        'role': role,
       };
+
+  ConversationMember copyWith({String? role}) {
+    return ConversationMember(
+      userId: userId,
+      username: username,
+      avatarUrl: avatarUrl,
+      identityPublicKey: identityPublicKey,
+      joinedEpoch: joinedEpoch,
+      role: role ?? this.role,
+    );
+  }
 }
 
 class ConversationItem {
@@ -121,9 +138,21 @@ class ConversationItem {
 
   bool isOwner(String userId) => ownerId == userId;
 
+  bool isAdmin(String userId) {
+    if (type != 'group' || isOwner(userId)) return false;
+    for (final m in members) {
+      if (m.userId == userId) return m.isAdmin;
+    }
+    return false;
+  }
+
+  /// 群主或管理员：可邀请、踢普通成员、发公告。
+  bool canManageGroup(String userId) => isOwner(userId) || isAdmin(userId);
+
   String? memberTitle(String userId) {
     if (type != 'group' || ownerId == null) return null;
     if (userId == ownerId) return '群主';
+    if (isAdmin(userId)) return '管理员';
     return null;
   }
 

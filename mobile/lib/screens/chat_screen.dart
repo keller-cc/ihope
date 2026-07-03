@@ -7,12 +7,14 @@ import '../models/conversation.dart';
 import '../models/message.dart';
 import '../models/user.dart';
 import '../services/auth_service.dart';
+import '../services/notification_service.dart';
 import '../services/ws_service.dart';
 import '../utils/announcement_read.dart';
 import '../config/app_config.dart';
 import '../utils/cloud_drive_launcher.dart';
 import '../utils/media_payload.dart';
 import '../widgets/chat_input_bar.dart';
+import '../widgets/app_page_route.dart';
 import '../widgets/group_announcement_banner.dart';
 import '../widgets/offline_banner.dart';
 import 'announcement_detail_screen.dart';
@@ -34,12 +36,14 @@ class ChatScreen extends StatefulWidget {
     super.key,
     required this.auth,
     required this.conversation,
+    this.notification,
     this.initialUnreadCount = 0,
     this.initialFocusMessageId,
   });
 
   final AuthService auth;
   final ConversationItem conversation;
+  final NotificationService? notification;
   final int initialUnreadCount;
   final String? initialFocusMessageId;
 
@@ -116,6 +120,7 @@ class _ChatScreenState extends State<ChatScreen> {
     );
 
     widget.auth.setOpenConversation(_conversation.id);
+    widget.notification?.onConversationOpened(_conversation.id);
     _bindRealtime();
     unawaited(_bootstrap());
   }
@@ -138,6 +143,14 @@ class _ChatScreenState extends State<ChatScreen> {
     _subs.add(ws.onConversationRemoved.listen(_onConversationRemoved));
     _subs.add(ws.onConversationUpdated.listen(_onConversationUpdated));
     _subs.add(ws.onConversationAdded.listen(_onConversationAdded));
+    _subs.add(
+      widget.auth.onConversationPatched.listen((conv) {
+        if (!mounted || conv.id != _conversation.id) return;
+        setState(() {
+          _conversation = widget.auth.mergeConversationUpdate(_conversation, conv);
+        });
+      }),
+    );
     if (_isGroup) {
       _subs.add(widget.auth.onGroupKeyReady.listen((convId) {
         if (convId == _conversation.id) unawaited(_refreshDecryption());
@@ -407,7 +420,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _openAnnouncements() async {
     await Navigator.of(context).push<void>(
-      MaterialPageRoute(
+      appPageRoute(
         builder: (_) => GroupAnnouncementsScreen(
           auth: widget.auth,
           conversation: _conversation,
@@ -607,7 +620,7 @@ class _ChatScreenState extends State<ChatScreen> {
       return;
     }
     final jump = await Navigator.of(context).push<ChatHistoryJump>(
-      MaterialPageRoute(
+      appPageRoute(
         builder: (_) => ChatSettingsScreen(
           auth: widget.auth,
           conversation: _conversation,
@@ -620,7 +633,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _openGroupManage() async {
     final result = await Navigator.of(context).push<Object?>(
-      MaterialPageRoute(
+      appPageRoute(
         builder: (_) => GroupManageScreen(auth: widget.auth, conversation: _conversation),
       ),
     );

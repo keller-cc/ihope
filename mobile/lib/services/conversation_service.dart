@@ -29,9 +29,11 @@ class ConversationService {
         .toList();
   }
 
-  Future<List<PublicUser>> listUsers({String? query}) async {
+  Future<List<PublicUser>> listUsers({String? query, int limit = 100}) async {
+    final trimmed = query?.trim();
     final data = await api.getJson('/api/users', query: {
-      if (query != null && query.isNotEmpty) 'q': query,
+      if (trimmed != null && trimmed.isNotEmpty) 'q': trimmed,
+      'limit': limit.toString(),
     });
     return (data['users'] as List<dynamic>)
         .map((e) => PublicUser.fromJson(e as Map<String, dynamic>))
@@ -116,6 +118,20 @@ class ConversationService {
       ),
       epoch: data['epoch'] as int,
       systemMessage: systemMessage,
+    );
+  }
+
+  Future<ConversationItem> setMemberRole(
+    String conversationId,
+    String userId,
+    String role,
+  ) async {
+    final data = await api.patchJson(
+      '/api/conversations/$conversationId/members/$userId/role',
+      body: {'role': role},
+    );
+    return ConversationItem.fromJson(
+      data['conversation'] as Map<String, dynamic>,
     );
   }
 

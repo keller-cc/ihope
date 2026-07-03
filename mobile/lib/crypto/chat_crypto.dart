@@ -42,8 +42,13 @@ class ChatCrypto {
     if (peer == null) {
       throw E2eeException('找不到聊天对象');
     }
-    if (peer.identityPublicKey.isEmpty ||
-        !canUseE2EEWithPeer(peer.identityPublicKey)) {
+    var peerKey = peer.identityPublicKey;
+    if (!canUseE2EEWithPeer(peerKey)) {
+      try {
+        peerKey = await _signal.fetchPeerIdentityKey(peer.userId);
+      } catch (_) {}
+    }
+    if (!canUseE2EEWithPeer(peerKey)) {
       throw E2eeException('对方尚未配置加密密钥，请让对方重新登录后再试');
     }
     return _signal.encrypt(peer.userId, plaintext);
@@ -53,18 +58,16 @@ class ChatCrypto {
     ConversationItem conversation,
     String payload, {
     int? messageEpoch,
+    String? senderUserId,
   }) async {
     if (conversation.type == 'group') {
       final epoch = messageEpoch ?? conversation.epoch;
       return _group.decryptGroupMessage(conversation.id, epoch, payload);
     }
     if (!_signal.isEncrypted(payload)) return payload;
-    final peer = _peer(conversation);
-    if (peer == null) return '[无法解密]';
-    if (!canUseE2EEWithPeer(peer.identityPublicKey)) {
-      return '[无法解密：对方未配置加密密钥]';
-    }
-    return _signal.decrypt(peer.userId, payload);
+    final peerId = senderUserId ?? _peer(conversation)?.userId;
+    if (peerId == null || peerId.isEmpty) return '[无法解密]';
+    return _signal.decrypt(peerId, payload);
   }
 
   Future<ChatMessage> decryptMessage(
@@ -78,6 +81,7 @@ class ChatCrypto {
       conversation,
       message.ciphertext,
       messageEpoch: message.epoch,
+      senderUserId: message.senderId,
     );
     return message.copyWith(plaintext: text);
   }

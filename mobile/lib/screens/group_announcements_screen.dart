@@ -5,7 +5,9 @@ import 'package:flutter/material.dart';
 import '../models/conversation.dart';
 import '../models/message.dart';
 import '../services/auth_service.dart';
+import '../utils/announcement_payload.dart';
 import '../utils/announcement_read.dart';
+import '../widgets/app_page_route.dart';
 import '../widgets/announcement_card.dart';
 import 'announcement_detail_screen.dart';
 import 'announcement_edit_screen.dart';
@@ -36,9 +38,9 @@ class _GroupAnnouncementsScreenState extends State<GroupAnnouncementsScreen> {
   bool _syncingRemote = false;
   String? _error;
 
-  bool get _isOwner {
+  bool get _canManage {
     final me = widget.auth.currentUser;
-    return me != null && widget.conversation.isOwner(me.id);
+    return me != null && widget.conversation.canManageGroup(me.id);
   }
 
   @override
@@ -118,7 +120,7 @@ class _GroupAnnouncementsScreenState extends State<GroupAnnouncementsScreen> {
 
   Future<void> _publish() async {
     final sent = await Navigator.of(context).push<ChatMessage>(
-      MaterialPageRoute(
+      appPageRoute(
         builder: (_) => AnnouncementEditScreen(
           auth: widget.auth,
           conversation: widget.conversation,
@@ -131,6 +133,49 @@ class _GroupAnnouncementsScreenState extends State<GroupAnnouncementsScreen> {
     });
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('群公告已发布')),
+    );
+  }
+
+  Future<void> _editAnnouncement(ChatMessage ann) async {
+    if (!_canManage) return;
+    final payload = AnnouncementPayload.fromMessage(ann);
+    final sent = await Navigator.of(context).push<ChatMessage>(
+      appPageRoute(
+        builder: (_) => AnnouncementEditScreen(
+          auth: widget.auth,
+          conversation: widget.conversation,
+          initial: payload,
+        ),
+      ),
+    );
+    if (sent == null || !mounted) return;
+    setState(() {
+      _announcements = AnnouncementRead.allOf([..._announcements, sent]);
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('群公告已发布')),
+    );
+  }
+
+  void _showAnnouncementActions(ChatMessage ann) {
+    if (!_canManage) return;
+    showModalBottomSheet<void>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.edit_outlined),
+              title: const Text('编辑并重新发布'),
+              onTap: () {
+                Navigator.pop(ctx);
+                unawaited(_editAnnouncement(ann));
+              },
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -179,7 +224,7 @@ class _GroupAnnouncementsScreenState extends State<GroupAnnouncementsScreen> {
             ),
         ],
       ),
-      floatingActionButton: _isOwner && !widget.conversation.isArchived
+      floatingActionButton: _canManage && !widget.conversation.isArchived
           ? FloatingActionButton.extended(
               onPressed: _publish,
               icon: const Icon(Icons.add),
@@ -217,7 +262,7 @@ class _GroupAnnouncementsScreenState extends State<GroupAnnouncementsScreen> {
                                           .textTheme
                                           .titleMedium,
                                     ),
-                                    if (_isOwner) ...[
+                                    if (_canManage) ...[
                                       const SizedBox(height: 8),
                                       const Text('点击右下角发布第一条公告'),
                                     ],
@@ -230,14 +275,19 @@ class _GroupAnnouncementsScreenState extends State<GroupAnnouncementsScreen> {
                       : ListView.separated(
                           padding: const EdgeInsets.fromLTRB(12, 12, 12, 88),
                           itemCount: _announcements.length,
-                          separatorBuilder: (_, __) =>
+                          separatorBuilder: (_, _) =>
                               const SizedBox(height: 4),
                           itemBuilder: (context, index) {
                             final ann = _announcements[index];
-                            return AnnouncementCard(
-                              msg: ann,
-                              isUnread: _isUnread(ann),
-                              onTap: () => unawaited(_openDetail(ann)),
+                            return GestureDetector(
+                              onLongPress: _canManage
+                                  ? () => _showAnnouncementActions(ann)
+                                  : null,
+                              child: AnnouncementCard(
+                                msg: ann,
+                                isUnread: _isUnread(ann),
+                                onTap: () => unawaited(_openDetail(ann)),
+                              ),
                             );
                           },
                         ),

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../../models/conversation.dart';
 import '../../services/auth_service.dart';
+import '../../widgets/app_page_route.dart';
 import 'chat_history_category_screen.dart';
 import 'chat_history_jump.dart';
 import 'chat_history_loader.dart';
@@ -46,7 +47,7 @@ class _ChatHistoryHubScreenState extends State<ChatHistoryHubScreen> {
 
   Future<void> _openSearch() async {
     final jump = await Navigator.of(context).push<ChatHistoryJump>(
-      MaterialPageRoute(
+      appPageRoute(
         builder: (_) => ChatHistorySearchScreen(
           auth: widget.auth,
           conversation: widget.conversation,
@@ -59,7 +60,7 @@ class _ChatHistoryHubScreenState extends State<ChatHistoryHubScreen> {
 
   Future<void> _openCategory(ChatHistoryCategoryKind kind) async {
     final jump = await Navigator.of(context).push<ChatHistoryJump>(
-      MaterialPageRoute(
+      appPageRoute(
         builder: (_) => ChatHistoryCategoryScreen(
           kind: kind,
           auth: widget.auth,

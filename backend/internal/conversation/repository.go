@@ -17,6 +17,12 @@ var (
 	ErrNotOwner      = errors.New("not conversation owner")
 	ErrNotGroup      = errors.New("not a group conversation")
 	ErrAlreadyMember = errors.New("user already in conversation")
+	ErrForbidden     = errors.New("forbidden")
+)
+
+const (
+	RoleAdmin  = "admin"
+	RoleMember = "member"
 )
 
 type Conversation struct {
@@ -36,6 +42,7 @@ type Member struct {
 	IdentityPublicKey string    `json:"identity_public_key"`
 	JoinedAt          time.Time `json:"joined_at"`
 	JoinedEpoch       int       `json:"joined_epoch"`
+	Role              string    `json:"role,omitempty"`
 }
 
 type ListItem struct {
@@ -251,7 +258,7 @@ func (r *Repository) ListForUser(ctx context.Context, userID string) ([]ListItem
 
 func (r *Repository) listMembersMap(ctx context.Context, conversationIDs []string) (map[string][]Member, error) {
 	rows, err := r.pool.Query(ctx, `
-		SELECT m.conversation_id, m.user_id, u.username, u.avatar_url, u.identity_public_key, m.joined_at, m.joined_epoch
+		SELECT m.conversation_id, m.user_id, u.username, u.avatar_url, u.identity_public_key, m.joined_at, m.joined_epoch, m.role
 		FROM conversation_members m
 		JOIN users u ON u.id = m.user_id
 		WHERE m.conversation_id = ANY($1) AND m.left_at IS NULL
@@ -267,7 +274,7 @@ func (r *Repository) listMembersMap(ctx context.Context, conversationIDs []strin
 		var m Member
 		if err := rows.Scan(
 			&convID, &m.UserID, &m.Username, &m.AvatarURL,
-			&m.IdentityPublicKey, &m.JoinedAt, &m.JoinedEpoch,
+			&m.IdentityPublicKey, &m.JoinedAt, &m.JoinedEpoch, &m.Role,
 		); err != nil {
 			return nil, err
 		}
@@ -313,7 +320,7 @@ func (r *Repository) lastMessagesForUser(
 
 func (r *Repository) listMembers(ctx context.Context, conversationID string) ([]Member, error) {
 	rows, err := r.pool.Query(ctx, `
-		SELECT m.user_id, u.username, u.avatar_url, u.identity_public_key, m.joined_at, m.joined_epoch
+		SELECT m.user_id, u.username, u.avatar_url, u.identity_public_key, m.joined_at, m.joined_epoch, m.role
 		FROM conversation_members m
 		JOIN users u ON u.id = m.user_id
 		WHERE m.conversation_id = $1 AND m.left_at IS NULL
@@ -326,7 +333,7 @@ func (r *Repository) listMembers(ctx context.Context, conversationID string) ([]
 	var members []Member
 	for rows.Next() {
 		var m Member
-		if err := rows.Scan(&m.UserID, &m.Username, &m.AvatarURL, &m.IdentityPublicKey, &m.JoinedAt, &m.JoinedEpoch); err != nil {
+		if err := rows.Scan(&m.UserID, &m.Username, &m.AvatarURL, &m.IdentityPublicKey, &m.JoinedAt, &m.JoinedEpoch, &m.Role); err != nil {
 			return nil, err
 		}
 		members = append(members, m)
@@ -428,19 +435,17 @@ func (r *Repository) GetMemberJoinedEpoch(ctx context.Context, conversationID, u
 
 // MembershipInfo 成员记录（含已退群）。
 type MembershipInfo struct {
-	JoinedEpoch   int
-	LeftAt        *time.Time
-	LastLeftAt    *time.Time
+	JoinedEpoch int
+	LeftAt      *time.Time
 }
 
 func (r *Repository) GetMembership(ctx context.Context, conversationID, userID string) (*MembershipInfo, error) {
 	var info MembershipInfo
 	var leftAt *time.Time
-	var lastLeftAt *time.Time
 	err := r.pool.QueryRow(ctx, `
-		SELECT joined_epoch, left_at, last_left_at FROM conversation_members
+		SELECT joined_epoch, left_at FROM conversation_members
 		WHERE conversation_id = $1 AND user_id = $2`,
-		conversationID, userID).Scan(&info.JoinedEpoch, &leftAt, &lastLeftAt)
+		conversationID, userID).Scan(&info.JoinedEpoch, &leftAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotMember
 	}
@@ -448,8 +453,70 @@ func (r *Repository) GetMembership(ctx context.Context, conversationID, userID s
 		return nil, err
 	}
 	info.LeftAt = leftAt
-	info.LastLeftAt = lastLeftAt
 	return &info, nil
+}
+
+func (r *Repository) memberRole(ctx context.Context, conversationID, userID string) (string, error) {
+	var role string
+	err := r.pool.QueryRow(ctx, `
+		SELECT role FROM conversation_members
+		WHERE conversation_id = $1 AND user_id = $2 AND left_at IS NULL`,
+		conversationID, userID).Scan(&role)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrNotMember
+	}
+	return role, err
+}
+
+func (r *Repository) canManageMembers(ctx context.Context, conv *Conversation, actorID string) (bool, error) {
+	if conv.OwnerID != nil && *conv.OwnerID == actorID {
+		return true, nil
+	}
+	role, err := r.memberRole(ctx, conv.ID, actorID)
+	if err != nil {
+		return false, err
+	}
+	return role == RoleAdmin, nil
+}
+
+func (r *Repository) SetMemberRole(
+	ctx context.Context,
+	conversationID, actorID, targetID, role string,
+) error {
+	if role != RoleAdmin && role != RoleMember {
+		return ErrInvalidPeer
+	}
+	conv, err := r.GetByID(ctx, conversationID)
+	if err != nil {
+		return err
+	}
+	if conv.Type != "group" {
+		return ErrNotGroup
+	}
+	if conv.OwnerID == nil || *conv.OwnerID != actorID {
+		return ErrNotOwner
+	}
+	if conv.OwnerID != nil && *conv.OwnerID == targetID {
+		return ErrForbidden
+	}
+	ok, err := r.IsActiveMember(ctx, conversationID, targetID)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return ErrNotMember
+	}
+	tag, err := r.pool.Exec(ctx, `
+		UPDATE conversation_members SET role = $3
+		WHERE conversation_id = $1 AND user_id = $2 AND left_at IS NULL`,
+		conversationID, targetID, role)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotMember
+	}
+	return nil
 }
 
 func (r *Repository) AddMembers(ctx context.Context, conversationID, actorID string, memberIDs []string) (int, error) {
@@ -460,8 +527,12 @@ func (r *Repository) AddMembers(ctx context.Context, conversationID, actorID str
 	if conv.Type != "group" {
 		return 0, ErrNotGroup
 	}
-	if conv.OwnerID == nil || *conv.OwnerID != actorID {
-		return 0, ErrNotOwner
+	canManage, err := r.canManageMembers(ctx, conv, actorID)
+	if err != nil {
+		return 0, err
+	}
+	if !canManage {
+		return 0, ErrForbidden
 	}
 
 	unique := make([]string, 0, len(memberIDs))
@@ -518,10 +589,10 @@ func (r *Repository) AddMembers(ctx context.Context, conversationID, actorID str
 
 	for _, uid := range unique {
 		tag, err := tx.Exec(ctx, `
-			INSERT INTO conversation_members (conversation_id, user_id, joined_epoch)
-			VALUES ($1, $2, $3)
+			INSERT INTO conversation_members (conversation_id, user_id, joined_epoch, role)
+			VALUES ($1, $2, $3, 'member')
 			ON CONFLICT (conversation_id, user_id) DO UPDATE
-			SET left_at = NULL, joined_at = now(), joined_epoch = EXCLUDED.joined_epoch`,
+			SET left_at = NULL, joined_at = now(), joined_epoch = EXCLUDED.joined_epoch, role = 'member'`,
 			conversationID, uid, newEpoch)
 		if err != nil {
 			return 0, err
@@ -549,9 +620,26 @@ func (r *Repository) RemoveMember(ctx context.Context, conversationID, actorID, 
 		return 0, ErrNotGroup
 	}
 
-	isOwner := conv.OwnerID != nil && *conv.OwnerID == actorID
-	if actorID != targetID && !isOwner {
-		return 0, ErrNotOwner
+	if actorID != targetID {
+		canManage, err := r.canManageMembers(ctx, conv, actorID)
+		if err != nil {
+			return 0, err
+		}
+		if !canManage {
+			return 0, ErrForbidden
+		}
+		if conv.OwnerID != nil && *conv.OwnerID == targetID {
+			return 0, ErrForbidden
+		}
+		if conv.OwnerID == nil || *conv.OwnerID != actorID {
+			targetRole, err := r.memberRole(ctx, conversationID, targetID)
+			if err != nil {
+				return 0, err
+			}
+			if targetRole == RoleAdmin {
+				return 0, ErrForbidden
+			}
+		}
 	}
 
 	var active bool
@@ -577,7 +665,7 @@ func (r *Repository) RemoveMember(ctx context.Context, conversationID, actorID, 
 		return 0, err
 	}
 	if _, err := tx.Exec(ctx, `
-		UPDATE conversation_members SET left_at = now(), last_left_at = now()
+		UPDATE conversation_members SET left_at = now()
 		WHERE conversation_id = $1 AND user_id = $2 AND left_at IS NULL`,
 		conversationID, targetID); err != nil {
 		return 0, err
@@ -619,14 +707,19 @@ func (r *Repository) BumpEpoch(ctx context.Context, conversationID string) (int,
 
 func (r *Repository) TouchMemberLeftAt(ctx context.Context, conversationID, userID string) error {
 	if _, err := r.pool.Exec(ctx, `
-		UPDATE conversation_members SET left_at = now(), last_left_at = now()
+		UPDATE conversation_members SET left_at = now()
 		WHERE conversation_id = $1 AND user_id = $2 AND left_at IS NOT NULL`,
 		conversationID, userID); err != nil {
 		return err
 	}
 	_, err := r.pool.Exec(ctx, `
 		UPDATE conversation_member_periods SET left_at = now()
-		WHERE conversation_id = $1 AND user_id = $2 AND left_at IS NOT NULL`,
+		WHERE id = (
+			SELECT id FROM conversation_member_periods
+			WHERE conversation_id = $1 AND user_id = $2
+			ORDER BY joined_at DESC
+			LIMIT 1
+		)`,
 		conversationID, userID)
 	return err
 }

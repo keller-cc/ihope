@@ -61,6 +61,21 @@ func (c *Conn) Close() {
 	_ = c.ws.Close()
 }
 
+// CloseAll 关停时主动断开全部 WebSocket，避免 http.Server.Shutdown 长时间阻塞。
+func (h *Hub) CloseAll() {
+	h.mu.Lock()
+	var toClose []*Conn
+	for _, set := range h.conns {
+		for c := range set {
+			toClose = append(toClose, c)
+		}
+	}
+	h.mu.Unlock()
+	for _, c := range toClose {
+		_ = c.ws.Close()
+	}
+}
+
 func (c *Conn) writePump() {
 	for payload := range c.send {
 		if err := c.ws.WriteMessage(websocket.TextMessage, payload); err != nil {

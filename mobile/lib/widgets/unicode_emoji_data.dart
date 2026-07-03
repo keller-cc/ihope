@@ -12,11 +12,10 @@ class EmojiCategory {
   final List<String> emojis;
 }
 
-/// 基督教语境 Unicode 表情，简单分类（参考 QQ 底栏结构）。
-const kEmojiCategories = <EmojiCategory>[
+const _rawEmojiCategories = <EmojiCategory>[
   EmojiCategory(
     label: '常用',
-    icon: Icons.schedule_outlined,
+    icon: Icons.star_outline,
     emojis: [
       '🙏', '✝️', '😊', '😇', '🥰', '❤️', '🤍', '🕊️', '⭐', '✨',
       '🌟', '👼', '⛪', '📖', '🕯️', '☀️', '🌈', '🤗', '😌', '🥲',
@@ -27,33 +26,49 @@ const kEmojiCategories = <EmojiCategory>[
     label: '信仰',
     icon: Icons.church_outlined,
     emojis: [
-      '✝️', '☦️', '⛪', '💒', '📖', '🙏', '🕊️', '🕯️', '👼', '⭐',
-      '🌟', '✨', '🎄', '🐑', '🍞', '🫒', '☮️', '🤲', '🧎', '🧎‍♂️',
-      '🧎‍♀️', '🛐', '📿', '🎵', '🎶', '🎤', '🎹', '🎻', '🕊️', '🌿',
+      '☦️', '💒', '🐑', '🍞', '🫒', '☮️', '🤲', '🧎', '🧎‍♂️',
+      '🧎‍♀️', '🛐', '📿', '🎤', '🎹', '🎻', '🌿', '🎄',
     ],
   ),
   EmojiCategory(
     label: '表情',
-    icon: Icons.emoji_emotions_outlined,
+    icon: Icons.sentiment_satisfied_alt_outlined,
     emojis: [
-      '😀', '😃', '😄', '😁', '😆', '😅', '🤣', '😂', '🙂', '🙃',
-      '😉', '😊', '😇', '🥰', '😍', '🤩', '😘', '☺️', '😚', '😙',
-      '🥲', '😋', '🤗', '🤭', '🤫', '🤔', '😌', '😔', '😪', '😴',
+      '😀', '😃', '😄', '😁', '😆', '😅', '🤣', '😂', '🙃',
+      '😉', '😍', '🤩', '😘', '☺️', '😚', '😙',
+      '😋', '🤭', '🤫', '🤔', '😔', '😪', '😴',
       '🥺', '😢', '😭', '😥', '😮', '😯', '😲', '😳', '😦', '😧',
-      '😨', '😰', '😓', '😩', '😫', '🥱', '😤', '🙏', '🤍', '😊',
+      '😨', '😰', '😓', '😩', '😫', '🥱', '😤',
     ],
   ),
   EmojiCategory(
     label: '祝福',
-    icon: Icons.favorite_border,
+    icon: Icons.volunteer_activism_outlined,
     emojis: [
-      '❤️', '🧡', '💛', '💚', '💙', '💜', '🤍', '🤎', '💕', '💞',
-      '💓', '💗', '💖', '💘', '💝', '💟', '✨', '🌟', '⭐', '🌈',
-      '☀️', '🌞', '🌻', '🌷', '🌹', '💐', '🌸', '🌼', '🎉', '🎊',
-      '🙌', '👏', '🤝', '🤲', '🎁', '🕊️', '🙏', '👼', '🍀', '🌿',
+      '🧡', '💛', '💚', '💙', '💜', '🤎', '💕', '💞',
+      '💓', '💗', '💖', '💘', '💝', '💟',
+      '🌞', '🌻', '🌸', '🌼', '🎉', '🎊', '🎁', '🍀',
     ],
   ),
 ];
+
+/// 分类间去重：后序分类不重复前序已出现的表情。
+final kEmojiCategories = _dedupeCategories(_rawEmojiCategories);
+
+List<EmojiCategory> _dedupeCategories(List<EmojiCategory> input) {
+  final seen = <String>{};
+  final out = <EmojiCategory>[];
+  for (final cat in input) {
+    final unique = <String>[];
+    for (final emoji in cat.emojis) {
+      if (seen.add(emoji)) unique.add(emoji);
+    }
+    if (unique.isNotEmpty) {
+      out.add(EmojiCategory(label: cat.label, icon: cat.icon, emojis: unique));
+    }
+  }
+  return out;
+}
 
 /// 在 [controller] 光标处插入 [text]。
 void insertAtCursor(TextEditingController? controller, String text) {

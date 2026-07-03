@@ -17,6 +17,7 @@ deploy/
 ├── docker-compose.dev.yml    # 本地开发：只启动 PostgreSQL
 ├── docker-compose.yml        # 生产：postgres + backend + nginx
 ├── nginx.conf                # 生产 Nginx 反代（REST + WebSocket）
+├── nginx-ssl.conf.example    # HTTPS 模板（443 + certbot 路径 + HTTP 跳转）
 ├── upgrade-dev.ps1           # 开发无感升级脚本
 ├── .env                      # 本地密钥与端口（勿提交 Git）
 └── data/                     # dev compose 数据卷（勿提交 Git）
@@ -27,7 +28,8 @@ deploy/
 |------|--------------|------|
 | `docker-compose.dev.yml` | 是 | 开发用 PostgreSQL |
 | `docker-compose.yml` | 是 | 生产编排 |
-| `nginx.conf` | 是 | 生产反代配置 |
+| `nginx.conf` | 是 | 生产反代配置（HTTP 80） |
+| `nginx-ssl.conf.example` | 是 | HTTPS 443 模板，复制后改域名与证书路径 |
 | `.env` | 否 | 从项目根 `.env.example` 复制 |
 | `data/postgres/` | 否 | dev 卷数据，删目录 = 重置库 |
 
@@ -189,7 +191,37 @@ curl http://localhost/api/health
 - APK 分发：把包放进卷 `uploads_data` 的 `releases/latest.apk`，或设 `APP_DOWNLOAD_URL`
 - 可选 `HTTP_PORT=8080` 若 80 已被占用
 
-**HTTPS：** 可在宿主机 Nginx/Caddy 终止 TLS 并反代到 `127.0.0.1:80`；或在 `nginx.conf` 增加 443 并挂载 certbot 证书目录。
+**HTTPS（直连 VPS，不用 Cloudflare）：** 默认 compose 仅暴露 **80** 端口。在 VPS 上启用 TLS 的推荐步骤：
+
+1. 域名 A 记录指向 VPS，`docker compose up -d` 先跑通 HTTP  
+2. 复制模板：`copy nginx-ssl.conf.example nginx-ssl.conf`，将 `im.example.com` 改为你的域名  
+3. 用 **certbot** 在宿主机申请证书（不必写进 compose）：
+
+```bash
+sudo apt install certbot
+sudo certbot certonly --standalone -d im.example.com
+# 证书目录：/etc/letsencrypt/live/im.example.com/
+```
+
+4. 修改 `docker-compose.yml` 中 nginx 服务（示例）：
+
+```yaml
+nginx:
+  ports:
+    - "80:80"
+    - "443:443"
+  volumes:
+    - ./nginx-ssl.conf:/etc/nginx/conf.d/default.conf:ro
+    - /etc/letsencrypt:/etc/letsencrypt:ro
+```
+
+5. `docker compose up -d nginx` 重载。续期：`certbot renew` + 重载 nginx。
+
+也可在**宿主机** Nginx/Caddy 终止 TLS 并反代到 `127.0.0.1:80`，则容器内仍用 `nginx.conf` 即可。
+
+**Cloudflare（橙云 / Tunnel）：** 用户侧 HTTPS 由 Cloudflare 提供，源站可只开 HTTP 或使用 CF Origin Certificate。需开启 **WebSockets**；注意橙云代理 **单文件上传约 100MB 上限**（IM 最大 300MB 见网盘或灰云子域）。详见 [docs/Cloudflare部署指南.md](../docs/Cloudflare部署指南.md)，Nginx 模板 `nginx-cloudflare.conf.example`。
+
+**国内用户、不想备案：** 推荐 **香港 VPS + 域名 A 记录直连 + certbot**，不用 Cloudflare 橙云。逐步说明见 [docs/无备案国内部署指南.md](../docs/无备案国内部署指南.md)（domestic APK + 极光）。
 
 **构建上下文：** 仓库根目录（含 `admin/`）；见根目录 `.dockerignore`。
 
@@ -197,9 +229,10 @@ curl http://localhost/api/health
 
 ```powershell
 cd mobile
-flutter build apk --release
+copy config\prod.json.example config\prod.json   # 填 API_BASE=https://你的域名
+.\scripts\build-release.ps1 -Flavor domestic
 # 复制到 uploads 卷（容器名 ihope-backend）
-docker cp build\app\outputs\flutter-apk\app-release.apk ihope-backend:/data/uploads/releases/latest.apk
+docker cp build\app\outputs\flutter-apk\app-domestic-release.apk ihope-backend:/data/uploads/releases/latest.apk
 ```
 
 ---

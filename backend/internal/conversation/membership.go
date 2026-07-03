@@ -105,7 +105,6 @@ func (h *Handler) onMembersAdded(
 	}
 	actorName := h.svc.DisplayName(ctx, actorID)
 	names := strings.Join(h.svc.DisplayNames(ctx, added), "、")
-	// 写入当前 epoch，与受邀成员的 joined_epoch 一致，便于首页预览与会话内展示入群提示。
 	h.postSystemNoticeAtEpoch(ctx, item.ID, actorID,
 		fmt.Sprintf("%s 邀请 %s 加入了群聊", actorName, names), item.Epoch)
 	h.notifyConversationAddedForUsers(ctx, added, item.ID)
@@ -126,6 +125,26 @@ func (h *Handler) onGroupRenamed(
 		text = fmt.Sprintf("%s 将群聊名称修改为「%s」", actorName, newName)
 	} else {
 		text = fmt.Sprintf("%s 将群聊名称从「%s」修改为「%s」", actorName, oldName, newName)
+	}
+	h.postSystemNotice(ctx, item.ID, actorID, text)
+}
+
+func (h *Handler) onMemberRoleChanged(
+	ctx context.Context,
+	actorID, targetID string,
+	item *ListItem,
+	role string,
+) {
+	if item == nil {
+		return
+	}
+	actorName := h.svc.DisplayName(ctx, actorID)
+	targetName := h.svc.DisplayName(ctx, targetID)
+	var text string
+	if role == RoleAdmin {
+		text = fmt.Sprintf("%s 将 %s 设为管理员", actorName, targetName)
+	} else {
+		text = fmt.Sprintf("%s 取消了 %s 的管理员", actorName, targetName)
 	}
 	h.postSystemNotice(ctx, item.ID, actorID, text)
 }

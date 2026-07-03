@@ -34,6 +34,12 @@ class ApiClient {
     }
     _dio.interceptors.add(
       InterceptorsWrapper(
+        onRequest: (options, handler) {
+          if (options.extra['skipBearer'] == true) {
+            options.headers.remove('Authorization');
+          }
+          handler.next(options);
+        },
         onError: (error, handler) async {
           final status = error.response?.statusCode;
           final path = error.requestOptions.path;
@@ -118,24 +124,20 @@ class ApiClient {
 
   /// 不带 Authorization 的 POST（用于 refresh）。
   ///
-  /// 勿用 `Authorization: null` 覆盖 Options——Dio 5 可能连带清掉
-  /// [BaseOptions.headers]，导致后续请求丢失 Bearer 并反复 401→refresh。
+  /// 通过 [skipBearer] 仅对本请求去掉 Bearer，不修改 [BaseOptions.headers]，
+  /// 避免 Dio 5 清掉全局 Authorization 导致后续请求 401→refresh 循环。
   Future<Map<String, dynamic>> postJsonPublic(
     String path, {
     Map<String, dynamic>? body,
   }) async {
-    final savedAuth = _dio.options.headers['Authorization'];
-    _dio.options.headers.remove('Authorization');
     try {
       final res = await _dio.post<Map<String, dynamic>>(
         path,
         data: body ?? {},
+        options: Options(extra: {'skipBearer': true}),
       );
       return res.data ?? {};
     } on DioException catch (e) {
-      if (savedAuth != null) {
-        _dio.options.headers['Authorization'] = savedAuth;
-      }
       throw _mapError(e);
     }
   }
@@ -184,10 +186,19 @@ class ApiClient {
     Duration? sendTimeout,
   }) async {
     try {
-      final form = FormData.fromMap({
-        if (fields != null) ...fields,
-        field: MultipartFile.fromBytes(bytes, filename: filename),
-      });
+      // 服务端按 part 顺序解析：conversation_id 须在 file 之前。
+      final form = FormData();
+      if (fields != null) {
+        for (final entry in fields.entries) {
+          form.fields.add(MapEntry(entry.key, entry.value));
+        }
+      }
+      form.files.add(
+        MapEntry(
+          field,
+          MultipartFile.fromBytes(bytes, filename: filename),
+        ),
+      );
       final res = await _dio.post<Map<String, dynamic>>(
         path,
         data: form,

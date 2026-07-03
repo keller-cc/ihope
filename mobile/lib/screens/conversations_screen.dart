@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/material.dart';
 
 import '../models/conversation.dart';
@@ -16,10 +15,15 @@ import '../widgets/home_connection_status.dart';
 import '../widgets/offline_banner.dart';
 import '../widgets/swipe_action_tile.dart';
 import '../widgets/user_avatar.dart';
+import '../widgets/app_page_route.dart';
+import '../widgets/slide_from_left_route.dart';
+import 'account_panel_screen.dart';
+import 'chat/chat_thread_loader.dart';
 import 'chat_screen.dart';
 import 'new_chat_screen.dart';
 import 'new_group_screen.dart';
 import 'profile_screen.dart';
+import 'settings_screen.dart';
 import 'home_search/home_search_screen.dart';
 
 class ConversationsScreen extends StatefulWidget {
@@ -40,7 +44,8 @@ class ConversationsScreen extends StatefulWidget {
   State<ConversationsScreen> createState() => _ConversationsScreenState();
 }
 
-class _ConversationsScreenState extends State<ConversationsScreen> {
+class _ConversationsScreenState extends State<ConversationsScreen>
+    with WidgetsBindingObserver {
   List<ConversationItem> _items = [];
   List<String> _pinnedIds = [];
   final Map<String, String> _previews = {};
@@ -57,11 +62,12 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
   StreamSubscription<ConversationAddedFrame>? _addedSub;
   StreamSubscription<ConversationRemovedFrame>? _removedSub;
   StreamSubscription<ConversationUpdatedFrame>? _updatedSub;
-  StreamSubscription<List<ConnectivityResult>>? _connectivitySub;
+  StreamSubscription<ConversationItem>? _patchedSub;
+  StreamSubscription<void>? _realtimeRestoredSub;
   StreamSubscription<String>? _groupKeySub;
-  Timer? _connectivityDebounce;
   bool _syncAfterOnlineInFlight = false;
   bool _loadInFlight = false;
+  bool _resumeRefreshInFlight = false;
 
   void _syncOfflineNotice() {
     _offlineNotice = widget.auth.ws.isConnected
@@ -72,6 +78,7 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _load();
     widget.pendingPushConversation?.addListener(_onPendingPushConversation);
     unawaited(widget.auth.ensureRealtimeConnected());
@@ -81,16 +88,10 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
       setState(_syncOfflineNotice);
       if (connected) unawaited(_syncAfterOnline());
     });
-    _connectivitySub = Connectivity().onConnectivityChanged.listen((results) {
+    _realtimeRestoredSub =
+        widget.auth.onRealtimeRestored.listen((_) {
       if (!mounted) return;
-      if (results.any((r) => r != ConnectivityResult.none)) {
-        _connectivityDebounce?.cancel();
-        _connectivityDebounce = Timer(const Duration(seconds: 2), () {
-          if (!mounted) return;
-          unawaited(widget.auth.wakeRealtimeFromBackground());
-          unawaited(_syncAfterOnline());
-        });
-      }
+      unawaited(_syncAfterOnline());
     });
     _dissolvedSub = widget.auth.ws.onGroupDissolved.listen(_onGroupDissolved);
     _addedSub = widget.auth.ws.onConversationAdded.listen(_onConversationAdded);
@@ -98,6 +99,8 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
         widget.auth.ws.onConversationRemoved.listen(_onConversationRemoved);
     _updatedSub =
         widget.auth.ws.onConversationUpdated.listen(_onConversationUpdated);
+    _patchedSub =
+        widget.auth.onConversationPatched.listen(_applyConversationItemUpdate);
     _groupKeySub = widget.auth.onGroupKeyReady.listen((convId) {
       unawaited(_refreshPreviewFor(convId));
     });
@@ -124,22 +127,29 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
   void _onConversationUpdated(ConversationUpdatedFrame frame) {
     if (!mounted) return;
     try {
-      final conv = ConversationItem.fromJson(frame.conversation);
-      final idx = _items.indexWhere((c) => c.id == conv.id);
-      if (idx < 0) return;
-      final wasArchived = _items[idx].isArchived;
-      setState(() {
-        _items[idx] = widget.auth.mergeConversationUpdate(_items[idx], conv);
-        _items = sortConversationsByPin(_items, _pinnedIds);
-      });
-      if (wasArchived) {
-        unawaited(widget.auth.reactivateConversation(_items[idx]));
-      }
+      _applyConversationItemUpdate(
+        ConversationItem.fromJson(frame.conversation),
+      );
     } catch (_) {}
+  }
+
+  void _applyConversationItemUpdate(ConversationItem conv) {
+    if (!mounted) return;
+    final idx = _items.indexWhere((c) => c.id == conv.id);
+    if (idx < 0) return;
+    final wasArchived = _items[idx].isArchived;
+    setState(() {
+      _items[idx] = widget.auth.mergeConversationUpdate(_items[idx], conv);
+      _items = sortConversationsByPin(_items, _pinnedIds);
+    });
+    if (wasArchived) {
+      unawaited(widget.auth.reactivateConversation(_items[idx]));
+    }
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     widget.pendingPushConversation?.removeListener(_onPendingPushConversation);
     _msgSub?.cancel();
     _connSub?.cancel();
@@ -147,8 +157,8 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
     _addedSub?.cancel();
     _removedSub?.cancel();
     _updatedSub?.cancel();
-    _connectivitySub?.cancel();
-    _connectivityDebounce?.cancel();
+    _patchedSub?.cancel();
+    _realtimeRestoredSub?.cancel();
     _groupKeySub?.cancel();
     _connSub?.cancel();
     super.dispose();
@@ -301,15 +311,17 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
   void _onIncomingMessage(ChatMessage msg) {
     if (!mounted) return;
 
+    final me = widget.auth.currentUser;
+    if (me == null) return;
+
     final index = _items.indexWhere((c) => c.id == msg.conversationId);
     if (index < 0) {
+      _bumpUnreadForIncoming(msg);
       _load();
       return;
     }
 
     final conv = _items[index];
-    final me = widget.auth.currentUser;
-    if (me == null) return;
     if (conv.type == 'group' &&
         msg.type != 'system' &&
         msg.epoch < conv.joinedEpochFor(me.id)) {
@@ -321,37 +333,69 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
       return;
     }
 
+    _bumpUnreadForIncoming(msg);
+
     final quick = _quickPreview(conv, me.id, msg);
     final updated = conv.copyWith(lastMessage: msg);
     setState(() {
       _previews[conv.id] = quick;
-      _appendCachedMessage(conv.id, msg, quick);
       _items[index] = updated;
       _items = sortConversationsByPin(_items, _pinnedIds);
     });
 
-    unawaited(_applyIncomingPreview(conv, msg));
-    unawaited(widget.auth.upsertCachedMessage(conv.id, msg));
-    unawaited(() async {
-      if (msg.type == 'announcement' && conv.type == 'group') {
-        if (!mounted) return;
-        final annUnread = await widget.auth.hasUnreadAnnouncementFor(
-          updated,
-        );
-        if (!mounted) return;
-        setState(() => _announcementUnread[msg.conversationId] = annUnread);
-        return;
-      }
-      await widget.auth.noteIncomingMessage(msg);
+    unawaited(_finalizeIncomingMessage(conv, updated, msg));
+  }
+
+  /// 实时未读角标：不等待解密，避免 _refreshUnreadCounts 抢先清零。
+  void _bumpUnreadForIncoming(ChatMessage msg) {
+    if (msg.type == 'announcement' || msg.type == 'system') return;
+    final me = widget.auth.currentUser;
+    if (me == null || msg.senderId == me.id) return;
+    if (widget.auth.isActivelyViewingConversation(msg.conversationId)) {
+      if (mounted) setState(() => _unreadCounts[msg.conversationId] = 0);
+      return;
+    }
+    unawaited(widget.auth.noteIncomingMessage(msg));
+    if (!mounted) return;
+    setState(() {
+      _unreadCounts[msg.conversationId] =
+          (_unreadCounts[msg.conversationId] ?? 0) + 1;
+    });
+  }
+
+  /// 解密、落盘缓存，再更新预览（避免刷新/进聊天后无法解密）。
+  Future<void> _finalizeIncomingMessage(
+    ConversationItem conv,
+    ConversationItem updated,
+    ChatMessage msg,
+  ) async {
+    if (msg.type == 'announcement' && conv.type == 'group') {
       if (!mounted) return;
-      if (widget.auth.isConversationOpen(msg.conversationId)) {
-        setState(() => _unreadCounts[msg.conversationId] = 0);
-        return;
-      }
-      final count = await widget.auth.unreadCountFor(msg.conversationId);
+      final annUnread = await widget.auth.hasUnreadAnnouncementFor(updated);
       if (!mounted) return;
-      setState(() => _unreadCounts[msg.conversationId] = count);
-    }());
+      setState(() => _announcementUnread[msg.conversationId] = annUnread);
+      return;
+    }
+
+    final preview = await widget.auth.decryptPreview(conv, msg);
+    if (!mounted) return;
+
+    final storedPt =
+        await widget.auth.cachedPlaintextForMessage(conv.id, msg.id);
+    final refreshed = updated.copyWith(lastMessage: msg);
+    setState(() {
+      _previews[conv.id] = preview;
+      if (storedPt != null) {
+        _upsertCachedMessage(conv.id, msg, storedPt);
+      } else {
+        _upsertCachedMessageSkeleton(conv.id, msg);
+      }
+      final idx = _items.indexWhere((c) => c.id == conv.id);
+      if (idx >= 0) {
+        _items[idx] = refreshed;
+      }
+      _items = sortConversationsByPin(_items, _pinnedIds);
+    });
   }
 
   Future<void> _applyOwnMessagePreview(
@@ -368,25 +412,11 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
     final updated = conv.copyWith(lastMessage: msg);
     setState(() {
       _previews[conv.id] = preview;
-      _appendCachedMessage(conv.id, msg, preview);
-      final idx = _items.indexWhere((c) => c.id == conv.id);
-      if (idx >= 0) {
-        _items[idx] = updated;
+      if (stored != null) {
+        _upsertCachedMessage(conv.id, msg, stored);
+      } else {
+        _upsertCachedMessageSkeleton(conv.id, msg);
       }
-      _items = sortConversationsByPin(_items, _pinnedIds);
-    });
-  }
-
-  Future<void> _applyIncomingPreview(
-    ConversationItem conv,
-    ChatMessage msg,
-  ) async {
-    final preview = await widget.auth.decryptPreview(conv, msg);
-    if (!mounted) return;
-    final updated = conv.copyWith(lastMessage: msg);
-    setState(() {
-      _previews[conv.id] = preview;
-      _appendCachedMessage(conv.id, msg, preview);
       final idx = _items.indexWhere((c) => c.id == conv.id);
       if (idx >= 0) {
         _items[idx] = updated;
@@ -427,23 +457,61 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
     });
   }
 
-  void _appendCachedMessage(
+  void _upsertCachedMessage(
     String conversationId,
     ChatMessage msg,
-    String preview,
+    String plaintext,
   ) {
-    final existing = _messageCache[conversationId] ?? [];
-    if (existing.any((m) => m.id == msg.id)) return;
+    if (msg.type != 'system' &&
+        msg.type != 'announcement' &&
+        (ChatMessage.isDecryptPlaceholder(plaintext) ||
+            ChatMessage.isDecryptFailure(plaintext))) {
+      _upsertCachedMessageSkeleton(conversationId, msg);
+      return;
+    }
     final stored = msg.type == 'system'
         ? msg.copyWith(plaintext: msg.ciphertext)
         : msg.type == 'announcement'
             ? msg
-            : msg.copyWith(plaintext: preview);
-    _messageCache[conversationId] = [...existing, stored];
+            : msg.copyWith(plaintext: plaintext);
+    final existing = List<ChatMessage>.from(_messageCache[conversationId] ?? []);
+    final i = existing.indexWhere((m) => m.id == msg.id);
+    if (i >= 0) {
+      existing[i] = stored;
+    } else {
+      existing.add(stored);
+    }
+    existing.sort((a, b) => a.createdAt.compareTo(b.createdAt));
+    _messageCache[conversationId] = existing;
+  }
+
+  /// 仅写入密文骨架，避免占位符污染内存缓存。
+  void _upsertCachedMessageSkeleton(String conversationId, ChatMessage msg) {
+    final skeleton = msg.type == 'system'
+        ? msg.copyWith(plaintext: msg.ciphertext)
+        : msg.forCacheWithoutPlaintext;
+    final existing = List<ChatMessage>.from(_messageCache[conversationId] ?? []);
+    final i = existing.indexWhere((m) => m.id == msg.id);
+    if (i >= 0) {
+      final prev = existing[i];
+      existing[i] = ChatMessage(
+        id: prev.id,
+        conversationId: prev.conversationId,
+        senderId: msg.senderId,
+        type: msg.type,
+        ciphertext: msg.ciphertext.isNotEmpty ? msg.ciphertext : prev.ciphertext,
+        createdAt: msg.createdAt,
+        epoch: msg.epoch,
+        fileId: msg.fileId ?? prev.fileId,
+      );
+    } else {
+      existing.add(skeleton);
+    }
+    existing.sort((a, b) => a.createdAt.compareTo(b.createdAt));
+    _messageCache[conversationId] = existing;
   }
 
   Future<void> _refreshUnreadCounts() async {
-    widget.auth.resetUnreadCounts();
     final counts = await widget.auth.unreadCountsFor(
       _items.map((c) => c.id),
     );
@@ -461,14 +529,119 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
     });
   }
 
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(_refreshOnResume());
+    }
+  }
+
+  /// 从系统桌面回到 App：拉最新会话列表与漏收消息，更新首页预览。
+  Future<void> _refreshOnResume() async {
+    if (_resumeRefreshInFlight || !mounted) return;
+    _resumeRefreshInFlight = true;
+    try {
+      await widget.auth.wakeRealtimeFromBackground();
+      if (_items.isEmpty) {
+        await _load();
+        return;
+      }
+      await _refreshListFromServer(silent: true);
+    } finally {
+      _resumeRefreshInFlight = false;
+    }
+  }
+
+  /// 从服务端同步会话列表、漏收消息，并刷新首页预览/未读。
+  Future<void> _refreshListFromServer({bool silent = false}) async {
+    if (!mounted) return;
+    if (!silent) {
+      setState(() {
+        _refreshing = true;
+        _error = null;
+      });
+    }
+    try {
+      final pinned = await widget.auth.pinnedConversationIds();
+      final items = await widget.auth.listAllConversations();
+      if (!mounted) return;
+      await widget.auth.syncMissedMessages(items);
+      if (!mounted) return;
+      await _applyConversationListUpdate(items, pinned);
+      if (!mounted) return;
+      await _refreshUnreadCounts();
+    } catch (_) {
+      // 保留当前列表
+    } finally {
+      if (mounted && !silent) {
+        setState(() => _refreshing = false);
+      }
+    }
+  }
+
+  Future<void> _applyConversationListUpdate(
+    List<ConversationItem> items,
+    List<String> pinned,
+  ) async {
+    final sorted = sortConversationsByPin(items, pinned);
+    final msgCaches = await widget.auth.loadCachedMessagesForConversations(
+      items.map((c) => c.id),
+    );
+    final previews = <String, String>{..._previews};
+    for (final item in items) {
+      final last = item.lastMessage;
+      if (last == null) continue;
+      ConversationItem? prev;
+      for (final c in _items) {
+        if (c.id == item.id) {
+          prev = c;
+          break;
+        }
+      }
+      final lastChanged = prev?.lastMessage?.id != last.id;
+      if (!lastChanged && previews.containsKey(item.id)) continue;
+
+      if (item.type == 'group') {
+        widget.auth.prepareGroupConversation(item);
+        await widget.auth.ensureGroupKeys(
+          item,
+          epochs: [last.epoch],
+        );
+      }
+      final quick = widget.auth.previewIfCached(last);
+      previews[item.id] = quick ??
+          await widget.auth.decryptPreview(
+            item,
+            last,
+            cachedThread: msgCaches[item.id],
+          );
+    }
+    if (!mounted) return;
+    setState(() {
+      _pinnedIds = pinned;
+      _items = sorted;
+      _previews
+        ..clear()
+        ..addAll(previews);
+      for (final id in {...msgCaches.keys, ..._messageCache.keys}) {
+        final persistent = msgCaches[id] ?? [];
+        final memory = _messageCache[id] ?? [];
+        if (persistent.isEmpty && memory.isEmpty) {
+          _messageCache.remove(id);
+        } else {
+          _messageCache[id] = ChatThreadLoader.merge(persistent, memory);
+        }
+      }
+      _syncOfflineNotice();
+    });
+  }
+
   /// 重连后拉取离线消息并刷新未读角标。
   Future<void> _syncAfterOnline() async {
     if (_items.isEmpty || _syncAfterOnlineInFlight) return;
     _syncAfterOnlineInFlight = true;
     try {
-      await widget.auth.syncMissedMessages(_items);
-      if (!mounted) return;
-      await _refreshUnreadCounts();
+      await _refreshListFromServer(silent: true);
     } finally {
       _syncAfterOnlineInFlight = false;
     }
@@ -750,10 +923,11 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
       setState(() => _unreadCounts[item.id] = 0);
     }
     final result = await Navigator.of(context).push<Object?>(
-      MaterialPageRoute(
+      appPageRoute(
         builder: (_) => ChatScreen(
           auth: widget.auth,
           conversation: item,
+          notification: widget.notification,
           initialUnreadCount: initialUnread,
           initialFocusMessageId: focusMessageId,
         ),
@@ -795,10 +969,9 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
 
   Future<void> _openProfile() async {
     final result = await Navigator.of(context).push<Object?>(
-      MaterialPageRoute(
+      appPageRoute(
         builder: (_) => ProfileScreen(
           auth: widget.auth,
-          notification: widget.notification,
           onProfileUpdated: () => setState(() {}),
         ),
       ),
@@ -807,6 +980,20 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
       await widget.onLogout();
     } else if (mounted) {
       setState(() {});
+    }
+  }
+
+  Future<void> _openSettings() async {
+    final result = await Navigator.of(context).push<Object?>(
+      appPageRoute(
+        builder: (_) => SettingsScreen(
+          auth: widget.auth,
+          notification: widget.notification,
+        ),
+      ),
+    );
+    if (result == 'logout' && mounted) {
+      await widget.onLogout();
     }
   }
 
@@ -835,74 +1022,25 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
 
   Future<void> _showAccountMenu() async {
     final me = widget.auth.currentUser!;
-    final action = await showModalBottomSheet<String>(
-      context: context,
-      builder: (ctx) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
-              child: Row(
-                children: [
-                  UserAvatar(
-                    name: me.username,
-                    imageUrl: me.avatarUrl,
-                    radius: 28,
-                  ),
-                  const SizedBox(width: 14),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          me.username,
-                          style: Theme.of(ctx).textTheme.titleMedium,
-                        ),
-                        const SizedBox(height: 2),
-                        Text(
-                          me.email,
-                          style: Theme.of(ctx).textTheme.bodySmall?.copyWith(
-                                color: Theme.of(ctx)
-                                    .colorScheme
-                                    .onSurfaceVariant,
-                              ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const Divider(height: 1),
-            ListTile(
-              leading: const Icon(Icons.person_outline),
-              title: const Text('个人资料'),
-              onTap: () => Navigator.pop(ctx, 'profile'),
-            ),
-            ListTile(
-              leading: Icon(
-                Icons.logout,
-                color: Theme.of(ctx).colorScheme.error,
-              ),
-              title: Text(
-                '退出登录',
-                style: TextStyle(color: Theme.of(ctx).colorScheme.error),
-              ),
-              onTap: () => Navigator.pop(ctx, 'logout'),
-            ),
-            const SizedBox(height: 8),
-          ],
+    await Navigator.of(context).push<void>(
+      slideFromLeftRoute<void>(
+        page: AccountPanelScreen(
+          user: me,
+          onProfile: () {
+            Navigator.of(context).pop();
+            unawaited(_openProfile());
+          },
+          onSettings: () {
+            Navigator.of(context).pop();
+            unawaited(_openSettings());
+          },
+          onLogout: () {
+            Navigator.of(context).pop();
+            unawaited(_confirmLogout());
+          },
         ),
       ),
     );
-    if (!mounted || action == null) return;
-    switch (action) {
-      case 'profile':
-        await _openProfile();
-      case 'logout':
-        await _confirmLogout();
-    }
   }
 
   Future<void> _openCreateMenu() async {
@@ -929,7 +1067,7 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
     if (!mounted || choice == null) return;
 
     final conv = await Navigator.of(context).push<ConversationItem>(
-      MaterialPageRoute(
+      appPageRoute(
         builder: (_) => choice == 'group'
             ? NewGroupScreen(auth: widget.auth)
             : NewChatScreen(auth: widget.auth),
@@ -997,7 +1135,7 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
     final me = widget.auth.currentUser;
     if (me == null) return;
     await Navigator.of(context).push<void>(
-      MaterialPageRoute(
+      appPageRoute(
         builder: (_) => HomeSearchScreen(
           auth: widget.auth,
           conversations: _visibleItems(me.id),

@@ -196,6 +196,16 @@ class WsService {
     }
   }
 
+  /// 网络恢复等场景：重置退避并立即尝试重连。
+  void nudgeReconnect() {
+    if (_manualClose || _reconnectSuspended) return;
+    if (_accessToken == null || _accessToken!.isEmpty) return;
+    if (_connected) return;
+    _cancelReconnect();
+    _reconnectAttempt = 0;
+    unawaited(_openChannel());
+  }
+
   void joinConversation(String conversationId) {
     _send({
       'event': 'join',
@@ -261,7 +271,10 @@ class WsService {
     }
 
     final token = _accessToken;
-    if (token == null || token.isEmpty) return;
+    if (token == null || token.isEmpty) {
+      _scheduleReconnect();
+      return;
+    }
 
     final previousChannel = _channel;
     final previousSub = _sub;
@@ -290,16 +303,11 @@ class WsService {
       nextChannel = WebSocketChannel.connect(uri);
       await nextChannel.ready.timeout(const Duration(seconds: 12));
     } catch (_) {
-      if (swapExisting && previousChannel != null) {
-        _channel = previousChannel;
-        _sub = previousSub;
-      } else {
-        await previousSub?.cancel();
-        try {
-          await previousChannel?.sink.close();
-        } catch (_) {}
-        _handleDisconnect();
-      }
+      await previousSub?.cancel();
+      try {
+        await previousChannel?.sink.close();
+      } catch (_) {}
+      _handleDisconnect();
       return;
     }
 

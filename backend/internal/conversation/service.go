@@ -199,6 +199,24 @@ func (s *Service) DissolveGroup(ctx context.Context, actorID, conversationID str
 	return s.conv.DissolveGroup(ctx, conversationID, actorID)
 }
 
+func (s *Service) SetMemberRole(
+	ctx context.Context,
+	actorID, conversationID, targetID, role string,
+) (*ListItem, error) {
+	role = strings.TrimSpace(role)
+	if role != RoleAdmin && role != RoleMember {
+		return nil, ErrInvalidInput
+	}
+	if err := s.conv.SetMemberRole(ctx, conversationID, actorID, targetID, role); err != nil {
+		return nil, err
+	}
+	conv, err := s.conv.GetByID(ctx, conversationID)
+	if err != nil {
+		return nil, err
+	}
+	return s.toListItemForUser(ctx, conv, actorID)
+}
+
 func (s *Service) assertGroupOwner(ctx context.Context, conversationID, actorID string) error {
 	conv, err := s.GetIfMember(ctx, conversationID, actorID)
 	if err != nil {
