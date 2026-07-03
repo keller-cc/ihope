@@ -57,7 +57,7 @@ class ChatMessageTile extends StatelessWidget {
     Widget body;
     if (msg.type == 'system') {
       body = Center(
-        child: Text(
+        child: SelectableText(
           msg.displayText,
           textAlign: TextAlign.center,
           style: Theme.of(context).textTheme.labelSmall?.copyWith(

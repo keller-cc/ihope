@@ -66,7 +66,7 @@ class AnnouncementCard extends StatelessWidget {
                       ],
                     ),
                     const SizedBox(height: 10),
-                    Text(
+                    SelectableText(
                       body,
                       style: const TextStyle(
                         fontSize: 15,

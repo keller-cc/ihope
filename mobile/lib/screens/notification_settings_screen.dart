@@ -133,7 +133,8 @@ class _NotificationSettingsScreenState
             child: Text(
               '说明：\n'
               '• 前台聊天仍走 WebSocket，当前会话内不弹横幅\n'
-              '• 切到后台后保持连接，收到消息由本机弹出通知（类似 QQ）\n'
+              '• 切到后台后 Android 会显示「正在接收新消息」并保持连接\n'
+              '• 若仍收不到，请在系统设置中将 IHope 设为「不受电池优化」\n'
               '• App 被系统杀掉后，需极光/FCM 才能继续推送\n'
               '• 通知不含消息明文',
               style: TextStyle(fontSize: 13, height: 1.4),

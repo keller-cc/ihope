@@ -83,7 +83,7 @@ class ChatBubble extends StatelessWidget {
       msg.type == 'audio' ||
       MediaLocalCache.localKind(msg.plaintext) == 'audio';
 
-  Widget _bubbleChild() {
+  Widget _bubbleChild(TextStyle textStyle) {
     final inline = MediaPayload.tryParse(msg.plaintext);
     if (_isMedia) {
       return MediaMessageBody(
@@ -93,7 +93,7 @@ class ChatBubble extends StatelessWidget {
         onMediaRetry: onMediaRetry,
       );
     }
-    return Text(msg.displayText);
+    return SelectableText(msg.displayText, style: textStyle);
   }
 
   Widget _unreadMarkerDot(ColorScheme scheme) {
@@ -162,6 +162,10 @@ class ChatBubble extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final maxBubbleWidth = MediaQuery.sizeOf(context).width * 0.65;
+    final textStyle = TextStyle(
+      color: mine ? scheme.onPrimaryContainer : scheme.onSurface,
+      fontSize: 15,
+    );
     final bubble = Container(
       padding: _isVoice
           ? const EdgeInsets.symmetric(horizontal: 8, vertical: 4)
@@ -171,11 +175,8 @@ class ChatBubble extends StatelessWidget {
         borderRadius: BorderRadius.circular(12),
       ),
       child: DefaultTextStyle(
-        style: TextStyle(
-          color: mine ? scheme.onPrimaryContainer : scheme.onSurface,
-          fontSize: 15,
-        ),
-        child: _bubbleChild(),
+        style: textStyle,
+        child: _bubbleChild(textStyle),
       ),
     );
     final bubbleBox = ConstrainedBox(

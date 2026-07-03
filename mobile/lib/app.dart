@@ -57,7 +57,9 @@ class _IHopeAppState extends State<IHopeApp> with WidgetsBindingObserver {
       case AppLifecycleState.paused:
       case AppLifecycleState.hidden:
       case AppLifecycleState.detached:
-        widget.auth.ws.suspendReconnect();
+        if (!widget.auth.isBackgroundKeepAliveActive) {
+          widget.auth.ws.suspendReconnect();
+        }
       case AppLifecycleState.inactive:
         break;
     }

@@ -1,0 +1,46 @@
+name: Release APK
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Configure production API
+        run: |
+          if [ -z "${{ secrets.API_BASE }}" ]; then
+            echo "::error::Set repository secret API_BASE (e.g. https://im.example.com)"
+            exit 1
+          fi
+          echo "{\"API_BASE\":\"${{ secrets.API_BASE }}\"}" > config/prod.json
+
+      - name: Build domestic release APK
+        run: |
+          flutter pub get
+          flutter build apk --release --flavor domestic \
+            --dart-define-from-file=config/prod.json \
+            --dart-define-from-file=config/domestic.json
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: mobile/build/app/outputs/flutter-apk/app-domestic-release.apk
+          generate_release_notes: true
+          fail_on_unmatched_files: true

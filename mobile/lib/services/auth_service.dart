@@ -77,6 +77,7 @@ class AuthService {
   final Set<String> _messageCacheMigrated = {};
   String? _openConversationId;
   bool _appInForeground = true;
+  bool _backgroundKeepAliveActive = false;
   final Map<String, int> _unreadCounts = {};
   final Map<String, DateTime> _conversationReadAtCache = {};
   final Map<String, DateTime> _removalUiClaimed = {};
@@ -615,6 +616,17 @@ class AuthService {
   /// App 是否仍可见（与 [setOpenConversation] 一起判断是否抑制通知）。
   void setAppInForeground(bool inForeground) {
     _appInForeground = inForeground;
+  }
+
+  /// Android 前台保活运行中：勿暂停 WS 心跳/重连。
+  bool get isBackgroundKeepAliveActive => _backgroundKeepAliveActive;
+
+  void setBackgroundKeepAlive(bool active) {
+    if (_backgroundKeepAliveActive == active) return;
+    _backgroundKeepAliveActive = active;
+    if (active) {
+      ws.wakeFromBackground();
+    }
   }
 
   bool isActivelyViewingConversation(String conversationId) =>

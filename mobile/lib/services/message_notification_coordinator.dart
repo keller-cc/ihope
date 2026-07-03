@@ -105,19 +105,22 @@ class MessageNotificationCoordinator {
   Future<void> start() async {
     _systemNotificationsEnabled = true;
     await _startListening();
-    await _syncKeepAlive();
+    _syncKeepAliveFlag();
+    await _syncKeepAliveService();
   }
 
   Future<void> stop() async {
     _systemNotificationsEnabled = false;
     _inAppConvCounts.clear();
-    await _syncKeepAlive();
+    _syncKeepAliveFlag();
+    await _syncKeepAliveService();
   }
 
   Future<void> pauseForLogout() async {
     _systemNotificationsEnabled = false;
     await _pauseListening();
     _inAppConvCounts.clear();
+    _auth.setBackgroundKeepAlive(false);
   }
 
   void onConversationOpened(String conversationId) {
@@ -132,6 +135,7 @@ class MessageNotificationCoordinator {
     await _msgSub?.cancel();
     _msgSub = null;
     _listening = false;
+    _auth.setBackgroundKeepAlive(false);
     await _keepAlive.stop();
   }
 
@@ -140,24 +144,36 @@ class MessageNotificationCoordinator {
     _listening = true;
     await _msgSub?.cancel();
     _msgSub = _auth.ws.onMessage.listen((m) => unawaited(_onMessage(m)));
-    await _syncKeepAlive();
+    _syncKeepAliveFlag();
+    await _syncKeepAliveService();
   }
 
   void onLifecycleChanged(AppLifecycleState state) {
     _lifecycle = state;
     _auth.setAppInForeground(isAppForegroundLifecycle(state));
+    _syncKeepAliveFlag();
     if (state == AppLifecycleState.resumed) {
       _inAppConvCounts.clear();
     }
-    unawaited(_syncKeepAlive());
+    unawaited(_syncKeepAliveService());
   }
 
-  Future<void> _syncKeepAlive() async {
-    if (!_systemNotificationsEnabled) {
+  /// 同步标记（须在 [AuthService.ws.suspendReconnect] 之前）。
+  void _syncKeepAliveFlag() {
+    if (!_listening) {
+      _auth.setBackgroundKeepAlive(false);
+      return;
+    }
+    final background = !isAppForegroundLifecycle(_lifecycle);
+    _auth.setBackgroundKeepAlive(background && _keepAlive.isSupported);
+  }
+
+  Future<void> _syncKeepAliveService() async {
+    if (!_listening) {
       await _keepAlive.stop();
       return;
     }
-    final background = _lifecycle != AppLifecycleState.resumed;
+    final background = !isAppForegroundLifecycle(_lifecycle);
     if (background && _keepAlive.isSupported) {
       await _keepAlive.start();
     } else {

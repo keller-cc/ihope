@@ -13,13 +13,21 @@ import 'push_service.dart';
 
 /// 后台通知编排：WebSocket + 系统横幅 + 应用内横幅 + 前台保活；进程被杀后靠 FCM。
 class NotificationService {
-  NotificationService({PushService? push}) : push = push ?? PushService();
-
   final PushService push;
   final LocalNotificationService _local = LocalNotificationService();
   final BackgroundKeepAliveService _keepAlive = BackgroundKeepAliveService();
   MessageNotificationCoordinator? _coordinator;
   AuthService? _auth;
+
+  NotificationService({PushService? push})
+      : push = push ?? PushService() {
+    _keepAlive.onWsNudge = () {
+      final auth = _auth;
+      if (auth == null) return;
+      auth.ws.nudgeReconnect();
+      unawaited(auth.ensureRealtimeConnected(maxAttempts: 3));
+    };
+  }
 
   final StreamController<InAppMessageBannerEvent> _inAppBannerController =
       StreamController<InAppMessageBannerEvent>.broadcast();
@@ -39,6 +47,7 @@ class NotificationService {
     void Function(String conversationId)? onOpenConversation,
   }) async {
     _auth = auth;
+    _keepAlive.ensureCallbackRegistered();
     await _local.initialize(onTap: onOpenConversation);
     _coordinator = MessageNotificationCoordinator(
       auth: auth,
