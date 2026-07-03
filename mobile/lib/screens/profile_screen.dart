@@ -9,6 +9,7 @@ import '../widgets/user_avatar.dart';
 import 'change_password_screen.dart';
 import 'notification_settings_screen.dart';
 import 'server_settings_screen.dart';
+import 'storage_settings_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({
@@ -202,6 +203,19 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     auth: widget.auth,
                     notification: widget.notification,
                   ),
+                ),
+              );
+            },
+          ),
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('存储与缓存'),
+            subtitle: const Text('清除本地消息与媒体缓存'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () {
+              Navigator.of(context).push<void>(
+                MaterialPageRoute(
+                  builder: (_) => StorageSettingsScreen(auth: widget.auth),
                 ),
               );
             },

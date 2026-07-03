@@ -92,6 +92,7 @@ class WsService {
   WebSocketChannel? _channel;
   StreamSubscription? _sub;
   Timer? _reconnectTimer;
+  bool _reconnectSuspended = false;
 
   String? _accessToken;
   bool _manualClose = false;
@@ -165,9 +166,27 @@ class WsService {
     _manualClose = true;
     _accessToken = null;
     _reconnectAttempt = 0;
+    _reconnectSuspended = false;
     _cancelReconnect();
     await _closeChannel();
     _setConnected(false);
+  }
+
+  /// 进入后台时暂停自动重连，节省电量。
+  void suspendReconnect() {
+    _reconnectSuspended = true;
+    _cancelReconnect();
+  }
+
+  /// 回到前台：取消挂起的退避计时并立即尝试重连。
+  void wakeFromBackground() {
+    _reconnectSuspended = false;
+    if (_manualClose || _accessToken == null) return;
+    _cancelReconnect();
+    _reconnectAttempt = 0;
+    if (!_connected) {
+      unawaited(_openChannel());
+    }
   }
 
   void joinConversation(String conversationId) {
@@ -434,14 +453,16 @@ class WsService {
   }
 
   void _scheduleReconnect() {
-    if (_manualClose || _accessToken == null) return;
+    if (_manualClose || _accessToken == null || _reconnectSuspended) return;
 
     _cancelReconnect();
-    final seconds = min(30, pow(2, _reconnectAttempt).toInt());
+    final base = min(30, pow(2, _reconnectAttempt).toInt());
+    final jitter = Random().nextInt(3);
+    final seconds = base + jitter;
     _reconnectAttempt++;
 
     _reconnectTimer = Timer(Duration(seconds: seconds), () async {
-      if (_manualClose || _connected) return;
+      if (_manualClose || _connected || _reconnectSuspended) return;
       await _openChannel();
     });
   }

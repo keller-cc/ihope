@@ -10,6 +10,15 @@ import 'media_payload.dart';
 class MediaLocalCache {
   MediaLocalCache._();
 
+  static Future<void> clearAll() async {
+    try {
+      final dir = await _dir();
+      if (await dir.exists()) {
+        await dir.delete(recursive: true);
+      }
+    } catch (_) {}
+  }
+
   static Future<Directory> _dir() async {
     final base = await getApplicationDocumentsDirectory();
     final dir = Directory('${base.path}/ihope_media');

@@ -17,14 +17,23 @@ import 'auth_session_policy.dart';
 import 'auth_storage.dart';
 import 'conversation_service.dart';
 import 'group_key_service.dart';
+import 'message_cache_store.dart';
+import 'recent_emoji_store.dart';
 import 'signal_kds_service.dart';
 import 'ws_service.dart';
 
 class AuthService {
-  AuthService({ApiClient? api, AuthStorage? storage, WsService? ws})
-      : api = api ?? ApiClient(),
+  AuthService({
+    ApiClient? api,
+    AuthStorage? storage,
+    WsService? ws,
+    MessageCacheStore? messageCache,
+    RecentEmojiStore? recentEmojis,
+  })  : api = api ?? ApiClient(),
         storage = storage ?? AuthStorage(),
-        ws = ws ?? WsService() {
+        ws = ws ?? WsService(),
+        messageCache = messageCache ?? MessageCacheStore(),
+        recentEmojis = recentEmojis ?? RecentEmojiStore() {
     this.api.onUnauthorized = _tryRefreshTokens;
     this.ws.resolveToken = ensureValidAccessToken;
   }
@@ -32,6 +41,8 @@ class AuthService {
   final ApiClient api;
   final AuthStorage storage;
   final WsService ws;
+  final MessageCacheStore messageCache;
+  final RecentEmojiStore recentEmojis;
   late final ConversationService conversations = ConversationService(api);
 
   User? currentUser;
@@ -42,6 +53,7 @@ class AuthService {
   final Map<String, Map<String, ConversationMember>> _memberDirectories = {};
   final Map<String, List<ChatMessage>> _messagesMem = {};
   final Set<String> _memberDirectorySynced = {};
+  final Set<String> _messageCacheMigrated = {};
   String? _openConversationId;
   final Map<String, int> _unreadCounts = {};
   final Map<String, DateTime> _conversationReadAtCache = {};
@@ -1129,11 +1141,58 @@ class AuthService {
       stored.add(await _compactMessageForCache(m));
     }
     _messagesMem[conversationId] = stored;
-    await storage.saveMessageCache(
-      me.id,
-      conversationId,
-      stored.map((m) => m.toJson()).toList(),
-    );
+    await _ensureMessageCacheMigrated(me.id);
+    await messageCache.replaceConversation(me.id, conversationId, stored);
+  }
+
+  Future<void> _ensureMessageCacheMigrated(String userId) async {
+    if (_messageCacheMigrated.contains(userId)) return;
+    _messageCacheMigrated.add(userId);
+    final legacy = await storage.readLegacyMessageCaches(userId);
+    for (final entry in legacy.entries) {
+      final list =
+          entry.value.map((e) => ChatMessage.fromJson(e)).toList(growable: false);
+      if (list.isEmpty) continue;
+      await messageCache.replaceConversation(userId, entry.key, list);
+      await storage.deleteLegacyMessageCache(userId, entry.key);
+    }
+  }
+
+  Future<List<ChatMessage>> loadCachedMessages(String conversationId) async {
+    final mem = _messagesMem[conversationId];
+    if (mem != null) return List<ChatMessage>.from(mem);
+    final me = currentUser;
+    if (me == null) return [];
+    await _ensureMessageCacheMigrated(me.id);
+    final list = await messageCache.load(me.id, conversationId);
+    _messagesMem[conversationId] = list;
+    return list;
+  }
+
+  /// 清除本地缓存（消息、媒体、表情最近使用等），不退出登录。
+  Future<void> clearLocalCache() async {
+    final me = currentUser;
+    _messagesMem.clear();
+    await messageCache.clearAll();
+    await recentEmojis.clear();
+    await MediaLocalCache.clearAll();
+    if (me != null) {
+      await storage.deleteLegacyMessageCachesForUser(me.id);
+    }
+  }
+
+  /// 清除更广的本地数据（含会话快照、已读游标等），保留登录与加密密钥。
+  Future<void> clearLocalData() async {
+    final me = currentUser;
+    await clearLocalCache();
+    if (me == null) return;
+    await storage.clearLocalCachesForUser(me.id);
+    _conversationCache.clear();
+    _memberDirectories.clear();
+    _memberDirectorySynced.clear();
+    _conversationReadAtCache.clear();
+    _unreadCounts.clear();
+    _messageCacheMigrated.remove(me.id);
   }
 
   Future<ChatMessage> _compactMessageForCache(ChatMessage msg) async {
@@ -1174,18 +1233,6 @@ class AuthService {
       }
     }
     return true;
-  }
-
-  Future<List<ChatMessage>> loadCachedMessages(String conversationId) async {
-    final mem = _messagesMem[conversationId];
-    if (mem != null) return List<ChatMessage>.from(mem);
-    final me = currentUser;
-    if (me == null) return [];
-    final raw = await storage.readMessageCache(me.id, conversationId);
-    final list = raw.map((e) => ChatMessage.fromJson(e)).toList()
-      ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
-    _messagesMem[conversationId] = list;
-    return list;
   }
 
   /// 批量读取本地消息缓存，供首页跨 epoch 搜索历史。
@@ -1793,6 +1840,12 @@ class AuthService {
     final token = await ensureValidAccessToken();
     if (token == null || token.isEmpty) return;
     await ws.reconnect(token);
+  }
+
+  /// App 回到前台或网络恢复时：立即尝试重连 WS。
+  Future<void> wakeRealtimeFromBackground() async {
+    ws.wakeFromBackground();
+    await ensureRealtimeConnected();
   }
 
   /// 登录/进首页时确保 WS 已连上；失败则指数退避重试。

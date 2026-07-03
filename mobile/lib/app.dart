@@ -49,8 +49,16 @@ class _IHopeAppState extends State<IHopeApp> with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     widget.notification.onLifecycleChanged(state);
-    if (state == AppLifecycleState.resumed && _loggedIn == true) {
-      unawaited(widget.auth.ensureRealtimeConnected());
+    if (_loggedIn != true) return;
+    switch (state) {
+      case AppLifecycleState.resumed:
+        unawaited(widget.auth.wakeRealtimeFromBackground());
+      case AppLifecycleState.paused:
+      case AppLifecycleState.inactive:
+        widget.auth.ws.suspendReconnect();
+      case AppLifecycleState.detached:
+      case AppLifecycleState.hidden:
+        break;
     }
   }
 

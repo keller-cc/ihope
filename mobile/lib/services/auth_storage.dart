@@ -351,6 +351,67 @@ class AuthStorage {
     }
   }
 
+  /// 一次性迁移：读取 secure storage 中该用户所有旧版消息缓存。
+  Future<Map<String, List<Map<String, dynamic>>>> readLegacyMessageCaches(
+    String userId,
+  ) async {
+    final prefix = 'message_cache_${userId}_';
+    final all = await _storage.readAll();
+    final out = <String, List<Map<String, dynamic>>>{};
+    for (final entry in all.entries) {
+      if (!entry.key.startsWith(prefix)) continue;
+      final convId = entry.key.substring(prefix.length);
+      if (convId.isEmpty) continue;
+      try {
+        final list = jsonDecode(entry.value) as List<dynamic>;
+        out[convId] =
+            list.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+      } catch (_) {}
+    }
+    return out;
+  }
+
+  Future<void> deleteLegacyMessageCache(
+    String userId,
+    String conversationId,
+  ) async {
+    await _storage.delete(key: _messageCacheKey(userId, conversationId));
+  }
+
+  Future<void> deleteLegacyMessageCachesForUser(String userId) async {
+    final prefix = 'message_cache_${userId}_';
+    final all = await _storage.readAll();
+    for (final key in all.keys) {
+      if (key.startsWith(prefix)) {
+        await _storage.delete(key: key);
+      }
+    }
+  }
+
+  /// 清除非登录态本地数据（保留 token、身份密钥、Signal 会话）。
+  Future<void> clearLocalCachesForUser(String userId) async {
+    await deleteLegacyMessageCachesForUser(userId);
+    await _storage.delete(key: _conversationListKey(userId));
+    await _storage.delete(key: _pinnedKey(userId));
+    await _storage.delete(key: _hiddenConversationsKey(userId));
+    await _storage.delete(key: _archivedConversationsKey(userId));
+
+    final all = await _storage.readAll();
+    final prefixes = [
+      'read_cursor_${userId}_',
+      'announcement_read_${userId}_',
+      'announcement_read_ids_${userId}_',
+      'member_directory_${userId}_',
+      'chat_search_history_${userId}_',
+      'megolm_rotation_${userId}_',
+    ];
+    for (final key in all.keys) {
+      if (prefixes.any((p) => key.startsWith(p))) {
+        await _storage.delete(key: key);
+      }
+    }
+  }
+
   Future<void> saveConversationListSnapshot(
     String userId,
     List<Map<String, dynamic>> conversations,

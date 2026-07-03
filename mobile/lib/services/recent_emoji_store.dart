@@ -45,4 +45,8 @@ class RecentEmojiStore {
     await _storage.write(key: _kRecentEmojisKey, value: jsonEncode(next));
     return next;
   }
+
+  Future<void> clear() async {
+    await _storage.delete(key: _kRecentEmojisKey);
+  }
 }

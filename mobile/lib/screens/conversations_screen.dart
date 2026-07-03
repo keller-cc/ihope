@@ -87,7 +87,7 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
         _connectivityDebounce?.cancel();
         _connectivityDebounce = Timer(const Duration(seconds: 2), () {
           if (!mounted) return;
-          unawaited(widget.auth.ensureRealtimeConnected());
+          unawaited(widget.auth.wakeRealtimeFromBackground());
           unawaited(_syncAfterOnline());
         });
       }
