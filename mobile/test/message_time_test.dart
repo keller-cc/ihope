@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:intl/date_symbol_data_local.dart';
 import 'package:ihope/utils/message_time.dart';
 
 void main() {
@@ -36,6 +37,14 @@ void main() {
         8,
       );
       expect(MessageTimeFormat.formatBubble(today), '14:08');
+    });
+
+    test('formats list weekday in Chinese', () async {
+      await initializeDateFormatting('zh_CN');
+      final now = DateTime.now();
+      final threeDaysAgo = DateTime(now.year, now.month, now.day - 3, 9, 0);
+      final label = MessageTimeFormat.formatList(threeDaysAgo);
+      expect(label, contains('星期'));
     });
   });
 }

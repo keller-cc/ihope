@@ -175,6 +175,18 @@ class SignalDmService {
   bool isEncrypted(String value) => value.startsWith(signalWirePrefix);
 
   Future<String> encrypt(String peerUserId, String plaintext) async {
+    try {
+      return await _encryptOnce(peerUserId, plaintext);
+    } catch (_) {
+      final store = await _protocolStore();
+      final remote = await _remoteAddress(peerUserId);
+      await _resetSession(store, remote);
+      await _buildSession(store, peerUserId, remote);
+      return await _encryptOnce(peerUserId, plaintext);
+    }
+  }
+
+  Future<String> _encryptOnce(String peerUserId, String plaintext) async {
     final store = await _protocolStore();
     final remote = await _remoteAddress(peerUserId);
     if (!await store.containsSession(remote)) {
@@ -190,26 +202,53 @@ class SignalDmService {
     if (!isEncrypted(payload)) return payload;
     final store = await _protocolStore();
     final remote = await _remoteAddress(peerUserId);
-    final cipher = SessionCipher.fromStore(store, remote);
     final body = _decodeWire(payload);
     try {
-      final Uint8List clear;
-      if (body.type == CiphertextMessage.prekeyType) {
-        clear = await cipher.decrypt(PreKeySignalMessage(body.bytes));
-      } else if (body.type == CiphertextMessage.whisperType) {
-        clear = await cipher.decryptFromSignal(
-          SignalMessage.fromSerialized(body.bytes),
-        );
-      } else {
-        throw E2eeException('不支持的 Signal 消息类型');
-      }
-      await _persist();
-      return utf8.decode(clear);
+      return await _decryptOnce(store, remote, body);
     } on NoSessionException {
       await _buildSession(store, peerUserId, remote);
       return decrypt(peerUserId, payload);
     } catch (_) {
-      return '[无法解密]';
+      if (body.type == CiphertextMessage.prekeyType) {
+        return '[无法解密]';
+      }
+      await _resetSession(store, remote);
+      try {
+        await _buildSession(store, peerUserId, remote);
+        return await _decryptOnce(store, remote, body);
+      } catch (_) {
+        return '[无法解密]';
+      }
+    }
+  }
+
+  Future<String> _decryptOnce(
+    InMemorySignalProtocolStore store,
+    SignalProtocolAddress remote,
+    ({int type, Uint8List bytes}) body,
+  ) async {
+    final cipher = SessionCipher.fromStore(store, remote);
+    final Uint8List clear;
+    if (body.type == CiphertextMessage.prekeyType) {
+      clear = await cipher.decrypt(PreKeySignalMessage(body.bytes));
+    } else if (body.type == CiphertextMessage.whisperType) {
+      clear = await cipher.decryptFromSignal(
+        SignalMessage.fromSerialized(body.bytes),
+      );
+    } else {
+      throw E2eeException('不支持的 Signal 消息类型');
+    }
+    await _persist();
+    return utf8.decode(clear);
+  }
+
+  Future<void> _resetSession(
+    InMemorySignalProtocolStore store,
+    SignalProtocolAddress remote,
+  ) async {
+    if (await store.containsSession(remote)) {
+      await store.deleteSession(remote);
+      await _persist();
     }
   }
 

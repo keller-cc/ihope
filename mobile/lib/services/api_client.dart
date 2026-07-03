@@ -1,4 +1,5 @@
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 
 import '../config/env.dart';
 
@@ -22,6 +23,15 @@ class ApiClient {
         headers: {'Content-Type': 'application/json'},
       ),
     );
+    if (kDebugMode) {
+      _dio.interceptors.add(
+        LogInterceptor(
+          requestBody: true,
+          responseBody: false,
+          logPrint: (line) => debugPrint(line.toString()),
+        ),
+      );
+    }
     _dio.interceptors.add(
       InterceptorsWrapper(
         onError: (error, handler) async {

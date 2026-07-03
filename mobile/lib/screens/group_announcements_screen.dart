@@ -16,10 +16,13 @@ class GroupAnnouncementsScreen extends StatefulWidget {
     super.key,
     required this.auth,
     required this.conversation,
+    this.initialAnnouncements,
   });
 
   final AuthService auth;
   final ConversationItem conversation;
+  /// 从聊天页带入已解密的公告，可立即展示。
+  final List<ChatMessage>? initialAnnouncements;
 
   @override
   State<GroupAnnouncementsScreen> createState() =>
@@ -27,17 +30,16 @@ class GroupAnnouncementsScreen extends StatefulWidget {
 }
 
 class _GroupAnnouncementsScreenState extends State<GroupAnnouncementsScreen> {
-  List<ChatMessage> _messages = [];
-  String? _readMessageId;
+  List<ChatMessage> _announcements = [];
+  Set<String> _readAnnouncementIds = {};
   bool _loading = true;
+  bool _syncingRemote = false;
   String? _error;
 
   bool get _isOwner {
     final me = widget.auth.currentUser;
     return me != null && widget.conversation.isOwner(me.id);
   }
-
-  List<ChatMessage> get _announcements => AnnouncementRead.allOf(_messages);
 
   @override
   void initState() {
@@ -51,32 +53,19 @@ class _GroupAnnouncementsScreenState extends State<GroupAnnouncementsScreen> {
       _error = null;
     });
     try {
-      final readId =
-          await widget.auth.announcementReadIdFor(widget.conversation.id);
-      var cached = await widget.auth.loadCachedMessages(widget.conversation.id);
-      cached = await widget.auth.decryptMessagesLocal(
+      final phase1 = await widget.auth.loadAnnouncementsFromCache(
         widget.conversation,
-        cached,
+        seed: widget.initialAnnouncements,
       );
-      if (!widget.conversation.isArchived) {
-        try {
-          final remote = await widget.auth.conversations.listMessages(
-            widget.conversation.id,
-            limit: 100,
-          );
-          cached = _merge(remote, cached);
-          cached = await widget.auth.decryptMessagesLocal(
-            widget.conversation,
-            cached,
-          );
-        } catch (_) {}
-      }
       if (!mounted) return;
       setState(() {
-        _messages = cached;
-        _readMessageId = readId;
+        _announcements = phase1.announcements;
+        _readAnnouncementIds = phase1.readIds;
         _loading = false;
       });
+      if (!widget.conversation.isArchived) {
+        unawaited(_syncRemote());
+      }
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -86,25 +75,26 @@ class _GroupAnnouncementsScreenState extends State<GroupAnnouncementsScreen> {
     }
   }
 
-  List<ChatMessage> _merge(List<ChatMessage> remote, List<ChatMessage> cached) {
-    final byId = {for (final m in remote) m.id: m};
-    for (final c in cached) {
-      final r = byId[c.id];
-      if (r == null) {
-        byId[c.id] = c;
-      } else if (c.plaintext != null && c.plaintext!.isNotEmpty) {
-        byId[c.id] = r.copyWith(plaintext: c.plaintext);
-      }
+  Future<void> _syncRemote() async {
+    if (_syncingRemote) return;
+    _syncingRemote = true;
+    try {
+      final refreshed = await widget.auth.refreshAnnouncementsRemote(
+        widget.conversation,
+        _announcements,
+      );
+      if (!mounted) return;
+      setState(() => _announcements = refreshed);
+    } finally {
+      _syncingRemote = false;
     }
-    return byId.values.toList()
-      ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
   }
 
   bool _isUnread(ChatMessage ann) {
     final me = widget.auth.currentUser!;
     return AnnouncementRead.isItemUnread(
       announcement: ann,
-      readMarker: AnnouncementRead.findById(_messages, _readMessageId),
+      readIds: _readAnnouncementIds,
       myUserId: me.id,
     );
   }
@@ -112,7 +102,7 @@ class _GroupAnnouncementsScreenState extends State<GroupAnnouncementsScreen> {
   Future<void> _markAnnouncementReadFor(ChatMessage ann) async {
     await widget.auth.markAnnouncementRead(widget.conversation.id, ann.id);
     if (!mounted) return;
-    setState(() => _readMessageId = ann.id);
+    setState(() => _readAnnouncementIds = {..._readAnnouncementIds, ann.id});
   }
 
   Future<void> _openDetail(ChatMessage ann) async {
@@ -137,7 +127,7 @@ class _GroupAnnouncementsScreenState extends State<GroupAnnouncementsScreen> {
     );
     if (sent == null || !mounted) return;
     setState(() {
-      _messages = [..._messages, sent];
+      _announcements = AnnouncementRead.allOf([..._announcements, sent]);
     });
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('群公告已发布')),
@@ -147,13 +137,12 @@ class _GroupAnnouncementsScreenState extends State<GroupAnnouncementsScreen> {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final announcements = _announcements;
     final me = widget.auth.currentUser;
     final unreadCount = me == null
         ? 0
         : AnnouncementRead.countUnread(
-            _messages,
-            readMessageId: _readMessageId,
+            _announcements,
+            readIds: _readAnnouncementIds,
             myUserId: me.id,
           );
 
@@ -161,6 +150,17 @@ class _GroupAnnouncementsScreenState extends State<GroupAnnouncementsScreen> {
       appBar: AppBar(
         title: const Text('群公告'),
         actions: [
+          if (_syncingRemote)
+            const Padding(
+              padding: EdgeInsets.only(right: 12),
+              child: Center(
+                child: SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+              ),
+            ),
           if (unreadCount > 0)
             Center(
               child: Padding(
@@ -191,8 +191,11 @@ class _GroupAnnouncementsScreenState extends State<GroupAnnouncementsScreen> {
           : _error != null
               ? Center(child: Text(_error!))
               : RefreshIndicator(
-                  onRefresh: _load,
-                  child: announcements.isEmpty
+                  onRefresh: () async {
+                    await _load();
+                    await _syncRemote();
+                  },
+                  child: _announcements.isEmpty
                       ? ListView(
                           physics: const AlwaysScrollableScrollPhysics(),
                           children: [
@@ -226,15 +229,14 @@ class _GroupAnnouncementsScreenState extends State<GroupAnnouncementsScreen> {
                         )
                       : ListView.separated(
                           padding: const EdgeInsets.fromLTRB(12, 12, 12, 88),
-                          itemCount: announcements.length,
+                          itemCount: _announcements.length,
                           separatorBuilder: (_, __) =>
                               const SizedBox(height: 4),
                           itemBuilder: (context, index) {
-                            final ann = announcements[index];
-                            final unread = _isUnread(ann);
+                            final ann = _announcements[index];
                             return AnnouncementCard(
                               msg: ann,
-                              isUnread: unread,
+                              isUnread: _isUnread(ann),
                               onTap: () => unawaited(_openDetail(ann)),
                             );
                           },

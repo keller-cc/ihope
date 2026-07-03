@@ -179,12 +179,14 @@ class ConversationService {
     String conversationId, {
     int limit = 50,
     String? before,
+    String? type,
   }) async {
     final data = await api.getJson(
       '/api/conversations/$conversationId/messages',
       query: {
         'limit': limit,
         if (before != null) 'before': before,
+        if (type != null) 'type': type,
       },
     );
     return (data['messages'] as List<dynamic>)

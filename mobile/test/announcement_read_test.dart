@@ -33,31 +33,46 @@ void main() {
       expect(latest?.id, 'a2');
     });
 
-    test('isUnread when read marker is older announcement', () {
+    test('reading one announcement does not mark others read', () {
       final t0 = DateTime.utc(2026, 1, 1);
-      final t1 = t0.add(const Duration(hours: 1));
-      final all = [_ann('a1', t0), _ann('a2', t1)];
+      final all = [
+        _ann('a1', t0),
+        _ann('a2', t0.add(const Duration(hours: 1))),
+        _ann('a3', t0.add(const Duration(hours: 2))),
+      ];
+      const readIds = {'a3'};
+
       expect(
         AnnouncementRead.isUnread(
-          announcement: all[1],
-          readMessageId: 'a1',
+          announcement: all[0],
+          readIds: readIds,
           myUserId: 'me',
-          allMessages: all,
         ),
         isTrue,
       );
       expect(
         AnnouncementRead.isUnread(
           announcement: all[1],
-          readMessageId: 'a2',
+          readIds: readIds,
           myUserId: 'me',
-          allMessages: all,
+        ),
+        isTrue,
+      );
+      expect(
+        AnnouncementRead.isUnread(
+          announcement: all[2],
+          readIds: readIds,
+          myUserId: 'me',
         ),
         isFalse,
       );
+      expect(
+        AnnouncementRead.countUnread(all, readIds: readIds, myUserId: 'me'),
+        2,
+      );
     });
 
-    test('countUnread across history', () {
+    test('countUnread with multiple read ids', () {
       final t0 = DateTime.utc(2026, 1, 1);
       final all = [
         _ann('a1', t0),
@@ -67,10 +82,10 @@ void main() {
       expect(
         AnnouncementRead.countUnread(
           all,
-          readMessageId: 'a1',
+          readIds: {'a1', 'a3'},
           myUserId: 'me',
         ),
-        2,
+        1,
       );
     });
 
@@ -79,7 +94,7 @@ void main() {
       expect(
         AnnouncementRead.isUnread(
           announcement: ann,
-          readMessageId: null,
+          readIds: {},
           myUserId: 'me',
         ),
         isTrue,
@@ -87,7 +102,7 @@ void main() {
       expect(
         AnnouncementRead.isUnread(
           announcement: ann,
-          readMessageId: 'a1',
+          readIds: {'a1'},
           myUserId: 'me',
           allMessages: [ann],
         ),

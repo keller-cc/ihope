@@ -123,16 +123,19 @@ class ChatThreadLoader {
     );
   }
 
-  /// 保留本机未送达的乐观消息（刷新/合并历史时不丢失）。
+  /// 保留本机未送达的乐观消息，以及尚未出现在 [fresh] 中的已发送消息
+  /// （避免发送与历史刷新/后台同步并发时刚发出的消息被覆盖掉）。
   static List<ChatMessage> preserveLocalOutgoing(
     List<ChatMessage> fresh,
     List<ChatMessage> current,
   ) {
-    final pending = current.where((m) => m.isPendingOutgoing).toList();
-    if (pending.isEmpty) return fresh;
+    if (current.isEmpty) return fresh;
+    final freshIds = {for (final m in fresh) m.id: true};
     var merged = fresh;
-    for (final m in pending) {
-      merged = upsert(merged, m);
+    for (final m in current) {
+      if (m.isPendingOutgoing || (!m.isLocalOutgoing && !freshIds.containsKey(m.id))) {
+        merged = upsert(merged, m);
+      }
     }
     return merged;
   }

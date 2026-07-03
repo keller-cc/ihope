@@ -96,5 +96,15 @@ void main() {
       final merged = ChatThreadLoader.preserveLocalOutgoing(fresh, current);
       expect(merged.map((m) => m.id), ['s1']);
     });
+
+    test('keeps server message not yet in fresh history during sync race', () {
+      final justSent = server('s2');
+      final current = [server('s1'), justSent];
+      final fresh = [server('s1')];
+
+      final merged = ChatThreadLoader.preserveLocalOutgoing(fresh, current);
+
+      expect(merged.map((m) => m.id), ['s1', 's2']);
+    });
   });
 }

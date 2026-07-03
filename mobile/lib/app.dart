@@ -27,12 +27,21 @@ class _IHopeAppState extends State<IHopeApp> {
   Future<void> _bootstrap() async {
     final local = await widget.auth.restoreLocalSession();
     if (!mounted) return;
-    setState(() => _loggedIn = local);
-    if (!local) return;
+    if (!local) {
+      setState(() => _loggedIn = false);
+      return;
+    }
+    // 本地 token 命中后立即进首页；联网校验与 E2EE 在后台完成。
+    setState(() => _loggedIn = true);
+    unawaited(_restoreSessionInBackground());
+  }
 
+  Future<void> _restoreSessionInBackground() async {
     final ok = await widget.auth.restoreSession();
+    if (!mounted || ok) return;
+    final hasLocal = await widget.auth.hasLocalSession();
     if (!mounted) return;
-    if (!ok) setState(() => _loggedIn = false);
+    setState(() => _loggedIn = hasLocal);
   }
 
   Future<void> _onLoggedIn() async {
@@ -54,7 +63,7 @@ class _IHopeAppState extends State<IHopeApp> {
         useMaterial3: true,
       ),
       home: switch (_loggedIn) {
-        null => const Scaffold(),
+        null => const Scaffold(body: Center(child: CircularProgressIndicator())),
         true => ConversationsScreen(auth: widget.auth, onLogout: _onLogout),
         false => LoginScreen(auth: widget.auth, onLoggedIn: _onLoggedIn),
       },

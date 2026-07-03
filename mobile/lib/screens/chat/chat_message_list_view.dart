@@ -96,10 +96,6 @@ class ChatMessageListView extends StatelessWidget {
     final dividerIndex = scrollCoord.unreadDividerIndex;
     return NotificationListener<ScrollNotification>(
       onNotification: (notification) {
-        if (notification is ScrollUpdateNotification ||
-            notification is ScrollEndNotification) {
-          scrollCoord.updateUnreadVisibility();
-        }
         if (notification is ScrollEndNotification) {
           scrollCoord.onScrollIdle();
         }
@@ -128,7 +124,6 @@ class ChatMessageListView extends StatelessWidget {
                       conversation: conversation,
                       isGroup: isGroup,
                       showUnreadDivider: dividerIndex == msgIndex,
-                      isUnmarkedUnread: scrollCoord.isUnmarkedPeerUnread(msg),
                       focused: scrollCoord.focusedMessageId == msg.id,
                       nameFor: nameFor,
                       avatarUrlFor: avatarUrlFor,

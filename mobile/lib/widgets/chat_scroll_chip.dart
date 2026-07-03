@@ -73,7 +73,7 @@ class UnreadMessagesDivider extends StatelessWidget {
           ),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 12),
-            child: Text('以下为新消息', style: style),
+            child: Text('新消息', style: style),
           ),
           Expanded(
             child: Divider(

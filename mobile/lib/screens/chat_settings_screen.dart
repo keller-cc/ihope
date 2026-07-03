@@ -4,7 +4,8 @@ import 'package:flutter/material.dart';
 
 import '../models/conversation.dart';
 import '../services/auth_service.dart';
-import 'chat_search_screen.dart';
+import 'chat_history/chat_history_hub_screen.dart';
+import 'chat_history/chat_history_jump.dart';
 
 /// 单聊设置：置顶、搜索等。
 class ChatSettingsScreen extends StatefulWidget {
@@ -48,15 +49,18 @@ class _ChatSettingsScreenState extends State<ChatSettingsScreen> {
     );
   }
 
-  void _openSearch() {
-    Navigator.of(context).push(
+  Future<void> _openSearch() async {
+    final jump = await Navigator.of(context).push<ChatHistoryJump>(
       MaterialPageRoute(
-        builder: (_) => ChatSearchScreen(
+        builder: (_) => ChatHistoryHubScreen(
           auth: widget.auth,
           conversation: widget.conversation,
         ),
       ),
     );
+    if (jump != null && mounted) {
+      Navigator.of(context).pop(jump);
+    }
   }
 
   @override
@@ -76,8 +80,8 @@ class _ChatSettingsScreenState extends State<ChatSettingsScreen> {
           ),
           ListTile(
             leading: const Icon(Icons.search),
-            title: const Text('搜索聊天记录'),
-            subtitle: const Text('在本机已保存的聊天记录中搜索，不请求服务器'),
+            title: const Text('查找聊天记录'),
+            subtitle: const Text('按日期、成员、图片与文件查找'),
             onTap: _openSearch,
           ),
         ],

@@ -4,6 +4,8 @@ E2EE 单聊 / 群聊、媒体消息、WebSocket 实时推送。
 
 环境搭建与日常命令见 **[docs/Windows开发环境.md](../docs/Windows开发环境.md)**。
 
+依赖选型原则：通用能力优先用成熟库（dio、intl、uuid 等），业务与 E2EE 编排自研。见 [开发指南](../docs/开发指南.md) 与 `.cursor/rules/prefer-libraries.mdc`。
+
 ## 初始化
 
 ```powershell

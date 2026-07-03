@@ -20,6 +20,7 @@ import 'chat/chat_message_tile.dart';
 import 'chat/chat_outgoing_controller.dart';
 import 'chat/chat_scroll_coordinator.dart';
 import 'chat/chat_thread_loader.dart';
+import 'chat_history/chat_history_jump.dart';
 import 'chat_settings_screen.dart';
 import 'group_manage_screen.dart';
 import 'user_detail_screen.dart';
@@ -30,11 +31,13 @@ class ChatScreen extends StatefulWidget {
     required this.auth,
     required this.conversation,
     this.initialUnreadCount = 0,
+    this.initialFocusMessageId,
   });
 
   final AuthService auth;
   final ConversationItem conversation;
   final int initialUnreadCount;
+  final String? initialFocusMessageId;
 
   @override
   State<ChatScreen> createState() => _ChatScreenState();
@@ -56,6 +59,7 @@ class _ChatScreenState extends State<ChatScreen> {
   int _historyEpoch = 0;
   Set<String> _announcementReadIds = {};
   final Set<String> _dismissedAnnouncementBannerIds = {};
+  String? _pendingFocusMessageId;
 
   bool get _isGroup => _conversation.type == 'group';
 
@@ -84,6 +88,7 @@ class _ChatScreenState extends State<ChatScreen> {
   void initState() {
     super.initState();
     _conversation = widget.conversation;
+    _pendingFocusMessageId = widget.initialFocusMessageId;
     _thread = ChatThreadLoader(auth: widget.auth, conversation: _conversation);
 
     _scrollCoord = ChatScrollCoordinator(
@@ -93,8 +98,6 @@ class _ChatScreenState extends State<ChatScreen> {
       },
       isMounted: () => mounted,
       onReachedBottom: () => unawaited(_markReadToLast()),
-      firstUnreadIndexIn: (msgs, readAt) =>
-          widget.auth.firstUnreadIndexInThread(msgs, readAt: readAt),
     );
     _scrollCoord.attach();
 
@@ -139,10 +142,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   void dispose() {
-    if (_scrollCoord.tailPinned &&
-        _messages.isNotEmpty &&
-        !_scrollCoord.showJumpToUnread &&
-        _scrollCoord.enterUnreadCount == 0) {
+    if (_messages.isNotEmpty) {
       unawaited(
         widget.auth.markConversationRead(
           _conversation.id,
@@ -199,12 +199,17 @@ class _ChatScreenState extends State<ChatScreen> {
       _error = null;
       _loading = false;
       _announcementReadIds = annReadIds;
-      _scrollCoord.applyReadSnapshot(readAt: at, unread: unread);
+      _scrollCoord.beginUnreadSession(readAt: at, unread: unread);
     });
     if (me != null) {
       _scrollCoord.bindThread(_messages, me.id);
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        _scrollCoord.updateUnreadVisibility();
+        _scrollCoord.syncEnterUnreadBubbleAfterLayout();
+        final focusId = _pendingFocusMessageId;
+        if (focusId != null) {
+          _pendingFocusMessageId = null;
+          unawaited(_focusHistoryMessage(focusId));
+        }
       });
     }
     unawaited(_thread.cacheIfReady(list));
@@ -218,10 +223,26 @@ class _ChatScreenState extends State<ChatScreen> {
     }
     if (_isGroup && !_conversation.isArchived) {
       widget.auth.prepareGroupConversation(_conversation);
-      await widget.auth.ensureGroupMemberDirectory(_conversation);
+      unawaited(widget.auth.ensureGroupMemberDirectory(_conversation));
     }
     unawaited(_refreshConversationMetadata());
     await _loadHistory();
+  }
+
+  Future<void> _syncRemoteInBackground(int epoch) async {
+    if (_conversation.isArchived || !mounted) return;
+    try {
+      final cached = await widget.auth.loadCachedMessages(_conversation.id);
+      if (_isStale(epoch)) return;
+      final list = await _thread.resolve(cached: cached, fetchRemote: true);
+      if (_isStale(epoch) || !mounted) return;
+      setState(
+        () => _messages = ChatThreadLoader.preserveLocalOutgoing(list, _messages),
+      );
+      final me = widget.auth.currentUser;
+      if (me != null) _scrollCoord.bindThread(_messages, me.id);
+      unawaited(_thread.cacheIfReady(_messages));
+    } catch (_) {}
   }
 
   Future<void> _refreshConversationMetadata() async {
@@ -250,15 +271,27 @@ class _ChatScreenState extends State<ChatScreen> {
       final cached = await widget.auth.loadCachedMessages(_conversation.id);
       if (_isStale(epoch)) return;
 
+      if (cached.isNotEmpty && _messages.isEmpty) {
+        final quick =
+            widget.auth.messagesForQuickDisplay(_conversation, cached);
+        if (quick.isNotEmpty) {
+          await _presentMessages(quick, readAt: readAt);
+        }
+      }
+
       final fullyLocal = cached.isNotEmpty &&
           await widget.auth.cachedMessagesFullyAvailable(cached);
 
       final list = await _thread.resolve(
         cached: cached,
-        fetchRemote: _conversation.isArchived || _isGroup || !fullyLocal,
+        fetchRemote: !_conversation.isArchived && !fullyLocal,
       );
       if (_isStale(epoch)) return;
       await _presentMessages(list, readAt: readAt);
+
+      if (fullyLocal && !_conversation.isArchived) {
+        unawaited(_syncRemoteInBackground(epoch));
+      }
     } catch (e) {
       if (_isStale(epoch)) return;
       if (_messages.isEmpty) {
@@ -373,6 +406,7 @@ class _ChatScreenState extends State<ChatScreen> {
         builder: (_) => GroupAnnouncementsScreen(
           auth: widget.auth,
           conversation: _conversation,
+          initialAnnouncements: AnnouncementRead.allOf(_messages),
         ),
       ),
     );
@@ -549,16 +583,34 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
+  Future<void> _focusHistoryMessage(String? messageId) async {
+    if (messageId == null || messageId.isEmpty) return;
+    if (_messages.isEmpty) {
+      await _loadHistory();
+    }
+    if (!mounted) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      await _scrollCoord.scrollToMessage(messageId);
+      _scrollCoord.focusMessage(messageId);
+    });
+  }
+
   Future<void> _openConversationMenu() async {
     if (_isGroup) {
       await _openGroupManage();
       return;
     }
-    await Navigator.of(context).push<void>(
+    final jump = await Navigator.of(context).push<ChatHistoryJump>(
       MaterialPageRoute(
-        builder: (_) => ChatSettingsScreen(auth: widget.auth, conversation: _conversation),
+        builder: (_) => ChatSettingsScreen(
+          auth: widget.auth,
+          conversation: _conversation,
+        ),
       ),
     );
+    if (!mounted) return;
+    if (jump != null) await _focusHistoryMessage(jump.messageId);
   }
 
   Future<void> _openGroupManage() async {
@@ -568,6 +620,10 @@ class _ChatScreenState extends State<ChatScreen> {
       ),
     );
     if (!mounted) return;
+    if (result is ChatHistoryJump) {
+      await _focusHistoryMessage(result.messageId);
+      return;
+    }
     if (result == 'left') {
       await _archiveAndReload();
       return;
@@ -610,10 +666,17 @@ class _ChatScreenState extends State<ChatScreen> {
     _scrollCoord.bindThread(_messages, me.id);
 
     return PopScope(
-      canPop: !isArchived,
-      onPopInvokedWithResult: (didPop, _) {
-        if (didPop || !isArchived || !mounted) return;
-        Navigator.of(context).pop('left');
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) async {
+        if (didPop || !mounted) return;
+        if (!isArchived && _messages.isNotEmpty) {
+          await widget.auth.markConversationRead(
+            _conversation.id,
+            upTo: _messages.last.createdAt,
+          );
+        }
+        if (!mounted) return;
+        Navigator.of(context).pop(isArchived ? 'left' : null);
       },
       child: Scaffold(
         appBar: ChatAppBar(
@@ -702,6 +765,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 onVoiceHoldStart: _outgoing.startVoiceRecord,
                 onVoiceHoldEnd: _outgoing.finishVoiceRecord,
                 onImage: () => unawaited(_outgoing.pickImage()),
+                onCamera: () => unawaited(_outgoing.captureImage()),
                 onFile: () => unawaited(_outgoing.pickFile()),
               ),
           ],

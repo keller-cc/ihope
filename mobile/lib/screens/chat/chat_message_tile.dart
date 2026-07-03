@@ -18,7 +18,6 @@ class ChatMessageTile extends StatelessWidget {
     required this.conversation,
     required this.isGroup,
     required this.showUnreadDivider,
-    required this.isUnmarkedUnread,
     required this.focused,
     required this.nameFor,
     required this.avatarUrlFor,
@@ -37,7 +36,6 @@ class ChatMessageTile extends StatelessWidget {
   final ConversationItem conversation;
   final bool isGroup;
   final bool showUnreadDivider;
-  final bool isUnmarkedUnread;
   final bool focused;
   final String Function(String userId) nameFor;
   final String? Function(String userId) avatarUrlFor;
@@ -92,7 +90,6 @@ class ChatMessageTile extends StatelessWidget {
         avatarUrlFor: avatarUrlFor,
         onPeerTap: onPeerTap,
         onMediaRetry: onMediaRetry,
-        showUnreadMarker: isUnmarkedUnread,
         onSendRetry: msg.sendStatus == MessageSendStatus.failed &&
                 msg.isLocalOutgoing
             ? () => onSendRetry(msg)
@@ -116,29 +113,95 @@ class ChatMessageTile extends StatelessWidget {
       ],
     );
 
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 280),
-      curve: Curves.easeOut,
-      margin: const EdgeInsets.symmetric(vertical: 1),
-      decoration: focused
-          ? BoxDecoration(
-              color: Theme.of(context)
-                  .colorScheme
-                  .primary
-                  .withValues(alpha: 0.14),
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(
-                color: Theme.of(context)
-                    .colorScheme
-                    .primary
-                    .withValues(alpha: 0.35),
-              ),
-            )
-          : null,
-      padding: focused
-          ? const EdgeInsets.symmetric(horizontal: 4, vertical: 2)
-          : EdgeInsets.zero,
+    return _MessageFocusShell(
+      focused: focused,
       child: column,
+    );
+  }
+}
+
+/// 定位高亮：快速淡入、稍慢淡出，避免生硬消失。
+class _MessageFocusShell extends StatefulWidget {
+  const _MessageFocusShell({
+    required this.focused,
+    required this.child,
+  });
+
+  final bool focused;
+  final Widget child;
+
+  @override
+  State<_MessageFocusShell> createState() => _MessageFocusShellState();
+}
+
+class _MessageFocusShellState extends State<_MessageFocusShell>
+    with SingleTickerProviderStateMixin {
+  static const _fadeIn = Duration(milliseconds: 180);
+  static const _fadeOut = Duration(milliseconds: 420);
+
+  late final AnimationController _controller;
+  late final Animation<double> _strength;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(vsync: this, duration: _fadeIn);
+    _strength = CurvedAnimation(
+      parent: _controller,
+      curve: Curves.easeOutCubic,
+      reverseCurve: Curves.easeInCubic,
+    );
+    if (widget.focused) {
+      _controller.forward();
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant _MessageFocusShell oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.focused == oldWidget.focused) return;
+    if (widget.focused) {
+      _controller.duration = _fadeIn;
+      _controller.forward();
+    } else {
+      _controller.duration = _fadeOut;
+      _controller.reverse();
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return AnimatedBuilder(
+      animation: _strength,
+      builder: (context, child) {
+        final v = _strength.value;
+        if (v <= 0.001) {
+          return Padding(
+            padding: const EdgeInsets.symmetric(vertical: 1),
+            child: child,
+          );
+        }
+        return Container(
+          margin: const EdgeInsets.symmetric(vertical: 1),
+          padding: EdgeInsets.symmetric(horizontal: 4 * v, vertical: 2 * v),
+          decoration: BoxDecoration(
+            color: scheme.primary.withValues(alpha: 0.09 * v),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color: scheme.primary.withValues(alpha: 0.20 * v),
+            ),
+          ),
+          child: child,
+        );
+      },
+      child: widget.child,
     );
   }
 }
@@ -168,73 +231,87 @@ class ChatFloatingChips extends StatelessWidget {
   final VoidCallback onJumpToNewMessages;
   final VoidCallback onJumpToLatest;
 
+  /// 未读气泡距聊天区顶部的比例（0~1）。
+  static const unreadChipTopFactor = 0.12;
+
+  /// 新消息气泡距聊天区底部的比例（0~1，在输入框上方）。
+  static const newMessageChipBottomFactor = 0.14;
+
+  /// 快速下滑箭头距底部的比例。
+  static const scrollArrowBottomFactor = 0.02;
+
   @override
   Widget build(BuildContext context) {
-    /// 新消息气泡在输入框上方；快速下滑箭头紧贴输入框上沿。
-    const newMessageChipBottom = 88.0;
-    const scrollToLatestArrowBottom = 8.0;
-    const unreadTop = 12.0;
     final scheme = Theme.of(context).colorScheme;
 
-    return Stack(
-      clipBehavior: Clip.none,
-      children: [
-        if (showJumpToUnread)
-          Positioned(
-            right: 0,
-            top: unreadTop,
-            child: ChatScrollChip(
-              label: enterUnreadCount > 0
-                  ? '$enterUnreadCount条未读消息'
-                  : '未读消息',
-              icon: Icons.north_rounded,
-              onTap: onJumpToUnread,
-            ),
-          ),
-        if (showJumpToBottom)
-          Positioned(
-            right: 0,
-            bottom: newMessageChipBottom,
-            child: ChatScrollChip(
-              label: belowUnreadCount > 0
-                  ? '$belowUnreadCount条新消息'
-                  : '新消息',
-              icon: Icons.south_rounded,
-              onTap: onJumpToNewMessages,
-            ),
-          ),
-        if (showScrollToLatestArrow && scrollToLatestArrowOpacity > 0.01)
-          Positioned(
-            left: 0,
-            right: 0,
-            bottom: scrollToLatestArrowBottom,
-            child: Center(
-              child: AnimatedOpacity(
-                opacity: scrollToLatestArrowOpacity.clamp(0.0, 1.0),
-                duration: const Duration(milliseconds: 120),
-                child: Material(
-                  color: scheme.surfaceContainerHighest.withValues(alpha: 0.95),
-                  elevation: 2,
-                  shadowColor: Colors.black26,
-                  shape: const CircleBorder(),
-                  clipBehavior: Clip.antiAlias,
-                  child: InkWell(
-                    onTap: onJumpToLatest,
-                    customBorder: const CircleBorder(),
-                    child: Padding(
-                      padding: const EdgeInsets.all(10),
-                      child: Icon(
-                        Icons.keyboard_arrow_down_rounded,
-                        color: scheme.primary,
-                        size: 28,
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final h = constraints.maxHeight;
+        final unreadTop = h * unreadChipTopFactor;
+        final newMessageBottom = h * newMessageChipBottomFactor;
+        final arrowBottom = h * scrollArrowBottomFactor;
+
+        return Stack(
+          clipBehavior: Clip.none,
+          children: [
+            if (showJumpToUnread)
+              Positioned(
+                right: 0,
+                top: unreadTop,
+                child: ChatScrollChip(
+                  label: enterUnreadCount > 0
+                      ? '$enterUnreadCount条未读消息'
+                      : '未读消息',
+                  icon: Icons.north_rounded,
+                  onTap: onJumpToUnread,
+                ),
+              ),
+            if (showJumpToBottom)
+              Positioned(
+                right: 0,
+                bottom: newMessageBottom,
+                child: ChatScrollChip(
+                  label: belowUnreadCount > 0
+                      ? '$belowUnreadCount条新消息'
+                      : '新消息',
+                  icon: Icons.south_rounded,
+                  onTap: onJumpToNewMessages,
+                ),
+              ),
+            if (showScrollToLatestArrow && scrollToLatestArrowOpacity > 0.01)
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: arrowBottom,
+                child: Center(
+                  child: AnimatedOpacity(
+                    opacity: scrollToLatestArrowOpacity.clamp(0.0, 1.0),
+                    duration: const Duration(milliseconds: 80),
+                    child: Material(
+                      color: scheme.surfaceContainerHighest.withValues(alpha: 0.95),
+                      elevation: 2,
+                      shadowColor: Colors.black26,
+                      shape: const CircleBorder(),
+                      clipBehavior: Clip.antiAlias,
+                      child: InkWell(
+                        onTap: onJumpToLatest,
+                        customBorder: const CircleBorder(),
+                        child: Padding(
+                          padding: const EdgeInsets.all(10),
+                          child: Icon(
+                            Icons.keyboard_arrow_down_rounded,
+                            color: scheme.primary,
+                            size: 28,
+                          ),
+                        ),
                       ),
                     ),
                   ),
                 ),
               ),
-            ),
-          ),
-      ],
+          ],
+        );
+      },
     );
   }
 }

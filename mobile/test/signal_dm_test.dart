@@ -66,6 +66,40 @@ void main() {
     expect(again, '[无法解密]');
   });
 
+  test('decrypt recovers after stale session reset', () async {
+    final kdsA = _FakeKds();
+    final kdsB = _FakeKds();
+    final storeA = <String, String>{};
+    final storeB = <String, String>{};
+
+    final alice = SignalDmService(
+      kds: kdsA,
+      myUserId: 'alice',
+      deviceId: 'dev-a',
+      readStore: () async => Map.from(storeA),
+      writeStore: (d) async => storeA.addAll(d),
+    );
+    final bob = SignalDmService(
+      kds: kdsB,
+      myUserId: 'bob',
+      deviceId: 'dev-b',
+      readStore: () async => Map.from(storeB),
+      writeStore: (d) async => storeB.addAll(d),
+    );
+
+    kdsA.bundles['bob'] = await bob.exportPublicBundle();
+    kdsB.bundles['alice'] = await alice.exportPublicBundle();
+
+    final wire = await alice.encrypt('bob', 'rotate me');
+    expect(await bob.decrypt('alice', wire), 'rotate me');
+
+    // 模拟本机 Signal 状态被重置后，用新 bundle 重建会话仍可解密后续消息。
+    storeB.clear();
+    kdsB.bundles['alice'] = await alice.exportPublicBundle();
+    final wire2 = await alice.encrypt('bob', 'after reset');
+    expect(await bob.decrypt('alice', wire2), 'after reset');
+  });
+
   test('signal identity key is 33 bytes', () async {
     final dm = SignalDmService(
       kds: _FakeKds(),

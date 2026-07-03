@@ -526,6 +526,35 @@ class AuthStorage {
 
   String _signalStoreKey(String scope) => 'signal_store_$scope';
 
+  String _chatSearchHistoryKey(String userId, String conversationId) =>
+      'chat_search_history_${userId}_$conversationId';
+
+  Future<List<String>> readChatSearchHistory(
+    String userId,
+    String conversationId,
+  ) async {
+    final raw = await _storage.read(
+      key: _chatSearchHistoryKey(userId, conversationId),
+    );
+    if (raw == null || raw.isEmpty) return [];
+    try {
+      return (jsonDecode(raw) as List<dynamic>).map((e) => '$e').toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  Future<void> writeChatSearchHistory(
+    String userId,
+    String conversationId,
+    List<String> queries,
+  ) async {
+    await _storage.write(
+      key: _chatSearchHistoryKey(userId, conversationId),
+      value: jsonEncode(queries),
+    );
+  }
+
   String _megolmRotationKey(String userId, String conversationId) =>
       'megolm_rotation_${userId}_$conversationId';
 

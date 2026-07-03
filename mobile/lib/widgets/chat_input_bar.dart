@@ -17,6 +17,7 @@ class ChatInputBar extends StatefulWidget {
     required this.onVoiceHoldStart,
     required this.onVoiceHoldEnd,
     required this.onImage,
+    required this.onCamera,
     required this.onFile,
   });
 
@@ -26,6 +27,7 @@ class ChatInputBar extends StatefulWidget {
   final Future<bool> Function() onVoiceHoldStart;
   final Future<void> Function({required bool cancel}) onVoiceHoldEnd;
   final VoidCallback onImage;
+  final VoidCallback onCamera;
   final VoidCallback onFile;
 
   static const sendWidth = 58.0;
@@ -255,6 +257,7 @@ class _ChatInputBarState extends State<ChatInputBar> {
               if (_moreOpen)
                 _MorePanel(
                   onImage: () => _onPanelAction(widget.onImage),
+                  onCamera: () => _onPanelAction(widget.onCamera),
                   onFile: () => _onPanelAction(widget.onFile),
                   onPlaceholder: _onPlaceholder,
                 ),
@@ -563,11 +566,13 @@ class _HoldToTalkButtonState extends State<_HoldToTalkButton> {
 class _MorePanel extends StatelessWidget {
   const _MorePanel({
     required this.onImage,
+    required this.onCamera,
     required this.onFile,
     required this.onPlaceholder,
   });
 
   final VoidCallback onImage;
+  final VoidCallback onCamera;
   final VoidCallback onFile;
   final void Function(String label) onPlaceholder;
 
@@ -576,7 +581,7 @@ class _MorePanel extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     final items = <_PanelItem>[
       _PanelItem(Icons.photo_outlined, '相册', onImage),
-      _PanelItem(Icons.photo_camera_outlined, '拍摄', () => onPlaceholder('拍摄')),
+      _PanelItem(Icons.photo_camera_outlined, '拍摄', onCamera),
       _PanelItem(Icons.videocam_outlined, '视频', () => onPlaceholder('视频')),
       _PanelItem(Icons.folder_outlined, '文件', onFile),
       _PanelItem(Icons.location_on_outlined, '位置', () => onPlaceholder('位置')),

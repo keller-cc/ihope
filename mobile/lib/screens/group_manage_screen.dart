@@ -10,7 +10,8 @@ import '../services/auth_service.dart';
 import '../utils/announcement_read.dart';
 import '../widgets/member_title_badge.dart';
 import '../widgets/user_avatar.dart';
-import 'chat_search_screen.dart';
+import 'chat_history/chat_history_hub_screen.dart';
+import 'chat_history/chat_history_jump.dart';
 import 'announcement_edit_screen.dart';
 import 'group_announcements_screen.dart';
 
@@ -48,14 +49,14 @@ class _GroupManageScreenState extends State<GroupManageScreen> {
   Future<void> _loadAnnouncementState() async {
     final cached = await widget.auth.loadCachedMessages(_conversation.id);
     final latest = AnnouncementRead.latestOf(cached);
-    final readId = await widget.auth.announcementReadIdFor(_conversation.id);
+    final readIds = await widget.auth.announcementReadIdsFor(_conversation.id);
     final me = widget.auth.currentUser;
     if (!mounted || me == null) return;
     setState(() {
       _latestAnnouncement = latest;
       _announcementUnread = AnnouncementRead.isUnread(
         announcement: latest,
-        readMessageId: readId,
+        readIds: readIds,
         myUserId: me.id,
         allMessages: cached,
       );
@@ -80,15 +81,18 @@ class _GroupManageScreenState extends State<GroupManageScreen> {
     );
   }
 
-  void _openSearch() {
-    Navigator.of(context).push(
+  Future<void> _openSearch() async {
+    final jump = await Navigator.of(context).push<ChatHistoryJump>(
       MaterialPageRoute(
-        builder: (_) => ChatSearchScreen(
+        builder: (_) => ChatHistoryHubScreen(
           auth: widget.auth,
           conversation: _conversation,
         ),
       ),
     );
+    if (jump != null && mounted) {
+      Navigator.of(context).pop(jump);
+    }
   }
 
   Future<void> _reload() async {
@@ -386,8 +390,8 @@ class _GroupManageScreenState extends State<GroupManageScreen> {
           ),
           ListTile(
             leading: const Icon(Icons.search),
-            title: const Text('搜索聊天记录'),
-            subtitle: const Text('在本机已保存的聊天记录中搜索，不请求服务器'),
+            title: const Text('查找聊天记录'),
+            subtitle: const Text('按日期、成员、图片与文件查找'),
             onTap: _busy ? null : _openSearch,
           ),
           if (_isOwner)

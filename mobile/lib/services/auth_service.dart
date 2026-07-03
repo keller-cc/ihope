@@ -13,6 +13,7 @@ import '../utils/announcement_read.dart';
 import '../utils/media_local_cache.dart';
 import '../utils/media_payload.dart';
 import 'api_client.dart';
+import 'auth_session_policy.dart';
 import 'auth_storage.dart';
 import 'conversation_service.dart';
 import 'group_key_service.dart';
@@ -43,12 +44,17 @@ class AuthService {
   final Set<String> _memberDirectorySynced = {};
   String? _openConversationId;
   final Map<String, int> _unreadCounts = {};
+  final Map<String, DateTime> _conversationReadAtCache = {};
   final Map<String, DateTime> _removalUiClaimed = {};
 
   DateTime? _accessExpiresAt;
   Future<bool>? _refreshInFlight;
+  Future<bool>? _sessionRestoreInFlight;
+  Future<void>? _cryptoInitInFlight;
 
   static const _refreshSkew = Duration(minutes: 2);
+
+  bool get isCryptoReady => _crypto != null;
 
   /// 群 GMK 就绪（当前打开的会话可据此重新解密）。
   Stream<String> get onGroupKeyReady => groupKeys.onKeysReady;
@@ -73,6 +79,18 @@ class AuthService {
       throw StateError('加密模块尚未就绪，请重新登录');
     }
     return crypto;
+  }
+
+  /// 发送/解密前确保 E2EE 已初始化（等待冷启动或并发初始化完成）。
+  Future<ChatCrypto> ensureCryptoReady() async {
+    if (_crypto != null) return _crypto!;
+    final restore = _sessionRestoreInFlight;
+    if (restore != null) {
+      await restore;
+      if (_crypto != null) return _crypto!;
+    }
+    await _ensureCryptoInitialized();
+    return chatCrypto;
   }
 
   Future<SignalDmService> _ensureSignalDm() async {
@@ -116,42 +134,88 @@ class AuthService {
     return true;
   }
 
+  /// 本地是否仍有 access token（不校验网络）。
+  Future<bool> hasLocalSession() async {
+    final token = await storage.accessToken();
+    return token != null && token.isNotEmpty;
+  }
+
   /// 联网校验会话并初始化加密与推送（启动后异步执行）。
-  Future<bool> restoreSession() async {
-    if (!await restoreLocalSession()) return false;
+  Future<bool> restoreSession() {
+    return _sessionRestoreInFlight ??= _restoreSession();
+  }
+
+  Future<bool> _restoreSession() async {
     try {
-      await refreshCurrentUser();
-    } catch (_) {
-      if (!await _tryRefreshTokens()) {
+      if (!await restoreLocalSession()) return false;
+      try {
+        await refreshCurrentUser();
+      } catch (_) {
+        if (!await _tryRefreshTokens()) {
+          if (!await hasLocalSession()) {
+            await _clearAuthSession();
+          }
+          return false;
+        }
+        try {
+          await refreshCurrentUser();
+        } catch (_) {
+          return false;
+        }
+      }
+      try {
+        final identityRotated = await _ensureSignalIdentity();
+        _crypto = await _buildChatCrypto();
+        await _connectRealtime();
+        if (identityRotated) {
+          await groupKeys.onIdentityRotated();
+        }
+        return true;
+      } catch (_) {
         await _disconnectRealtime();
-        await storage.clear();
-        api.setAccessToken(null);
         _crypto = null;
-        _signalDm = null;
-        currentUser = null;
-        _accessExpiresAt = null;
         return false;
       }
-      await refreshCurrentUser();
+    } finally {
+      _sessionRestoreInFlight = null;
     }
+  }
+
+  Future<void> _clearAuthSession() async {
+    await _disconnectRealtime();
+    await storage.clear();
+    api.setAccessToken(null);
+    _crypto = null;
+    _signalDm = null;
+    currentUser = null;
+    _accessExpiresAt = null;
+  }
+
+  Future<void> _ensureCryptoInitialized() async {
+    if (_crypto != null) return;
+    if (_cryptoInitInFlight != null) {
+      await _cryptoInitInFlight;
+      return;
+    }
+    _cryptoInitInFlight = _doEnsureCryptoInitialized();
     try {
+      await _cryptoInitInFlight;
+    } finally {
+      _cryptoInitInFlight = null;
+    }
+  }
+
+  Future<void> _doEnsureCryptoInitialized() async {
+    if (currentUser == null || _crypto != null) return;
+    if (_signalDm == null) {
       final identityRotated = await _ensureSignalIdentity();
       _crypto = await _buildChatCrypto();
-      await _connectRealtime();
       if (identityRotated) {
         await groupKeys.onIdentityRotated();
       }
-      return true;
-    } catch (_) {
-      await _disconnectRealtime();
-      await storage.clear();
-      api.setAccessToken(null);
-      _crypto = null;
-      _signalDm = null;
-      currentUser = null;
-      _accessExpiresAt = null;
-      return false;
+      return;
     }
+    _crypto = await _buildChatCrypto();
   }
 
   Future<User> refreshCurrentUser() async {
@@ -278,17 +342,11 @@ class AuthService {
   }
 
   Future<void> logout() async {
-    await _disconnectRealtime();
-    await storage.clear();
-    api.setAccessToken(null);
-    currentUser = null;
-    _crypto = null;
-    _signalDm = null;
+    await _clearAuthSession();
     _conversationCache.clear();
     _messagesMem.clear();
     _memberDirectories.clear();
     _memberDirectorySynced.clear();
-    _accessExpiresAt = null;
   }
 
   /// 供 WS 重连与 API 401 拦截器使用：必要时 refresh 后返回有效 token。
@@ -371,10 +429,17 @@ class AuthService {
     final refresh = data['refresh_token'] as String;
     await storage.saveTokens(accessToken: access, refreshToken: refresh);
     api.setAccessToken(access);
+    final priorUserId = currentUser?.id;
     currentUser = User.fromJson(data['user'] as Map<String, dynamic>);
     await storage.saveUserProfile(currentUser!.toJson());
-    _crypto = null;
-    _signalDm = null;
+    // Token refresh 仅更新凭据；勿清空 E2EE（否则发送会报「加密模块尚未就绪」）。
+    if (shouldResetCryptoOnTokenRefresh(
+      priorUserId: priorUserId,
+      newUserId: currentUser!.id,
+    )) {
+      _crypto = null;
+      _signalDm = null;
+    }
     _accessExpiresAt = _expiryFromJwt(access);
     final expiresIn = data['expires_in'];
     if (expiresIn is int) {
@@ -419,9 +484,13 @@ class AuthService {
       _openConversationId == conversationId;
 
   Future<DateTime?> readAtFor(String conversationId) async {
+    final cached = _conversationReadAtCache[conversationId];
+    if (cached != null) return cached;
     final me = currentUser;
     if (me == null) return null;
-    return storage.readConversationReadAt(me.id, conversationId);
+    final at = await storage.readConversationReadAt(me.id, conversationId);
+    if (at != null) _conversationReadAtCache[conversationId] = at;
+    return at;
   }
 
   Future<Set<String>> announcementReadIdsFor(String conversationId) async {
@@ -437,6 +506,32 @@ class AuthService {
     final me = currentUser;
     if (me == null) return;
     await storage.addAnnouncementReadId(me.id, conversationId, messageId);
+  }
+
+  Future<List<String>> chatSearchHistoryFor(String conversationId) async {
+    final me = currentUser;
+    if (me == null) return [];
+    return storage.readChatSearchHistory(me.id, conversationId);
+  }
+
+  Future<void> addChatSearchHistory(String conversationId, String query) async {
+    final me = currentUser;
+    final q = query.trim();
+    if (me == null || q.isEmpty) return;
+    final prev = await storage.readChatSearchHistory(me.id, conversationId);
+    final next = [q, ...prev.where((e) => e != q)].take(20).toList();
+    await storage.writeChatSearchHistory(me.id, conversationId, next);
+  }
+
+  Future<void> removeChatSearchHistoryItem(
+    String conversationId,
+    String query,
+  ) async {
+    final me = currentUser;
+    if (me == null) return;
+    final prev = await storage.readChatSearchHistory(me.id, conversationId);
+    final next = prev.where((e) => e != query).toList();
+    await storage.writeChatSearchHistory(me.id, conversationId, next);
   }
 
   bool isAnnouncementUnread(
@@ -475,21 +570,6 @@ class AuthService {
     return _countUnread(messages, me.id, readAt);
   }
 
-  int? firstUnreadIndexInThread(
-    List<ChatMessage> messages, {
-    DateTime? readAt,
-  }) {
-    final me = currentUser;
-    if (me == null) return null;
-    for (var i = 0; i < messages.length; i++) {
-      final m = messages[i];
-      if (m.senderId == me.id) continue;
-      if (m.type == 'announcement' || m.type == 'system') continue;
-      if (readAt == null || m.createdAt.isAfter(readAt)) return i;
-    }
-    return null;
-  }
-
   Future<void> markConversationRead(
     String conversationId, {
     DateTime? upTo,
@@ -497,8 +577,9 @@ class AuthService {
     final me = currentUser;
     if (me == null) return;
     final at = upTo ?? DateTime.now();
-    await storage.writeConversationReadAt(me.id, conversationId, at);
+    _conversationReadAtCache[conversationId] = at;
     _unreadCounts[conversationId] = 0;
+    await storage.writeConversationReadAt(me.id, conversationId, at);
   }
 
   Future<int> unreadCountFor(String conversationId) async {
@@ -653,8 +734,9 @@ class AuthService {
       fresh = await groupKeys.maybeRotateBeforeSend(fresh);
       await groupKeys.ensureReadyForSend(fresh);
     }
-    final payload = await chatCrypto.encryptOutgoing(fresh, plaintext);
-    if (!chatCrypto.isEncryptedPayload(payload)) {
+    final crypto = await ensureCryptoReady();
+    final payload = await crypto.encryptOutgoing(fresh, plaintext);
+    if (!crypto.isEncryptedPayload(payload)) {
       throw E2eeException('消息未能加密，已取消发送');
     }
     final msg = await conversations.sendMessage(
@@ -687,7 +769,8 @@ class AuthService {
       memberIds: memberIds,
     );
     _cacheConversation(conv);
-    final gmk = await chatCrypto.initGroupEpoch(conv.id, conv.epoch);
+    final crypto = await ensureCryptoReady();
+    final gmk = await crypto.initGroupEpoch(conv.id, conv.epoch);
     await groupKeys.publishEpochKeys(conv, gmk);
     await groupKeys.resetRotationMeta(conv.id);
     return conv;
@@ -700,7 +783,8 @@ class AuthService {
     final result = await conversations.addMembers(conversation.id, memberIds);
     final updated = result.conversation.copyWith(epoch: result.epoch);
     _cacheConversation(updated);
-    final gmk = await chatCrypto.rotateGroupEpoch(updated.id, result.epoch);
+    final crypto = await ensureCryptoReady();
+    final gmk = await crypto.rotateGroupEpoch(updated.id, result.epoch);
     await groupKeys.publishEpochKeys(updated, gmk);
     await groupKeys.resetRotationMeta(updated.id);
     return updated;
@@ -716,7 +800,8 @@ class AuthService {
     _cacheConversation(updated);
     final me = currentUser!;
     if (updated.isOwner(me.id)) {
-      final gmk = await chatCrypto.rotateGroupEpoch(updated.id, result.epoch);
+      final crypto = await ensureCryptoReady();
+      final gmk = await crypto.rotateGroupEpoch(updated.id, result.epoch);
       await groupKeys.publishEpochKeys(updated, gmk);
       await groupKeys.resetRotationMeta(updated.id);
     }
@@ -895,6 +980,36 @@ class AuthService {
     if (ChatMessage.isDecryptPlaceholder(pt)) return false;
     if (ChatMessage.isDecryptFailure(pt)) return false;
     return true;
+  }
+
+  /// 若消息缓存里已有明文，直接生成列表预览（避免重复解密）。
+  String? previewIfCached(ChatMessage message) {
+    if (message.type == 'system') return message.ciphertext;
+    final pt = message.plaintext;
+    if (!_isValidCachedPlaintext(pt)) return null;
+    return _previewBody(message, pt!);
+  }
+
+  /// 同步映射：已有明文直接展示，其余用占位符（用于先进聊天页）。
+  List<ChatMessage> messagesForQuickDisplay(
+    ConversationItem conversation,
+    List<ChatMessage> messages,
+  ) {
+    final me = currentUser;
+    final visible = me == null
+        ? messages
+        : conversation.messagesVisibleToMember(me.id, messages);
+    return visible.map(_messageForQuickDisplay).toList();
+  }
+
+  ChatMessage _messageForQuickDisplay(ChatMessage m) {
+    if (ChatMessage.isLocalId(m.id)) return m;
+    if (m.type == 'system') {
+      return m.copyWith(plaintext: m.ciphertext);
+    }
+    final pt = m.plaintext;
+    if (_isValidCachedPlaintext(pt)) return m;
+    return m.copyWith(plaintext: ChatMessage.decryptPlaceholder);
   }
 
   Future<void> upsertCachedMessage(
@@ -1117,10 +1232,10 @@ class AuthService {
     }
     if (conv.type == 'group') {
       try {
-        await ensureGroupKeys(conv, epochs: [base.epoch], waitForRelay: true);
+        await ensureGroupKeys(conv, epochs: [base.epoch]);
       } catch (_) {}
     }
-    final dec = await chatCrypto.decryptMessage(conv, base);
+    final dec = await (await ensureCryptoReady()).decryptMessage(conv, base);
     if (dec.type == 'file') {
       if (persistFile) {
         return _finalizeDecryptedMedia(
@@ -1209,6 +1324,12 @@ class AuthService {
     ConversationItem conversation,
     List<ChatMessage> messages,
   ) async {
+    final conv = _conversationCache[conversation.id] ?? conversation;
+    if (conv.type == 'group' && messages.isNotEmpty) {
+      try {
+        await ensureGroupKeysForMessages(conv, messages);
+      } catch (_) {}
+    }
     final out = <ChatMessage>[];
     for (final msg in messages) {
       if (ChatMessage.isLocalId(msg.id)) {
@@ -1243,7 +1364,144 @@ class AuthService {
         out.add(msg);
       }
     }
+    unawaited(_cacheDecryptedResults(conversation.id, out));
     return out;
+  }
+
+  /// 仅解密群公告（不触碰整段聊天记录）。
+  Future<List<ChatMessage>> decryptAnnouncementsLocal(
+    ConversationItem conversation,
+    List<ChatMessage> announcements,
+  ) async {
+    if (announcements.isEmpty) return announcements;
+    final conv = _conversationCache[conversation.id] ?? conversation;
+    if (conv.type == 'group') {
+      try {
+        await ensureGroupKeysForMessages(conv, announcements);
+      } catch (_) {}
+    }
+    final out = <ChatMessage>[];
+    for (final msg in announcements) {
+      if (msg.type != 'announcement') continue;
+      if (_announcementPlaintextReady(msg) &&
+          !await messagePlaintextNeedsRepair(msg)) {
+        out.add(msg);
+        continue;
+      }
+      try {
+        out.add(await _decryptOneLocal(conversation, msg));
+      } catch (_) {
+        out.add(msg);
+      }
+    }
+    unawaited(_cacheDecryptedResults(conversation.id, out));
+    return out;
+  }
+
+  bool _announcementPlaintextReady(ChatMessage msg) {
+    final pt = msg.plaintext;
+    if (pt == null || pt.isEmpty) return false;
+    if (ChatMessage.isDecryptPlaceholder(pt)) return false;
+    if (ChatMessage.isDecryptFailure(pt)) return false;
+    return true;
+  }
+
+  Future<({List<ChatMessage> announcements, Set<String> readIds})>
+      loadAnnouncementsFromCache(
+    ConversationItem conversation, {
+    List<ChatMessage>? seed,
+  }) async {
+    final readIds = await announcementReadIdsFor(conversation.id);
+    final List<ChatMessage> raw;
+    if (seed != null && seed.isNotEmpty) {
+      raw = AnnouncementRead.allOf(seed);
+    } else {
+      final cached = await loadCachedMessages(conversation.id);
+      raw = AnnouncementRead.allOf(cached);
+    }
+    final announcements = await _materializeAnnouncements(conversation, raw);
+    return (announcements: announcements, readIds: readIds);
+  }
+
+  Future<List<ChatMessage>> refreshAnnouncementsRemote(
+    ConversationItem conversation,
+    List<ChatMessage> current,
+  ) async {
+    if (conversation.isArchived) return current;
+    try {
+      final remote = await conversations.listMessages(
+        conversation.id,
+        limit: 50,
+        type: 'announcement',
+      );
+      final merged = _mergeAnnouncementMessages(remote, current);
+      return _materializeAnnouncements(conversation, merged);
+    } catch (_) {
+      return current;
+    }
+  }
+
+  Future<List<ChatMessage>> _materializeAnnouncements(
+    ConversationItem conversation,
+    List<ChatMessage> announcements,
+  ) async {
+    if (announcements.isEmpty) return announcements;
+    final ready = <ChatMessage>[];
+    final pending = <ChatMessage>[];
+    for (final m in announcements) {
+      if (_announcementPlaintextReady(m) &&
+          !await messagePlaintextNeedsRepair(m)) {
+        ready.add(m);
+      } else {
+        pending.add(m);
+      }
+    }
+    if (pending.isEmpty) return AnnouncementRead.allOf(ready);
+    final decrypted =
+        await decryptAnnouncementsLocal(conversation, pending);
+    final byId = {for (final m in ready) m.id: m};
+    for (final m in decrypted) {
+      byId[m.id] = m;
+    }
+    return AnnouncementRead.allOf(byId.values);
+  }
+
+  List<ChatMessage> _mergeAnnouncementMessages(
+    List<ChatMessage> remote,
+    List<ChatMessage> local,
+  ) {
+    final byId = {for (final m in remote) m.id: m};
+    for (final c in local) {
+      final r = byId[c.id];
+      if (r == null) {
+        byId[c.id] = c;
+      } else if (_announcementPlaintextReady(c)) {
+        byId[c.id] = r.copyWith(plaintext: c.plaintext);
+      }
+    }
+    return AnnouncementRead.allOf(byId.values);
+  }
+
+  Future<void> _cacheDecryptedResults(
+    String conversationId,
+    List<ChatMessage> results,
+  ) async {
+    final existing =
+        _messagesMem[conversationId] ?? await loadCachedMessages(conversationId);
+    final byId = {for (final m in existing) m.id: m};
+    var changed = false;
+    for (final m in results) {
+      if (!m.isCacheable) continue;
+      if (m.type != 'system' && !_isValidCachedPlaintext(m.plaintext)) continue;
+      final prev = byId[m.id];
+      if (prev?.plaintext == m.plaintext) continue;
+      byId[m.id] = m;
+      changed = true;
+    }
+    if (!changed) return;
+    final list = byId.values.toList()
+      ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+    await cacheMessages(conversationId, list);
   }
 
   /// 群聊解散后归档本地记录（仍可在本地查看历史）。
@@ -1366,6 +1624,8 @@ class AuthService {
   }) async {
     final hydrated =
         await hydrateIncomingMessage(conversation.id, message);
+    final cachedPreview = previewIfCached(hydrated);
+    if (cachedPreview != null) return cachedPreview;
     if (hydrated.type == 'system') {
       return hydrated.ciphertext;
     }
@@ -1391,7 +1651,7 @@ class AuthService {
     if (conv.type == 'group') {
       await ensureGroupKeys(conv, epochs: [hydrated.epoch]);
     }
-    final text = await chatCrypto.decryptIncoming(
+    final text = await (await ensureCryptoReady()).decryptIncoming(
       conv,
       hydrated.ciphertext,
       messageEpoch: hydrated.epoch,
@@ -1615,15 +1875,36 @@ class AuthService {
     _crypto = null;
 
     final dm = await _ensureSignalDm();
-    await dm.uploadKeysToServer();
+    try {
+      await dm.uploadKeysToServer();
+    } catch (_) {
+      // 离线时仍可用本机 Signal 会话加解密。
+    }
     final localPub = await dm.identityPublicKeyBase64();
 
-    if (!isValidIdentityPublicKey(user.identityPublicKey) ||
-        user.identityPublicKey != localPub) {
-      final data = await api.patchJson('/api/users/me', body: {
-        'identity_public_key': localPub,
-      });
-      currentUser = User.fromJson(data);
+    final profileKey = user.identityPublicKey;
+    final identityChanged = !isValidIdentityPublicKey(profileKey) ||
+        profileKey != localPub;
+
+    if (profileKey != localPub) {
+      currentUser = User(
+        id: user.id,
+        email: user.email,
+        username: user.username,
+        avatarUrl: user.avatarUrl,
+        identityPublicKey: localPub,
+      );
+      await storage.saveUserProfile(currentUser!.toJson());
+    }
+
+    if (identityChanged) {
+      try {
+        final data = await api.patchJson('/api/users/me', body: {
+          'identity_public_key': localPub,
+        });
+        currentUser = User.fromJson(data);
+        await storage.saveUserProfile(currentUser!.toJson());
+      } catch (_) {}
       return true;
     }
     return false;

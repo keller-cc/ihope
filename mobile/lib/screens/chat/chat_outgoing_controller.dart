@@ -142,24 +142,39 @@ class ChatOutgoingController {
     }
   }
 
-  Future<void> pickImage() async {
-    final file = await ImagePicker().pickImage(
-      source: ImageSource.gallery,
-      maxWidth: 1920,
-      maxHeight: 1920,
-      imageQuality: 85,
-    );
-    if (file == null) return;
-    await sendMedia(
-      type: 'image',
-      media: MediaPayload(
-        kind: 'image',
-        mime: 'image/jpeg',
-        name: file.name.isNotEmpty ? file.name : 'image.jpg',
-        bytes: await file.readAsBytes(),
-      ),
-    );
+  Future<void> pickImage({ImageSource source = ImageSource.gallery}) async {
+    try {
+      final file = await ImagePicker().pickImage(
+        source: source,
+        maxWidth: 1920,
+        maxHeight: 1920,
+        imageQuality: 85,
+      );
+      if (file == null) return;
+      final name = file.name.isNotEmpty
+          ? file.name
+          : source == ImageSource.camera
+              ? 'photo_${DateTime.now().millisecondsSinceEpoch}.jpg'
+              : 'image.jpg';
+      await sendMedia(
+        type: 'image',
+        media: MediaPayload(
+          kind: 'image',
+          mime: 'image/jpeg',
+          name: name,
+          bytes: await file.readAsBytes(),
+        ),
+      );
+    } catch (e) {
+      onError(
+        source == ImageSource.camera
+            ? '无法打开相机，请检查权限设置'
+            : '无法选择图片',
+      );
+    }
   }
+
+  Future<void> captureImage() => pickImage(source: ImageSource.camera);
 
   Future<void> pickFile() async {
     final file = await FilePicker.pickFile(type: FileType.any);

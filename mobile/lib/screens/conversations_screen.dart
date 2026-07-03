@@ -11,7 +11,6 @@ import '../utils/announcement_payload.dart';
 import '../utils/conversation_sort.dart';
 import '../utils/media_payload.dart';
 import '../utils/message_time.dart';
-import '../utils/text_search.dart';
 import '../widgets/home_connection_status.dart';
 import '../widgets/offline_banner.dart';
 import '../widgets/swipe_action_tile.dart';
@@ -20,6 +19,7 @@ import 'chat_screen.dart';
 import 'new_chat_screen.dart';
 import 'new_group_screen.dart';
 import 'profile_screen.dart';
+import 'home_search/home_search_screen.dart';
 
 class ConversationsScreen extends StatefulWidget {
   const ConversationsScreen({
@@ -43,7 +43,6 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
   final Map<String, int> _unreadCounts = {};
   final Map<String, bool> _announcementUnread = {};
   Set<String> _hiddenIds = {};
-  final _search = TextEditingController();
   bool _refreshing = false;
   String? _error;
   String? _offlineNotice;
@@ -65,7 +64,6 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
   @override
   void initState() {
     super.initState();
-    _search.addListener(() => setState(() {}));
     _load();
     unawaited(widget.auth.ensureRealtimeConnected());
     _msgSub = widget.auth.ws.onMessage.listen(_onIncomingMessage);
@@ -99,11 +97,13 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
     final item = _items[index];
     final last = item.lastMessage;
     if (last == null) return;
-    final preview = await widget.auth.decryptPreview(
-      item,
-      last,
-      cachedThread: _messageCache[item.id],
-    );
+    final quick = widget.auth.previewIfCached(last);
+    final preview = quick ??
+        await widget.auth.decryptPreview(
+          item,
+          last,
+          cachedThread: _messageCache[item.id],
+        );
     if (!mounted) return;
     setState(() => _previews[item.id] = preview);
   }
@@ -127,7 +127,6 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
 
   @override
   void dispose() {
-    _search.dispose();
     _msgSub?.cancel();
     _connSub?.cancel();
     _dissolvedSub?.cancel();
@@ -456,12 +455,7 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
   }
 
   List<ConversationItem> _visibleItems(String meId) {
-    final q = _search.text.trim();
-    final base = q.isEmpty
-        ? widget.auth.filterVisibleConversations(_items, _hiddenIds)
-        : _items;
-    if (q.isEmpty) return base;
-    return base.where((item) => _conversationMatchesQuery(item, meId, q)).toList();
+    return widget.auth.filterVisibleConversations(_items, _hiddenIds);
   }
 
   Future<void> _pinConversation(ConversationItem item, bool pin) async {
@@ -575,27 +569,6 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
     });
   }
 
-  bool _conversationMatchesQuery(ConversationItem item, String meId, String q) {
-    if (textMatchesQuery(item.displayTitle(meId), q)) return true;
-    for (final m in item.members) {
-      if (textMatchesQuery(m.username, q)) return true;
-    }
-    if (item.isArchived && textMatchesQuery('已退出', q)) return true;
-    if (_hiddenIds.contains(item.id) && textMatchesQuery('已从列表移除', q)) {
-      return true;
-    }
-
-    final cached = _messageCache[item.id];
-    if (cached != null) {
-      for (final msg in cached) {
-        if (textMatchesQuery(msg.displayText, q)) return true;
-      }
-      return false;
-    }
-
-    final preview = _previews[item.id] ?? item.lastMessage?.displayText ?? '';
-    return textMatchesQuery(preview, q);
-  }
 
   Future<void> _load() async {
     final hadItems = _items.isNotEmpty;
@@ -630,24 +603,31 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
       final msgCaches = await widget.auth.loadCachedMessagesForConversations(
         items.map((c) => c.id),
       );
-      for (final item in items) {
-        if (item.type != 'group' || item.lastMessage == null) continue;
-        widget.auth.prepareGroupConversation(item);
-        await widget.auth.ensureGroupKeys(
-          item,
-          epochs: [item.lastMessage!.epoch],
-        );
-      }
       final previews = <String, String>{};
       for (final item in items) {
         final last = item.lastMessage;
-        if (last != null) {
-          previews[item.id] = await widget.auth.decryptPreview(
+        if (last == null) continue;
+        final quick = widget.auth.previewIfCached(last);
+        if (quick != null) {
+          previews[item.id] = quick;
+        }
+      }
+      for (final item in items) {
+        if (previews.containsKey(item.id)) continue;
+        final last = item.lastMessage;
+        if (last == null) continue;
+        if (item.type == 'group') {
+          widget.auth.prepareGroupConversation(item);
+          await widget.auth.ensureGroupKeys(
             item,
-            last,
-            cachedThread: msgCaches[item.id],
+            epochs: [last.epoch],
           );
         }
+        previews[item.id] = await widget.auth.decryptPreview(
+          item,
+          last,
+          cachedThread: msgCaches[item.id],
+        );
       }
       if (!mounted) return;
       setState(() {
@@ -695,7 +675,7 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
     }
   }
 
-  Future<void> _openChat(ConversationItem conv) async {
+  Future<void> _openChat(ConversationItem conv, {String? focusMessageId}) async {
     if (_hiddenIds.contains(conv.id)) {
       await widget.auth.restoreConversationToList(conv.id);
       if (!mounted) return;
@@ -716,6 +696,7 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
           auth: widget.auth,
           conversation: item,
           initialUnreadCount: initialUnread,
+          initialFocusMessageId: focusMessageId,
         ),
       ),
     );
@@ -952,25 +933,48 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
     return preview;
   }
 
-  Widget _buildSearchField() {
+  Future<void> _openHomeSearch() async {
+    final me = widget.auth.currentUser;
+    if (me == null) return;
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => HomeSearchScreen(
+          auth: widget.auth,
+          conversations: _visibleItems(me.id),
+          messageCache: _messageCache,
+          onOpenChat: (conv, {messageId}) =>
+              _openChat(conv, focusMessageId: messageId),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSearchEntry() {
+    final scheme = Theme.of(context).colorScheme;
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
-      child: TextField(
-        controller: _search,
-        decoration: InputDecoration(
-          hintText: '搜索会话、成员或本机聊天记录',
-          prefixIcon: const Icon(Icons.search),
-          suffixIcon: _search.text.isEmpty
-              ? null
-              : IconButton(
-                  tooltip: '清除',
-                  onPressed: _search.clear,
-                  icon: const Icon(Icons.clear),
+      child: Material(
+        color: scheme.surfaceContainerHighest.withValues(alpha: 0.45),
+        borderRadius: BorderRadius.circular(12),
+        child: InkWell(
+          onTap: () => unawaited(_openHomeSearch()),
+          borderRadius: BorderRadius.circular(12),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+            child: Row(
+              children: [
+                Icon(Icons.search, color: scheme.onSurfaceVariant),
+                const SizedBox(width: 8),
+                Text(
+                  '搜索',
+                  style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                        color: scheme.onSurfaceVariant,
+                      ),
                 ),
-          border: const OutlineInputBorder(),
-          isDense: true,
+              ],
+            ),
+          ),
         ),
-        textInputAction: TextInputAction.search,
       ),
     );
   }
@@ -1045,7 +1049,7 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
             ),
           if (_refreshing)
             const LinearProgressIndicator(minHeight: 2),
-          _buildSearchField(),
+          _buildSearchEntry(),
           Expanded(
             child: RefreshIndicator(
               onRefresh: _load,
@@ -1068,7 +1072,7 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
                                         ? (_refreshing
                                             ? '正在同步会话…'
                                             : '暂无会话，点右上角 + 发起聊天')
-                                        : '无匹配的会话',
+                                        : '暂无会话，点右上角 + 发起聊天',
                                   ),
                                 ),
                               ],
@@ -1232,14 +1236,42 @@ class _ConversationRow extends StatefulWidget {
   State<_ConversationRow> createState() => _ConversationRowState();
 }
 
-class _ConversationRowState extends State<_ConversationRow> {
+class _ConversationRowState extends State<_ConversationRow>
+    with SingleTickerProviderStateMixin {
   String? _seenMessageId;
-  bool _highlight = false;
+  late final AnimationController _pulse;
+  late final Animation<double> _pulseStrength;
 
   @override
   void initState() {
     super.initState();
     _seenMessageId = widget.lastMessageId;
+    _pulse = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 880),
+    );
+    _pulseStrength = TweenSequence<double>([
+      TweenSequenceItem(
+        tween: Tween(begin: 0.0, end: 1.0)
+            .chain(CurveTween(curve: Curves.easeOut)),
+        weight: 32,
+      ),
+      TweenSequenceItem(
+        tween: Tween(begin: 1.0, end: 0.0)
+            .chain(CurveTween(curve: Curves.easeIn)),
+        weight: 68,
+      ),
+    ]).animate(_pulse);
+  }
+
+  @override
+  void dispose() {
+    _pulse.dispose();
+    super.dispose();
+  }
+
+  void _playNewMessageGlow() {
+    _pulse.forward(from: 0);
   }
 
   @override
@@ -1252,21 +1284,27 @@ class _ConversationRowState extends State<_ConversationRow> {
       return;
     }
     _seenMessageId = incoming;
-    setState(() => _highlight = true);
-    Future<void>.delayed(const Duration(milliseconds: 500), () {
-      if (mounted) setState(() => _highlight = false);
-    });
+    _playNewMessageGlow();
   }
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 350),
-      curve: Curves.easeOut,
-      color: _highlight
-          ? scheme.primaryContainer.withValues(alpha: 0.35)
-          : Colors.transparent,
+    return AnimatedBuilder(
+      animation: _pulseStrength,
+      builder: (context, child) {
+        final glow = _pulseStrength.value;
+        return DecoratedBox(
+          decoration: BoxDecoration(
+            color: Color.lerp(
+              Colors.transparent,
+              scheme.primary.withValues(alpha: 0.07),
+              glow,
+            ),
+          ),
+          child: child,
+        );
+      },
       child: widget.child,
     );
   }

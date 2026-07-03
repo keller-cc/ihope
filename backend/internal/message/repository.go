@@ -117,6 +117,7 @@ func (r *Repository) ListForMember(
 	conversationID, userID string,
 	before *time.Time,
 	limit int,
+	msgType string,
 ) ([]Message, error) {
 	const periodFilter = `
 		EXISTS (
@@ -127,10 +128,19 @@ func (r *Repository) ListForMember(
 			  AND m.created_at >= p.joined_at
 			  AND m.epoch >= p.joined_epoch
 		)`
-
 	var rows pgx.Rows
 	var err error
 	switch {
+	case before != nil && msgType != "":
+		rows, err = r.pool.Query(ctx, `
+			SELECT m.id, m.conversation_id, m.sender_id, m.type, m.ciphertext, m.epoch, m.file_id, m.created_at
+			FROM messages m
+			WHERE m.conversation_id = $1
+			  AND `+periodFilter+`
+			  AND m.created_at < $3
+			  AND m.type = $4
+			ORDER BY m.created_at DESC
+			LIMIT $5`, conversationID, userID, *before, msgType, limit)
 	case before != nil:
 		rows, err = r.pool.Query(ctx, `
 			SELECT m.id, m.conversation_id, m.sender_id, m.type, m.ciphertext, m.epoch, m.file_id, m.created_at
@@ -140,6 +150,15 @@ func (r *Repository) ListForMember(
 			  AND m.created_at < $3
 			ORDER BY m.created_at DESC
 			LIMIT $4`, conversationID, userID, *before, limit)
+	case msgType != "":
+		rows, err = r.pool.Query(ctx, `
+			SELECT m.id, m.conversation_id, m.sender_id, m.type, m.ciphertext, m.epoch, m.file_id, m.created_at
+			FROM messages m
+			WHERE m.conversation_id = $1
+			  AND `+periodFilter+`
+			  AND m.type = $4
+			ORDER BY m.created_at DESC
+			LIMIT $3`, conversationID, userID, limit, msgType)
 	default:
 		rows, err = r.pool.Query(ctx, `
 			SELECT m.id, m.conversation_id, m.sender_id, m.type, m.ciphertext, m.epoch, m.file_id, m.created_at

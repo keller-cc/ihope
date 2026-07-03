@@ -66,7 +66,7 @@ func (s *Service) Send(ctx context.Context, in SendInput) (*Message, error) {
 	return s.messages.Create(ctx, in.ConversationID, in.SenderID, msgType, content, epoch)
 }
 
-func (s *Service) List(ctx context.Context, conversationID, userID string, beforeMessageID string, limit int) ([]Message, bool, error) {
+func (s *Service) List(ctx context.Context, conversationID, userID string, beforeMessageID string, limit int, msgType string) ([]Message, bool, error) {
 	if _, err := s.conv.GetMembership(ctx, conversationID, userID); err != nil {
 		return nil, false, ErrNotMember
 	}
@@ -87,7 +87,7 @@ func (s *Service) List(ctx context.Context, conversationID, userID string, befor
 		before = &t
 	}
 
-	msgs, err := s.messages.ListForMember(ctx, conversationID, userID, before, limit+1)
+	msgs, err := s.messages.ListForMember(ctx, conversationID, userID, before, limit+1, msgType)
 	if err != nil {
 		return nil, false, err
 	}

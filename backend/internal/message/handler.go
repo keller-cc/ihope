@@ -41,8 +41,14 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 			limit = n
 		}
 	}
+	msgType := r.URL.Query().Get("type")
 
-	msgs, hasMore, err := h.svc.List(r.Context(), conversationID, userID, r.URL.Query().Get("before"), limit)
+	if msgType != "" && !isAllowedType(msgType) {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_type", "unsupported message type")
+		return
+	}
+
+	msgs, hasMore, err := h.svc.List(r.Context(), conversationID, userID, r.URL.Query().Get("before"), limit, msgType)
 	if errors.Is(err, ErrNotMember) {
 		httpx.WriteError(w, http.StatusForbidden, "forbidden", "not a conversation member")
 		return
