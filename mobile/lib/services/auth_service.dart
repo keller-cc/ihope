@@ -49,6 +49,7 @@ class AuthService {
 
   DateTime? _accessExpiresAt;
   Future<bool>? _refreshInFlight;
+  Future<List<ConversationItem>>? _listConversationsInFlight;
   Future<bool>? _sessionRestoreInFlight;
   Future<void>? _cryptoInitInFlight;
 
@@ -147,7 +148,16 @@ class AuthService {
 
   Future<bool> _restoreSession() async {
     try {
-      if (!await restoreLocalSession()) return false;
+      final token = await storage.accessToken();
+      if (token == null || token.isEmpty) return false;
+      api.setAccessToken(token);
+      _accessExpiresAt ??= _expiryFromJwt(token);
+      if (currentUser == null) {
+        final profile = await storage.readUserProfile();
+        if (profile != null) {
+          currentUser = User.fromJson(profile);
+        }
+      }
       try {
         await refreshCurrentUser();
       } catch (_) {
@@ -351,11 +361,23 @@ class AuthService {
 
   /// 供 WS 重连与 API 401 拦截器使用：必要时 refresh 后返回有效 token。
   Future<String?> ensureValidAccessToken() async {
+    await _ensureAccessExpiryLoaded();
     if (_shouldRefreshProactively()) {
       final ok = await _tryRefreshTokens();
       if (!ok) return null;
     }
-    return storage.accessToken();
+    final token = await storage.accessToken();
+    if (token != null && token.isNotEmpty) {
+      api.setAccessToken(token);
+    }
+    return token;
+  }
+
+  Future<void> _ensureAccessExpiryLoaded() async {
+    if (_accessExpiresAt != null) return;
+    final token = await storage.accessToken();
+    if (token == null || token.isEmpty) return;
+    _accessExpiresAt = _expiryFromJwt(token);
   }
 
   Future<bool> _tryRefreshTokens() async {
@@ -386,10 +408,9 @@ class AuthService {
       await _saveTokenResponse(data);
       final access = await storage.accessToken();
       if (access != null && access.isNotEmpty) {
-        if (ws.isConnected) {
-          ws.updateAccessToken(access);
-        } else {
-          await ws.reconnect(access);
+        ws.updateAccessToken(access);
+        if (!ws.isConnected) {
+          unawaited(ws.reconnect(access));
         }
       }
       return true;
@@ -442,8 +463,8 @@ class AuthService {
     }
     _accessExpiresAt = _expiryFromJwt(access);
     final expiresIn = data['expires_in'];
-    if (expiresIn is int) {
-      _accessExpiresAt = DateTime.now().add(Duration(seconds: expiresIn));
+    if (expiresIn is num) {
+      _accessExpiresAt = DateTime.now().add(Duration(seconds: expiresIn.toInt()));
     }
   }
 
@@ -894,7 +915,7 @@ class AuthService {
   ) async {
     if (!conversation.isArchived) return conversation;
     try {
-      final items = await conversations.listConversations();
+      final items = await _listActiveConversations();
       for (final c in items) {
         if (c.id == conversation.id) {
           return reactivateConversation(c);
@@ -904,9 +925,27 @@ class AuthService {
     return null;
   }
 
+  Future<List<ConversationItem>> _listActiveConversations() {
+    final inFlight = _listConversationsInFlight;
+    if (inFlight != null) return inFlight;
+
+    final task = _fetchActiveConversations();
+    _listConversationsInFlight = task;
+    return task.whenComplete(() {
+      if (identical(_listConversationsInFlight, task)) {
+        _listConversationsInFlight = null;
+      }
+    });
+  }
+
+  Future<List<ConversationItem>> _fetchActiveConversations() async {
+    await ensureValidAccessToken();
+    return conversations.listConversations();
+  }
+
   Future<List<ConversationItem>> listAllConversations() async {
     final me = currentUser!;
-    final active = await conversations.listConversations();
+    final active = await _listActiveConversations();
     final activeIds = active.map((c) => c.id).toSet();
     await storage.removeArchivedConversations(me.id, activeIds);
     for (final c in active) {
@@ -1578,7 +1617,7 @@ class AuthService {
       }
     }
     try {
-      final items = await conversations.listConversations();
+      final items = await _listActiveConversations();
       final me = currentUser;
       for (final c in items) {
         if (c.id == conversation.id && me != null) {
@@ -1849,7 +1888,7 @@ class AuthService {
     await ws.connect(token);
     groupKeys.attachWsHandlers();
     try {
-      final items = await conversations.listConversations();
+      final items = await _listActiveConversations();
       for (final c in items) {
         _cacheConversation(c);
       }

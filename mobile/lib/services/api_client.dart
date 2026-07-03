@@ -48,6 +48,10 @@ class ApiClient {
             return handler.next(error);
           }
           try {
+            final auth = _dio.options.headers['Authorization'];
+            if (auth != null) {
+              error.requestOptions.headers['Authorization'] = auth;
+            }
             final response = await _dio.fetch<dynamic>(error.requestOptions);
             return handler.resolve(response);
           } on DioException catch (e) {
@@ -107,18 +111,25 @@ class ApiClient {
   }
 
   /// 不带 Authorization 的 POST（用于 refresh）。
+  ///
+  /// 勿用 `Authorization: null` 覆盖 Options——Dio 5 可能连带清掉
+  /// [BaseOptions.headers]，导致后续请求丢失 Bearer 并反复 401→refresh。
   Future<Map<String, dynamic>> postJsonPublic(
     String path, {
     Map<String, dynamic>? body,
   }) async {
+    final savedAuth = _dio.options.headers['Authorization'];
+    _dio.options.headers.remove('Authorization');
     try {
       final res = await _dio.post<Map<String, dynamic>>(
         path,
         data: body ?? {},
-        options: Options(headers: {'Authorization': null}),
       );
       return res.data ?? {};
     } on DioException catch (e) {
+      if (savedAuth != null) {
+        _dio.options.headers['Authorization'] = savedAuth;
+      }
       throw _mapError(e);
     }
   }

@@ -54,6 +54,9 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
   StreamSubscription<ConversationUpdatedFrame>? _updatedSub;
   StreamSubscription<List<ConnectivityResult>>? _connectivitySub;
   StreamSubscription<String>? _groupKeySub;
+  Timer? _connectivityDebounce;
+  bool _syncAfterOnlineInFlight = false;
+  bool _loadInFlight = false;
 
   void _syncOfflineNotice() {
     _offlineNotice = widget.auth.ws.isConnected
@@ -75,8 +78,12 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
     _connectivitySub = Connectivity().onConnectivityChanged.listen((results) {
       if (!mounted) return;
       if (results.any((r) => r != ConnectivityResult.none)) {
-        unawaited(widget.auth.ensureRealtimeConnected());
-        unawaited(_syncAfterOnline());
+        _connectivityDebounce?.cancel();
+        _connectivityDebounce = Timer(const Duration(seconds: 2), () {
+          if (!mounted) return;
+          unawaited(widget.auth.ensureRealtimeConnected());
+          unawaited(_syncAfterOnline());
+        });
       }
     });
     _dissolvedSub = widget.auth.ws.onGroupDissolved.listen(_onGroupDissolved);
@@ -134,6 +141,7 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
     _removedSub?.cancel();
     _updatedSub?.cancel();
     _connectivitySub?.cancel();
+    _connectivityDebounce?.cancel();
     _groupKeySub?.cancel();
     _connSub?.cancel();
     super.dispose();
@@ -448,10 +456,15 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
 
   /// 重连后拉取离线消息并刷新未读角标。
   Future<void> _syncAfterOnline() async {
-    if (_items.isEmpty) return;
-    await widget.auth.syncMissedMessages(_items);
-    if (!mounted) return;
-    await _refreshUnreadCounts();
+    if (_items.isEmpty || _syncAfterOnlineInFlight) return;
+    _syncAfterOnlineInFlight = true;
+    try {
+      await widget.auth.syncMissedMessages(_items);
+      if (!mounted) return;
+      await _refreshUnreadCounts();
+    } finally {
+      _syncAfterOnlineInFlight = false;
+    }
   }
 
   List<ConversationItem> _visibleItems(String meId) {
@@ -571,6 +584,16 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
 
 
   Future<void> _load() async {
+    if (_loadInFlight) return;
+    _loadInFlight = true;
+    try {
+      await _loadImpl();
+    } finally {
+      _loadInFlight = false;
+    }
+  }
+
+  Future<void> _loadImpl() async {
     final hadItems = _items.isNotEmpty;
     if (!hadItems) {
       final cached = await widget.auth.listCachedConversations();

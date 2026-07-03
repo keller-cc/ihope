@@ -126,7 +126,7 @@ class _StandardEmojiPanelState extends State<StandardEmojiPanel> {
                 scrollDirection: Axis.horizontal,
                 padding: const EdgeInsets.symmetric(horizontal: 8),
                 itemCount: _tabCount,
-                separatorBuilder: (_, __) => const SizedBox(width: 4),
+                separatorBuilder: (_, _) => const SizedBox(width: 4),
                 itemBuilder: (context, index) {
                   final selected = index == _categoryIndex;
                   final IconData icon;

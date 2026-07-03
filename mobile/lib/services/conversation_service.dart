@@ -7,8 +7,22 @@ class ConversationService {
   ConversationService(this.api);
 
   final ApiClient api;
+  Future<List<ConversationItem>>? _listInFlight;
 
-  Future<List<ConversationItem>> listConversations() async {
+  Future<List<ConversationItem>> listConversations() {
+    final inFlight = _listInFlight;
+    if (inFlight != null) return inFlight;
+
+    final task = _fetchConversations();
+    _listInFlight = task;
+    return task.whenComplete(() {
+      if (identical(_listInFlight, task)) {
+        _listInFlight = null;
+      }
+    });
+  }
+
+  Future<List<ConversationItem>> _fetchConversations() async {
     final data = await api.getJson('/api/conversations');
     return (data['conversations'] as List<dynamic>)
         .map((e) => ConversationItem.fromJson(e as Map<String, dynamic>))

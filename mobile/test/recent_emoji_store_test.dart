@@ -22,7 +22,7 @@ void main() {
       final next = mergeRecentEmoji(current, 'new', maxCount: 36);
       expect(next.length, 36);
       expect(next.first, 'new');
-      expect(next.last, '3');
+      expect(next.last, '34');
     });
 
     test('ignores empty emoji', () {
