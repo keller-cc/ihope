@@ -62,15 +62,29 @@ class MediaLocalCache {
     String plaintext,
   ) async {
     final media = MediaPayload.tryParse(plaintext);
-    if (media == null) return null;
-    await persistPayload(messageId, media);
-    return jsonEncode({
-      'media': media.kind,
-      'local': true,
-      'mime': media.mime,
-      'name': media.name,
-      if (media.durationMs != null) 'duration_ms': media.durationMs,
-    });
+    if (media != null) {
+      await persistPayload(messageId, media);
+      return jsonEncode({
+        'media': media.kind,
+        'local': true,
+        'mime': media.mime,
+        'name': media.name,
+        if (media.durationMs != null) 'duration_ms': media.durationMs,
+      });
+    }
+    final att = AttachmentPayload.tryParse(plaintext);
+    if (att != null) {
+      return jsonEncode({
+        'media': att.kind,
+        'local': true,
+        'mime': att.mime,
+        'name': att.name,
+        'size': att.size,
+        'file_key_b64': att.fileKeyB64,
+        if (att.thumbBytes != null) 'thumb_b64': base64Encode(att.thumbBytes!),
+      });
+    }
+    return null;
   }
 
   static Future<void> persistPayload(
@@ -171,12 +185,49 @@ class MediaLocalCache {
     if (isLocalRef(plaintext)) {
       final local = await load(messageId);
       if (local != null) return local;
+      try {
+        final map = jsonDecode(plaintext) as Map<String, dynamic>;
+        if (map['media'] == 'image' && map['thumb_b64'] is String) {
+          return MediaPayload(
+            kind: 'image',
+            mime: map['mime'] as String? ?? 'image/jpeg',
+            name: map['name'] as String? ?? 'image.jpg',
+            bytes: base64Decode(map['thumb_b64'] as String),
+          );
+        }
+      } catch (_) {}
     }
     final inline = MediaPayload.tryParse(plaintext);
     if (inline != null) return inline;
+    final att = AttachmentPayload.tryParse(plaintext);
+    if (att != null) {
+      final local = await load(messageId);
+      if (local != null) return local;
+      if (att.kind == 'image' && att.thumbBytes != null) {
+        return MediaPayload(
+          kind: 'image',
+          mime: att.mime,
+          name: att.name,
+          bytes: att.thumbBytes!,
+        );
+      }
+      return null;
+    }
     if (await hasPayloadFile(messageId)) {
       return load(messageId);
     }
     return null;
+  }
+
+  static bool isAttachmentRef(String? plaintext) {
+    if (plaintext == null || plaintext.isEmpty) return false;
+    if (AttachmentPayload.tryParse(plaintext) != null) return true;
+    if (!isLocalRef(plaintext)) return false;
+    try {
+      final map = jsonDecode(plaintext) as Map<String, dynamic>;
+      return map['file_key_b64'] is String;
+    } catch (_) {
+      return false;
+    }
   }
 }

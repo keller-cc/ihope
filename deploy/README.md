@@ -92,6 +92,21 @@ docker logs ihope-postgres-dev --tail 30            # 日志
 
 推送说明见 [docs/推送配置指南.md](../docs/推送配置指南.md)。
 
+### 客户端可见配置（env → `/api/health`）
+
+| 变量 | 作用 |
+|------|------|
+| `MAX_ENCRYPTED_FILE_BYTES` | IM 附件上限（0=不限，默认 300MB） |
+| `CLOUD_DRIVE_URL` | 1t1 网盘地址 |
+| `SERVER_VERSION` | 版本号 |
+| `DRAIN_SECONDS` | 优雅排空秒数 |
+
+修改后需**重启后端**；管理页可查看，无运行时热更新。
+
+### 开发无感升级
+
+App 固定连 `PUBLIC_PORT`（8080），`go run ../backend/cmd/devproxy` 转发到 `.active-backend-port` 中的后端（8081/8082 交替）。升级执行 `.\upgrade-dev.ps1` 或管理页「排空本实例」。详见上文脚本注释。
+
 首次使用：
 
 ```powershell

@@ -35,7 +35,7 @@ func TestProfileFlowIntegration(t *testing.T) {
 	userRepo := user.NewRepository(pool)
 	jwtMgr := jwt.NewManager(cfg.JWTSecret, cfg.JWTAccessTTL)
 	authSvc := auth.NewService(cfg, userRepo, jwtMgr, mail.New(cfg))
-	handler := server.New(cfg, auth.NewHandler(authSvc), user.NewHandler(userRepo, cfg), userRepo, jwtMgr, nil, nil, nil, nil, admin.NewHandler(userRepo, nil, 30*24*time.Hour)).Router()
+	handler := server.New(cfg, auth.NewHandler(authSvc), user.NewHandler(userRepo, cfg), userRepo, jwtMgr, nil, nil, nil, nil, admin.NewHandler(userRepo, nil, 30*24*time.Hour, admin.RuntimeConfigFrom(cfg)), nil, nil).Router()
 
 	email := fmt.Sprintf("profile_%d@example.com", time.Now().UnixNano())
 	username := fmt.Sprintf("prof_%d", time.Now().UnixNano()%1_000_000_000)

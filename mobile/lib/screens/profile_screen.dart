@@ -1,6 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
+import '../config/app_version.dart';
 import '../config/server_config.dart';
 import '../services/auth_service.dart';
 import '../services/notification_service.dart';
@@ -8,8 +11,11 @@ import '../widgets/auth_form.dart';
 import '../widgets/user_avatar.dart';
 import 'change_password_screen.dart';
 import 'notification_settings_screen.dart';
+import 'device_link_screen.dart';
+import 'devices_screen.dart';
 import 'server_settings_screen.dart';
 import 'storage_settings_screen.dart';
+import 'version_check_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({
@@ -32,11 +38,18 @@ class _ProfileScreenState extends State<ProfileScreen> {
   bool _loading = false;
   bool _uploadingAvatar = false;
   String? _error;
+  String _appVersionLabel = '…';
 
   @override
   void initState() {
     super.initState();
     _username = TextEditingController(text: widget.auth.currentUser!.username);
+    unawaited(_loadAppVersion());
+  }
+
+  Future<void> _loadAppVersion() async {
+    final label = await AppVersionInfo.displayLabel();
+    if (mounted) setState(() => _appVersionLabel = label);
   }
 
   @override
@@ -203,6 +216,48 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     auth: widget.auth,
                     notification: widget.notification,
                   ),
+                ),
+              );
+            },
+          ),
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('已登录设备'),
+            subtitle: const Text('查看并踢下线其它设备'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () async {
+              final result = await Navigator.of(context).push<Object?>(
+                MaterialPageRoute(
+                  builder: (_) => DevicesScreen(auth: widget.auth),
+                ),
+              );
+              if (result == 'logout' && mounted) {
+                Navigator.of(context).pop('logout');
+              }
+            },
+          ),
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('链接设备'),
+            subtitle: const Text('扫码同步加密密钥到其它设备'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () {
+              Navigator.of(context).push<void>(
+                MaterialPageRoute(
+                  builder: (_) => DeviceLinkScreen(auth: widget.auth),
+                ),
+              );
+            },
+          ),
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('检查版本'),
+            subtitle: Text(_appVersionLabel),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () {
+              Navigator.of(context).push<void>(
+                MaterialPageRoute(
+                  builder: (_) => VersionCheckScreen(auth: widget.auth),
                 ),
               );
             },

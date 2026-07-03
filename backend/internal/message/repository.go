@@ -30,12 +30,12 @@ func NewRepository(pool *pgxpool.Pool) *Repository {
 	return &Repository{pool: pool}
 }
 
-func (r *Repository) Create(ctx context.Context, conversationID, senderID, msgType, ciphertext string, epoch int) (*Message, error) {
+func (r *Repository) Create(ctx context.Context, conversationID, senderID, msgType, ciphertext string, epoch int, fileID *string) (*Message, error) {
 	row := r.pool.QueryRow(ctx, `
-		INSERT INTO messages (conversation_id, sender_id, type, ciphertext, epoch)
-		VALUES ($1, $2, $3, $4, $5)
+		INSERT INTO messages (conversation_id, sender_id, type, ciphertext, epoch, file_id)
+		VALUES ($1, $2, $3, $4, $5, $6)
 		RETURNING id, conversation_id, sender_id, type, ciphertext, epoch, file_id, created_at`,
-		conversationID, senderID, msgType, ciphertext, epoch,
+		conversationID, senderID, msgType, ciphertext, epoch, fileID,
 	)
 	return scanMessage(row)
 }

@@ -240,3 +240,41 @@ func (h *Handler) RegisterPushToken(w http.ResponseWriter, r *http.Request) {
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
+
+// ListDevices GET /api/devices — 当前账号已登记设备。
+func (h *Handler) ListDevices(w http.ResponseWriter, r *http.Request) {
+	userID := middleware.UserIDFromContext(r.Context())
+	currentDeviceID := middleware.DeviceIDFromContext(r.Context())
+	if userID == "" {
+		httpx.WriteError(w, http.StatusUnauthorized, "unauthorized", "missing user")
+		return
+	}
+	devices, err := h.repo.ListDevicesForUser(r.Context(), userID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "could not list devices")
+		return
+	}
+	for i := range devices {
+		devices[i].IsCurrent = devices[i].DeviceID == currentDeviceID
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"devices": devices})
+}
+
+// KickDevice DELETE /api/devices/{deviceId} — 踢指定设备下线（含本机，等同退出登录）。
+func (h *Handler) KickDevice(w http.ResponseWriter, r *http.Request) {
+	userID := middleware.UserIDFromContext(r.Context())
+	deviceID := strings.TrimSpace(r.PathValue("deviceId"))
+	if userID == "" || deviceID == "" {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_request", "missing device id")
+		return
+	}
+	if err := h.repo.KickDevice(r.Context(), userID, deviceID); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			httpx.WriteError(w, http.StatusNotFound, "not_found", "device not found")
+			return
+		}
+		httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "could not kick device")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}

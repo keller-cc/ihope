@@ -114,9 +114,13 @@ function sessionCell(d) {
 function renderService(stats) {
   const svc = stats.service || {};
   const db = svc.database || {};
+  const cfg = stats.config || {};
   const pushLines = Object.entries(stats.push_by_platform || {})
     .map(([p, n]) => `${p}: ${n}`)
     .join(' · ') || '无';
+  const maxMb = cfg.max_encrypted_file_bytes
+    ? Math.round(cfg.max_encrypted_file_bytes / 1024 / 1024)
+    : '不限';
   $('service-panel').innerHTML = `
     <h2>服务状态</h2>
     <div class="service-grid">
@@ -124,9 +128,18 @@ function renderService(stats) {
       <div class="stat"><span>数据库</span><strong class="${db.ok ? 'ok-text' : 'bad-text'}">${db.ok ? '已连接' : '不可用'}</strong></div>
       <div class="stat"><span>运行时间</span><strong>${fmtUptime(svc.uptime_s || 0)}</strong></div>
       <div class="stat"><span>版本</span><strong>${escapeHtml(svc.version || '—')}</strong></div>
+      <div class="stat"><span>排空</span><strong class="${svc.draining ? 'warn-text' : ''}">${svc.draining ? '是' : '否'}</strong></div>
       <div class="stat wide"><span>推送 token</span><strong>${stats.push_tokens || 0}</strong><small>${escapeHtml(pushLines)}</small></div>
       <div class="stat"><span>Refresh 闲置</span><strong>${stats.refresh_token_ttl_days ? stats.refresh_token_ttl_days + ' 天' : '不限'}</strong></div>
-    </div>`;
+      <div class="stat"><span>附件上限</span><strong>${maxMb}${typeof maxMb === 'number' ? ' MB' : ''}</strong></div>
+      <div class="stat wide"><span>网盘 URL</span><strong>${escapeHtml(cfg.cloud_drive_url || '—')}</strong></div>
+      <div class="stat wide"><span>App 下载</span><strong>${escapeHtml(cfg.app_download_url || '—')}</strong></div>
+      <div class="stat"><span>后端端口</span><strong>${escapeHtml(cfg.server_port || '—')}</strong></div>
+    </div>
+    <p class="config-note">客户端配置来自 deploy/.env，修改后需重启后端实例；开发无感升级见 deploy/README.md。</p>
+    <button type="button" id="drain-btn" class="secondary"${svc.draining ? ' disabled' : ''}>排空本实例（升级用）</button>`;
+  const drainBtn = $('drain-btn');
+  if (drainBtn) drainBtn.onclick = requestDrain;
 }
 
 async function loadStats() {
@@ -135,6 +148,17 @@ async function loadStats() {
     <div class="stat"><span>用户总数</span><strong>${stats.users_total}</strong></div>
     <div class="stat"><span>已禁用</span><strong>${stats.users_disabled}</strong></div>`;
   renderService(stats);
+}
+
+async function requestDrain() {
+  if (!confirm('排空后本实例将停止接受新请求并在数秒后退出。确认？')) return;
+  try {
+    await api('/api/admin/drain', { method: 'POST' });
+    await loadStats();
+    alert('已进入排空，可启动新后端并切换 devproxy。');
+  } catch (e) {
+    alert(e.message);
+  }
 }
 
 async function loadDashboard() {

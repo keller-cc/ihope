@@ -44,6 +44,16 @@ type AdminUser struct {
 	DeviceCount int        `json:"device_count"`
 }
 
+// UserDevice 用户自助查看的登录设备。
+type UserDevice struct {
+	DeviceID     string    `json:"device_id"`
+	DeviceName   *string   `json:"device_name,omitempty"`
+	Platform     string    `json:"platform"`
+	LastActiveAt time.Time `json:"last_active_at"`
+	HasSession   bool      `json:"has_session"`
+	IsCurrent    bool      `json:"is_current"`
+}
+
 // AdminDevice 管理后台设备项。
 type AdminDevice struct {
 	DeviceID     string    `json:"device_id"`
@@ -677,6 +687,28 @@ func (r *Repository) GetForAdmin(ctx context.Context, userID string) (*AdminUser
 		return nil, err
 	}
 	return &AdminUserDetail{AdminUser: u, Devices: devices}, nil
+}
+
+func (r *Repository) ListDevicesForUser(ctx context.Context, userID string) ([]UserDevice, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT device_id, device_name, COALESCE(platform, ''), last_active_at,
+			(refresh_token_hash IS NOT NULL AND refresh_token_hash <> '')
+		FROM user_devices
+		WHERE user_id = $1
+		ORDER BY last_active_at DESC`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []UserDevice
+	for rows.Next() {
+		var d UserDevice
+		if err := rows.Scan(&d.DeviceID, &d.DeviceName, &d.Platform, &d.LastActiveAt, &d.HasSession); err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
 }
 
 func (r *Repository) ListDevicesForAdmin(ctx context.Context, userID string) ([]AdminDevice, error) {

@@ -94,7 +94,7 @@ func TestResetPasswordFlowIntegration(t *testing.T) {
 	userRepo := user.NewRepository(pool)
 	jwtMgr := jwt.NewManager(cfg.JWTSecret, cfg.JWTAccessTTL)
 	authSvc := auth.NewService(cfg, userRepo, jwtMgr, capture)
-	handler := server.New(cfg, auth.NewHandler(authSvc), user.NewHandler(userRepo, cfg), userRepo, jwtMgr, nil, nil, nil, nil, admin.NewHandler(userRepo, nil, 30*24*time.Hour)).Router()
+	handler := server.New(cfg, auth.NewHandler(authSvc), user.NewHandler(userRepo, cfg), userRepo, jwtMgr, nil, nil, nil, nil, admin.NewHandler(userRepo, nil, 30*24*time.Hour, admin.RuntimeConfigFrom(cfg)), nil, nil).Router()
 
 	email := fmt.Sprintf("reset_%d@example.com", time.Now().UnixNano())
 	username := fmt.Sprintf("reset_%d", time.Now().UnixNano()%1_000_000_000)
@@ -212,7 +212,7 @@ func TestRefreshRejectsExpiredIdleTokenIntegration(t *testing.T) {
 	userRepo := user.NewRepository(pool)
 	jwtMgr := jwt.NewManager(cfg.JWTSecret, cfg.JWTAccessTTL)
 	authSvc := auth.NewService(cfg, userRepo, jwtMgr, &mail.CapturingSender{})
-	handler := server.New(cfg, auth.NewHandler(authSvc), user.NewHandler(userRepo, cfg), userRepo, jwtMgr, nil, nil, nil, nil, admin.NewHandler(userRepo, nil, cfg.RefreshTokenTTL)).Router()
+	handler := server.New(cfg, auth.NewHandler(authSvc), user.NewHandler(userRepo, cfg), userRepo, jwtMgr, nil, nil, nil, nil, admin.NewHandler(userRepo, nil, cfg.RefreshTokenTTL, admin.RuntimeConfigFrom(cfg)), nil, nil).Router()
 
 	email := fmt.Sprintf("ttl_%d@example.com", time.Now().UnixNano())
 	username := fmt.Sprintf("ttl_%d", time.Now().UnixNano()%1_000_000_000)

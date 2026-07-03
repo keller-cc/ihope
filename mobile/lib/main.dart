@@ -5,6 +5,7 @@ import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:intl/date_symbol_data_local.dart';
 
 import 'app.dart';
+import 'config/app_config.dart';
 import 'config/server_config_loader.dart';
 import 'services/auth_service.dart';
 import 'services/auth_storage.dart';
@@ -40,6 +41,7 @@ Future<void> main() async {
   final storage = AuthStorage();
   await bootstrapServerConfig(storage);
   final auth = AuthService(storage: storage);
+  await AppConfig.refresh(auth.api);
   final notification = NotificationService();
   runApp(IHopeApp(auth: auth, notification: notification));
 }

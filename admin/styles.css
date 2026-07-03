@@ -181,6 +181,8 @@ th, td {
 .service-grid .stat.wide { grid-column: 1 / -1; }
 .ok-text { color: var(--ok); }
 .bad-text { color: #fca5a5; }
+.warn-text { color: #fbbf24; }
+.config-note { font-size: 0.85rem; color: var(--muted); margin: 12px 0 8px; }
 
 .list-toolbar {
   display: flex;

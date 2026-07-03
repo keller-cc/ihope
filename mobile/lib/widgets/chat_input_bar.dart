@@ -19,6 +19,7 @@ class ChatInputBar extends StatefulWidget {
     required this.onImage,
     required this.onCamera,
     required this.onFile,
+    required this.onCloudDrive,
   });
 
   final TextEditingController controller;
@@ -29,6 +30,7 @@ class ChatInputBar extends StatefulWidget {
   final VoidCallback onImage;
   final VoidCallback onCamera;
   final VoidCallback onFile;
+  final VoidCallback onCloudDrive;
 
   static const sendWidth = 58.0;
   static const sendHeight = 36.0;
@@ -259,6 +261,7 @@ class _ChatInputBarState extends State<ChatInputBar> {
                   onImage: () => _onPanelAction(widget.onImage),
                   onCamera: () => _onPanelAction(widget.onCamera),
                   onFile: () => _onPanelAction(widget.onFile),
+                  onCloudDrive: () => _onPanelAction(widget.onCloudDrive),
                   onPlaceholder: _onPlaceholder,
                 ),
               const SizedBox(height: 2),
@@ -568,12 +571,14 @@ class _MorePanel extends StatelessWidget {
     required this.onImage,
     required this.onCamera,
     required this.onFile,
+    required this.onCloudDrive,
     required this.onPlaceholder,
   });
 
   final VoidCallback onImage;
   final VoidCallback onCamera;
   final VoidCallback onFile;
+  final VoidCallback onCloudDrive;
   final void Function(String label) onPlaceholder;
 
   @override
@@ -584,6 +589,7 @@ class _MorePanel extends StatelessWidget {
       _PanelItem(Icons.photo_camera_outlined, '拍摄', onCamera),
       _PanelItem(Icons.videocam_outlined, '视频', () => onPlaceholder('视频')),
       _PanelItem(Icons.folder_outlined, '文件', onFile),
+      _PanelItem(Icons.cloud_outlined, '1t1网盘', onCloudDrive),
       _PanelItem(Icons.location_on_outlined, '位置', () => onPlaceholder('位置')),
     ];
 

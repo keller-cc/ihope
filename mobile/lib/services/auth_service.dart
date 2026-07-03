@@ -12,10 +12,15 @@ import '../utils/announcement_payload.dart';
 import '../utils/announcement_read.dart';
 import '../utils/media_local_cache.dart';
 import '../utils/media_payload.dart';
+import '../config/app_config.dart';
 import 'api_client.dart';
 import 'auth_session_policy.dart';
 import 'auth_storage.dart';
 import 'conversation_service.dart';
+import 'device_link_service.dart';
+import 'device_service.dart';
+import 'file_attachment_crypto.dart';
+import 'file_upload_service.dart';
 import 'group_key_service.dart';
 import 'message_cache_store.dart';
 import 'recent_emoji_store.dart';
@@ -44,6 +49,20 @@ class AuthService {
   final MessageCacheStore messageCache;
   final RecentEmojiStore recentEmojis;
   late final ConversationService conversations = ConversationService(api);
+  late final DeviceService devices = DeviceService(api);
+  late final FileUploadService fileUpload = FileUploadService(api);
+
+  DeviceLinkService get deviceLink => DeviceLinkService(
+        api: api,
+        storage: storage,
+        currentUserId: () {
+          final id = currentUser?.id;
+          if (id == null) {
+            throw StateError('未登录');
+          }
+          return id;
+        },
+      );
 
   User? currentUser;
   ChatCrypto? _crypto;
@@ -164,6 +183,7 @@ class AuthService {
       if (token == null || token.isEmpty) return false;
       api.setAccessToken(token);
       _accessExpiresAt ??= _expiryFromJwt(token);
+      unawaited(AppConfig.refresh(api));
       if (currentUser == null) {
         final profile = await storage.readUserProfile();
         if (profile != null) {
@@ -259,6 +279,7 @@ class AuthService {
       'device_name': 'Flutter',
     });
     await _saveTokenResponse(data);
+    await AppConfig.refresh(api);
     final identityRotated = await _ensureSignalIdentity();
     _crypto = await _buildChatCrypto();
     await _connectRealtime();
@@ -796,6 +817,7 @@ class AuthService {
     ConversationItem conversation,
     String plaintext, {
     String type = 'text',
+    String? fileId,
   }) async {
     if (conversation.isArchived) {
       throw StateError('已退出群聊，无法发送消息');
@@ -818,14 +840,17 @@ class AuthService {
       fresh.id,
       payload,
       type: type,
+      fileId: fileId,
     );
     if (fresh.type == 'group') {
       await groupKeys.recordGroupMessageSent(fresh.id);
     }
-    var sent = msg.copyWith(plaintext: plaintext);
+    var sent = msg.copyWith(plaintext: plaintext, fileId: fileId ?? msg.fileId);
     if (type == 'image' || type == 'audio' || type == 'file') {
       final compact = await MediaLocalCache.persistPlaintext(msg.id, plaintext);
-      if (compact != null) sent = msg.copyWith(plaintext: compact);
+      if (compact != null) {
+        sent = sent.copyWith(plaintext: compact);
+      }
     }
     await upsertCachedMessage(fresh.id, sent);
     return sent;
@@ -1279,7 +1304,15 @@ class AuthService {
   /// 媒体 plaintext 已损坏（local 引用但文件缺失等）时需重新解密。
   Future<bool> messagePlaintextNeedsRepair(ChatMessage msg) async {
     if (msg.type == 'system') return false;
-    if (msg.type == 'file') {
+    if (msg.type == 'file' || (msg.type == 'image' && msg.fileId != null)) {
+      final pt = msg.plaintext;
+      if (pt == null || pt.isEmpty) return true;
+      if (ChatMessage.isDecryptPlaceholder(pt)) return true;
+      if (ChatMessage.isDecryptFailure(pt)) return true;
+      if (msg.fileId != null) {
+        return AttachmentPayload.tryParse(pt) == null &&
+            !MediaLocalCache.isLocalRef(pt);
+      }
       return !await MediaLocalCache.hasPayloadFile(msg.id);
     }
     final pt = msg.plaintext;
@@ -1295,7 +1328,8 @@ class AuthService {
       type == 'audio' ||
       type == 'file' ||
       MediaLocalCache.isLocalRef(pt) ||
-      MediaPayload.tryParse(pt) != null;
+      MediaPayload.tryParse(pt) != null ||
+      AttachmentPayload.tryParse(pt) != null;
 
   Future<ChatMessage> _finalizeDecryptedMedia(
     String conversationId,
@@ -1306,6 +1340,15 @@ class AuthService {
     if (pt == null || pt.isEmpty) return dec;
     if (ChatMessage.isDecryptPlaceholder(pt)) return dec;
     if (ChatMessage.isDecryptFailure(pt)) return dec;
+    if (AttachmentPayload.tryParse(pt) != null) {
+      final compact = await MediaLocalCache.persistPlaintext(dec.id, pt);
+      if (compact != null) {
+        final cached = dec.copyWith(plaintext: compact);
+        unawaited(upsertCachedMessage(conversationId, cached));
+        return cached;
+      }
+      return dec;
+    }
     if (dec.type == 'image' ||
         dec.type == 'audio' ||
         (dec.type == 'file' && persistFile)) {
@@ -1401,12 +1444,79 @@ class AuthService {
     return cachedPlaintextForMessage(conversationId, messageId);
   }
 
+  /// 从服务端下载加密 blob 并解密为完整媒体（图片原图 / 文件）。
+  Future<MediaPayload?> fetchAttachmentMedia(
+    ConversationItem conversation,
+    ChatMessage message,
+  ) async {
+    final fileId = message.fileId;
+    if (fileId == null || fileId.isEmpty) return null;
+
+    if (await MediaLocalCache.hasPayloadFile(message.id)) {
+      return MediaLocalCache.load(message.id);
+    }
+
+    var pt = message.plaintext;
+    if (pt == null ||
+        pt.isEmpty ||
+        ChatMessage.isDecryptPlaceholder(pt) ||
+        ChatMessage.isDecryptFailure(pt)) {
+      final decrypted = await _decryptOneLocal(conversation, message);
+      pt = decrypted.plaintext;
+    }
+    final att = AttachmentPayload.tryParse(pt);
+    if (att == null) return null;
+
+    final encrypted = await fileUpload.downloadEncrypted(
+      fileId,
+      expectedBytes: att.size,
+    );
+    final clear = await FileAttachmentCrypto.decrypt(
+      FileAttachmentCrypto.keyFromB64(att.fileKeyB64),
+      encrypted,
+    );
+    final media = MediaPayload(
+      kind: att.kind,
+      mime: att.mime,
+      name: att.name,
+      bytes: clear,
+    );
+    await MediaLocalCache.persistPayload(message.id, media);
+    return media;
+  }
+
   /// 单条消息媒体修复（文件：用户点击接收；其它：缓存 local 引用失效时重新解密）。
   Future<ChatMessage?> repairMessageMedia(
     ConversationItem conversation,
     ChatMessage message,
   ) async {
     if (message.type == 'system') return message;
+    if (message.fileId != null &&
+        (message.type == 'file' || message.type == 'image')) {
+      if (await MediaLocalCache.hasPayloadFile(message.id)) {
+        final ref = MediaLocalCache.isLocalRef(message.plaintext)
+            ? message.plaintext
+            : await MediaLocalCache.localRefFromDisk(message.id);
+        if (ref != null) {
+          final fixed = message.copyWith(plaintext: ref);
+          unawaited(upsertCachedMessage(conversation.id, fixed));
+          return fixed;
+        }
+      }
+      try {
+        await fetchAttachmentMedia(conversation, message);
+        final ref = MediaLocalCache.isLocalRef(message.plaintext)
+            ? message.plaintext
+            : await MediaLocalCache.localRefFromDisk(message.id);
+        if (ref != null) {
+          final fixed = message.copyWith(plaintext: ref);
+          unawaited(upsertCachedMessage(conversation.id, fixed));
+          return fixed;
+        }
+      } catch (_) {
+        return null;
+      }
+    }
     if (message.type == 'file') {
       if (await MediaLocalCache.hasPayloadFile(message.id)) {
         final ref = MediaLocalCache.isLocalRef(message.plaintext)

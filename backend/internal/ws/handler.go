@@ -9,6 +9,7 @@ import (
 	"github.com/ihope/ihope/internal/conversation"
 	"github.com/ihope/ihope/internal/httpx"
 	"github.com/ihope/ihope/internal/jwt"
+	"github.com/ihope/ihope/internal/lifecycle"
 	"github.com/ihope/ihope/internal/message"
 	"github.com/ihope/ihope/internal/middleware"
 )
@@ -61,6 +62,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	version, err := h.lookup.GetTokenVersion(r.Context(), claims.UserID)
 	if err != nil || version != claims.TokenVersion {
 		httpx.WriteError(w, http.StatusUnauthorized, "session_revoked", "session expired, please sign in again")
+		return
+	}
+
+	if lifecycle.IsDraining() {
+		httpx.WriteError(w, http.StatusServiceUnavailable, "draining", "server upgrading, please retry")
 		return
 	}
 
@@ -171,6 +177,9 @@ func (h *Handler) handleFrame(r *http.Request, c *Conn, userID string, data []by
 			"ciphertext":      frame.Ciphertext,
 		})
 		h.hub.SendJSON(c, map[string]any{"event": "relayed", "target_user_id": frame.TargetUserID})
+
+	case "ping":
+		h.hub.SendJSON(c, map[string]string{"event": "pong"})
 
 	case "send":
 		msg, err := h.msgSvc.Send(r.Context(), message.SendInput{

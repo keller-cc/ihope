@@ -14,6 +14,8 @@ import (
 	"github.com/ihope/ihope/internal/config"
 	"github.com/ihope/ihope/internal/conversation"
 	"github.com/ihope/ihope/internal/db"
+	"github.com/ihope/ihope/internal/devicelink"
+	"github.com/ihope/ihope/internal/filestore"
 	"github.com/ihope/ihope/internal/jwt"
 	"github.com/ihope/ihope/internal/mail"
 	"github.com/ihope/ihope/internal/message"
@@ -21,6 +23,7 @@ import (
 	signalkds "github.com/ihope/ihope/internal/signal"
 	"github.com/ihope/ihope/internal/user"
 	"github.com/ihope/ihope/internal/ws"
+	"github.com/ihope/ihope/internal/lifecycle"
 	"github.com/ihope/ihope/internal/push"
 )
 
@@ -47,7 +50,9 @@ func main() {
 	convSvc := conversation.NewService(convRepo, userRepo)
 
 	hub := ws.NewHub()
-	msgSvc := message.NewService(msgRepo, convRepo)
+	fileRepo := filestore.NewRepository(pool)
+	fileSvc := filestore.NewService(fileRepo, convRepo, cfg.UploadDir, cfg.MaxEncryptedFileBytes)
+	msgSvc := message.NewService(msgRepo, convRepo, fileSvc)
 	pushSvc := push.New(cfg)
 	pushDispatch := push.NewDispatcher(pushSvc, userRepo, convRepo, hub)
 	msgNotify := server.NewMessageNotifier(hub, pushDispatch)
@@ -56,6 +61,8 @@ func main() {
 	convSys := server.NewConvSystemMessenger(msgSvc)
 	signalRepo := signalkds.NewRepository(pool)
 	signalSvc := signalkds.NewService(signalRepo)
+	deviceLinkRepo := devicelink.NewRepository(pool)
+	deviceLinkSvc := devicelink.NewService(deviceLinkRepo, 5*time.Minute)
 
 	srv := server.New(
 		cfg,
@@ -67,7 +74,9 @@ func main() {
 		message.NewHandler(msgSvc, convSvc, msgNotify),
 		wsHandler,
 		signalkds.NewHandler(signalSvc),
-		admin.NewHandler(userRepo, hub, cfg.RefreshTokenTTL),
+		admin.NewHandler(userRepo, hub, cfg.RefreshTokenTTL, admin.RuntimeConfigFrom(cfg)),
+		devicelink.NewHandler(deviceLinkSvc),
+		filestore.NewHandler(fileSvc),
 	)
 
 	httpServer := &http.Server{
@@ -75,8 +84,19 @@ func main() {
 		Handler: srv.Router(),
 	}
 
+	done := make(chan struct{})
+	lifecycle.SetDrainWait(time.Duration(cfg.DrainSeconds) * time.Second)
+	lifecycle.SetShutdownFunc(func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), time.Duration(cfg.DrainSeconds+5)*time.Second)
+		defer cancel()
+		if err := httpServer.Shutdown(shutdownCtx); err != nil {
+			log.Printf("shutdown: %v", err)
+		}
+		close(done)
+	})
+
 	go func() {
-		log.Printf("server listening on http://localhost:%s", cfg.Port)
+		log.Printf("server listening on http://localhost:%s (version=%s)", cfg.Port, cfg.ServerVersion)
 		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("listen: %v", err)
 		}
@@ -85,8 +105,7 @@ func main() {
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
-
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	_ = httpServer.Shutdown(shutdownCtx)
+	log.Printf("signal received, draining...")
+	lifecycle.RequestDrain()
+	<-done
 }

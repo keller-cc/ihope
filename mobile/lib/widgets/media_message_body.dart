@@ -98,11 +98,17 @@ class _MediaMessageBodyState extends State<MediaMessageBody> {
     );
     if (!mounted) return;
     if (resolved != null && resolved.bytes.isNotEmpty) {
+      final filePending = resolved.kind == 'file' &&
+          widget.msg.fileId != null &&
+          !await MediaLocalCache.hasPayloadFile(widget.msg.id);
+      if (!mounted) return;
       setState(() {
         _media = resolved;
         _loadState = _MediaLoadState.ready;
         if (resolved.kind == 'file') {
-          _fileRecv = _FileReceiveState.received;
+          _fileRecv = filePending
+              ? _FileReceiveState.pending
+              : _FileReceiveState.received;
         }
       });
     } else {
@@ -118,6 +124,11 @@ class _MediaMessageBodyState extends State<MediaMessageBody> {
 
   Future<void> _restoreFileState() async {
     if (widget.msg.type != 'file') return;
+    if (widget.msg.fileId != null) {
+      if (!mounted) return;
+      setState(() => _fileRecv = _FileReceiveState.pending);
+      return;
+    }
     if (await MediaLocalCache.hasPayloadFile(widget.msg.id)) {
       if (mounted) setState(() => _fileRecv = _FileReceiveState.received);
     }
@@ -218,10 +229,28 @@ class _MediaMessageBodyState extends State<MediaMessageBody> {
   }
 
   Future<void> _openImage() async {
+    var bytes = _bytes;
+    if (widget.msg.fileId != null &&
+        !await MediaLocalCache.hasPayloadFile(widget.msg.id)) {
+      setState(() => _loadState = _MediaLoadState.loading);
+      if (widget.onMediaRetry != null) {
+        await widget.onMediaRetry!(widget.msg.id);
+      }
+      await _loadMedia();
+      bytes = _bytes;
+    }
+    if (bytes.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('图片加载失败，请重试')),
+      );
+      return;
+    }
+    if (!mounted) return;
     await Navigator.of(context).push<void>(
       MaterialPageRoute(
         builder: (_) => ImageViewerScreen(
-          bytes: _bytes,
+          bytes: bytes,
           name: _media?.name ?? 'image.jpg',
           messageId: widget.msg.id,
         ),
@@ -352,6 +381,8 @@ class _MediaMessageBodyState extends State<MediaMessageBody> {
           : null;
       if (map != null && map['name'] is String) return map['name'] as String;
     } catch (_) {}
+    final att = AttachmentPayload.tryParse(widget.msg.plaintext);
+    if (att != null) return att.name;
     return '文件';
   }
 
@@ -390,6 +421,7 @@ class _MediaMessageBodyState extends State<MediaMessageBody> {
     }
     if (media == null || _loadState == _MediaLoadState.failed) {
       final kind = MediaLocalCache.localKind(widget.msg.plaintext) ??
+          AttachmentPayload.tryParse(widget.msg.plaintext)?.kind ??
           widget.msg.type;
       if (kind == 'file') {
         return _buildFileCard(pending: true);

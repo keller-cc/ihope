@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
@@ -9,8 +10,13 @@ import 'package:record/record.dart';
 import '../../models/conversation.dart';
 import '../../models/message.dart';
 import '../../services/auth_service.dart';
+import '../../services/file_attachment_crypto.dart';
+import '../../config/app_config.dart';
+import '../../utils/cloud_drive_launcher.dart';
+import '../../utils/image_thumbnail.dart';
 import '../../utils/media_local_cache.dart';
 import '../../utils/media_payload.dart';
+import 'large_file_send_choice.dart';
 
 /// 文本/图片/文件/语音发送（私聊/群聊共用）。
 class ChatOutgoingController {
@@ -21,6 +27,7 @@ class ChatOutgoingController {
     required this.onSent,
     required this.onFailed,
     required this.onError,
+    this.onLargeFilePrompt,
   });
 
   final AuthService auth;
@@ -29,18 +36,18 @@ class ChatOutgoingController {
   final void Function(String localId, ChatMessage serverMsg) onSent;
   final void Function(String localId, String error) onFailed;
   final void Function(String message) onError;
+  /// 文件超过 [kFileRecommendBytes] 时询问：网盘 / 仍 IM 发送 / 取消。
+  final Future<LargeFileSendChoice> Function(int byteSize)? onLargeFilePrompt;
 
   final _recorder = AudioRecorder();
   bool _recording = false;
   bool _voiceStartInProgress = false;
   bool _voiceCancelOnStart = false;
   DateTime? _recordStartedAt;
-  Timer? _voiceLimitTimer;
 
   bool get isRecording => _recording || _voiceStartInProgress;
 
   Future<void> dispose() async {
-    _voiceLimitTimer?.cancel();
     if (_recording || _voiceStartInProgress) {
       _voiceCancelOnStart = true;
       await _recorder.stop();
@@ -51,6 +58,7 @@ class ChatOutgoingController {
   ChatMessage _buildLocal({
     required String type,
     required String plaintext,
+    String? fileId,
     String? existingId,
   }) {
     final me = auth.currentUser!;
@@ -62,6 +70,7 @@ class ChatOutgoingController {
       ciphertext: '',
       createdAt: DateTime.now().toUtc(),
       plaintext: plaintext,
+      fileId: fileId,
       sendStatus: MessageSendStatus.sending,
     );
   }
@@ -72,7 +81,15 @@ class ChatOutgoingController {
     if (pt == null || pt.isEmpty) return null;
     final inline = MediaPayload.tryParse(pt);
     if (inline != null) return inline.encodePlaintext();
+    final att = AttachmentPayload.tryParse(pt);
+    if (att != null) return att.encodePlaintext();
     if (MediaLocalCache.isLocalRef(pt)) {
+      try {
+        final map = jsonDecode(pt) as Map<String, dynamic>;
+        if (map['file_key_b64'] is String) {
+          return pt;
+        }
+      } catch (_) {}
       final resolved = await MediaLocalCache.resolve(msg.id, pt);
       return resolved?.encodePlaintext();
     }
@@ -107,6 +124,7 @@ class ChatOutgoingController {
         conversation(),
         plaintext,
         type: msg.type,
+        fileId: msg.fileId,
       );
       onSent(msg.id, server);
     } catch (e) {
@@ -118,15 +136,33 @@ class ChatOutgoingController {
     required String type,
     required MediaPayload media,
   }) async {
-    final maxBytes = type == 'audio' ? kMaxAudioBytes : kMaxMediaBytes;
-    if (media.bytes.length > maxBytes) {
-      onError(
-        type == 'audio'
-            ? '语音过大，请控制在 ${kMaxVoiceDuration.inSeconds} 秒以内'
-            : '文件过大，请选择 8MB 以内的内容',
-      );
+    if (type == 'audio') {
+      await _sendInlineMedia(type: type, media: media);
       return;
     }
+    if (type == 'image' || type == 'file') {
+      if (media.bytes.length > AppConfig.maxFileBytes) {
+        onError(
+          '文件超过 ${formatFileSizeMb(AppConfig.maxFileBytes)} 上限，请使用 ${CloudDriveLauncher.label}',
+        );
+        return;
+      }
+    }
+    if (type == 'image') {
+      await _sendImageAttachment(media);
+      return;
+    }
+    if (type == 'file') {
+      await _sendFileAttachment(media);
+      return;
+    }
+    await _sendInlineMedia(type: type, media: media);
+  }
+
+  Future<void> _sendInlineMedia({
+    required String type,
+    required MediaPayload media,
+  }) async {
     final plaintext = media.encodePlaintext();
     final local = _buildLocal(type: type, plaintext: plaintext);
     onPending(local);
@@ -137,6 +173,83 @@ class ChatOutgoingController {
         type: type,
       );
       onSent(local.id, msg);
+    } catch (e) {
+      onFailed(local.id, e.toString());
+    }
+  }
+
+  Future<void> _sendImageAttachment(MediaPayload media) async {
+    final bytes = media.bytes;
+    final thumb = await ImageThumbnail.generate(bytes);
+    final key = await FileAttachmentCrypto.generateKey();
+    final encrypted = await FileAttachmentCrypto.encrypt(key, bytes);
+    final plaintext = AttachmentPayload(
+      kind: 'image',
+      mime: media.mime,
+      name: media.name,
+      size: bytes.length,
+      fileKeyB64: FileAttachmentCrypto.keyToB64(key),
+      thumbBytes: thumb,
+    ).encodePlaintext();
+    final local = _buildLocal(type: 'image', plaintext: plaintext);
+    onPending(local);
+    try {
+      final fileId = await auth.fileUpload.uploadEncrypted(
+        conversationId: conversation().id,
+        encryptedBytes: encrypted,
+      );
+      final msg = await auth.sendChatMessage(
+        conversation(),
+        plaintext,
+        type: 'image',
+        fileId: fileId,
+      );
+      await MediaLocalCache.persistPayload(msg.id, media);
+      final compact = await MediaLocalCache.persistPlaintext(msg.id, plaintext);
+      onSent(
+        local.id,
+        msg.copyWith(
+          plaintext: compact ?? plaintext,
+          fileId: fileId,
+        ),
+      );
+    } catch (e) {
+      onFailed(local.id, e.toString());
+    }
+  }
+
+  Future<void> _sendFileAttachment(MediaPayload media) async {
+    final key = await FileAttachmentCrypto.generateKey();
+    final encrypted = await FileAttachmentCrypto.encrypt(key, media.bytes);
+    final plaintext = AttachmentPayload(
+      kind: 'file',
+      mime: media.mime,
+      name: media.name,
+      size: media.bytes.length,
+      fileKeyB64: FileAttachmentCrypto.keyToB64(key),
+    ).encodePlaintext();
+    final local = _buildLocal(type: 'file', plaintext: plaintext);
+    onPending(local);
+    try {
+      final fileId = await auth.fileUpload.uploadEncrypted(
+        conversationId: conversation().id,
+        encryptedBytes: encrypted,
+      );
+      final msg = await auth.sendChatMessage(
+        conversation(),
+        plaintext,
+        type: 'file',
+        fileId: fileId,
+      );
+      await MediaLocalCache.persistPayload(msg.id, media);
+      final compact = await MediaLocalCache.persistPlaintext(msg.id, plaintext);
+      onSent(
+        local.id,
+        msg.copyWith(
+          plaintext: compact ?? plaintext,
+          fileId: fileId,
+        ),
+      );
     } catch (e) {
       onFailed(local.id, e.toString());
     }
@@ -180,6 +293,24 @@ class ChatOutgoingController {
     final file = await FilePicker.pickFile(type: FileType.any);
     if (file == null) return;
     final bytes = await file.readAsBytes();
+    if (bytes.length > AppConfig.fileRecommendBytes) {
+      final prompt = onLargeFilePrompt;
+      if (prompt != null) {
+        switch (await prompt(bytes.length)) {
+          case LargeFileSendChoice.cloudDrive:
+            try {
+              await CloudDriveLauncher.open();
+            } catch (e) {
+              onError(e.toString());
+            }
+            return;
+          case LargeFileSendChoice.cancel:
+            return;
+          case LargeFileSendChoice.sendViaIm:
+            break;
+        }
+      }
+    }
     await sendMedia(
       type: 'file',
       media: MediaPayload(
@@ -215,10 +346,6 @@ class ChatOutgoingController {
       }
       _recording = true;
       _recordStartedAt = DateTime.now();
-      _voiceLimitTimer?.cancel();
-      _voiceLimitTimer = Timer(kMaxVoiceDuration, () {
-        if (_recording) unawaited(finishVoiceRecord(cancel: false));
-      });
       return true;
     } catch (e) {
       onError('无法开始录音：$e');
@@ -233,7 +360,6 @@ class ChatOutgoingController {
       if (_voiceStartInProgress) _voiceCancelOnStart = true;
       return;
     }
-    _voiceLimitTimer?.cancel();
     final path = await _recorder.stop();
     final started = _recordStartedAt;
     _recording = false;

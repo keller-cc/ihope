@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../config/app_config.dart';
 import '../config/env.dart';
 import '../config/server_config.dart';
 import '../config/server_config_loader.dart';
@@ -49,6 +50,9 @@ class _ServerSettingsScreenState extends State<ServerSettingsScreen> {
       final base = ServerConfig.normalizeApiBase(_url.text);
       final client = ApiClient(baseUrl: base);
       final res = await client.getJson('/api/health');
+      if (res['ok'] == true) {
+        await AppConfig.refresh(client);
+      }
       if (!mounted) return;
       setState(() {
         _hint = res['ok'] == true ? '连接成功：$base' : '服务器响应异常';
@@ -71,6 +75,7 @@ class _ServerSettingsScreenState extends State<ServerSettingsScreen> {
       final normalized = ServerConfig.normalizeApiBase(_url.text);
       await applyServerBaseUrl(widget.auth.storage, normalized);
       widget.auth.api.setBaseUrl(normalized);
+      await AppConfig.refresh(widget.auth.api);
       if (!mounted) return;
       if (widget.requireLogoutOnSave) {
         Navigator.of(context).pop('logout');

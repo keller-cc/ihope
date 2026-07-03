@@ -92,7 +92,12 @@ class WsService {
   WebSocketChannel? _channel;
   StreamSubscription? _sub;
   Timer? _reconnectTimer;
+  Timer? _pingTimer;
+  Timer? _pongWatchdog;
   bool _reconnectSuspended = false;
+
+  static const _pingInterval = Duration(seconds: 25);
+  static const _pongTimeout = Duration(seconds: 12);
 
   String? _accessToken;
   bool _manualClose = false;
@@ -168,6 +173,7 @@ class WsService {
     _reconnectAttempt = 0;
     _reconnectSuspended = false;
     _cancelReconnect();
+    _stopHeartbeat();
     await _closeChannel();
     _setConnected(false);
   }
@@ -176,6 +182,7 @@ class WsService {
   void suspendReconnect() {
     _reconnectSuspended = true;
     _cancelReconnect();
+    _stopHeartbeat();
   }
 
   /// 回到前台：取消挂起的退避计时并立即尝试重连。
@@ -318,10 +325,42 @@ class WsService {
     );
     _reconnectAttempt = 0;
     _setConnected(true);
+    _startHeartbeat();
+  }
+
+  void _startHeartbeat() {
+    _stopHeartbeat();
+    _pingTimer = Timer.periodic(_pingInterval, (_) {
+      if (!_connected || _manualClose || _reconnectSuspended) return;
+      _send({'event': 'ping'});
+      _armPongWatchdog();
+    });
+  }
+
+  void _armPongWatchdog() {
+    _pongWatchdog?.cancel();
+    _pongWatchdog = Timer(_pongTimeout, () {
+      if (_connected && !_manualClose && !_reconnectSuspended) {
+        _handleDisconnect();
+      }
+    });
+  }
+
+  void _touchHeartbeat() {
+    _pongWatchdog?.cancel();
+    _pongWatchdog = null;
+  }
+
+  void _stopHeartbeat() {
+    _pingTimer?.cancel();
+    _pingTimer = null;
+    _touchHeartbeat();
   }
 
   void _dispatchFrame(Map<String, dynamic> frame) {
+    _touchHeartbeat();
     final event = frame['event'] as String?;
+    if (event == 'pong') return;
     if (event == 'message') {
       final msg = parseIncomingMessage(frame);
       if (msg != null) {
@@ -447,6 +486,7 @@ class WsService {
   }
 
   void _handleDisconnect() {
+    _stopHeartbeat();
     unawaited(_closeChannel());
     _setConnected(false);
     _scheduleReconnect();
@@ -479,6 +519,9 @@ class WsService {
   void _setConnected(bool value) {
     if (_connected == value) return;
     _connected = value;
+    if (!value) {
+      _stopHeartbeat();
+    }
     _safeAdd(_connectionController, value);
   }
 

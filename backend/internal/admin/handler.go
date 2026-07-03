@@ -8,10 +8,43 @@ import (
 	"time"
 
 	"github.com/ihope/ihope/internal/httpx"
+	"github.com/ihope/ihope/internal/lifecycle"
 	"github.com/ihope/ihope/internal/user"
 )
 
-const adminServiceVersion = "0.1.0"
+// RuntimeConfig 来自 env 的运行时配置快照（只读；改 env 后需重启实例）。
+type RuntimeConfig struct {
+	Port                  string
+	MaxEncryptedFileBytes int64
+	CloudDriveURL         string
+	ServerVersion         string
+	DrainSeconds          int
+	AppDownloadURL        string
+}
+
+func (h *Handler) configPayload() map[string]any {
+	return map[string]any{
+		"server_port":              h.cfg.Port,
+		"max_encrypted_file_bytes": h.cfg.MaxEncryptedFileBytes,
+		"cloud_drive_url":          h.cfg.CloudDriveURL,
+		"server_version":           h.cfg.ServerVersion,
+		"drain_seconds":            h.cfg.DrainSeconds,
+		"app_download_url":         h.cfg.AppDownloadURL,
+		"draining":                 lifecycle.IsDraining(),
+	}
+}
+
+func (h *Handler) Config(w http.ResponseWriter, r *http.Request) {
+	httpx.WriteJSON(w, http.StatusOK, h.configPayload())
+}
+
+func (h *Handler) Drain(w http.ResponseWriter, r *http.Request) {
+	lifecycle.RequestDrain()
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"draining":      true,
+		"drain_seconds": h.cfg.DrainSeconds,
+	})
+}
 
 // OnlineChecker 判断设备 WebSocket 是否在线。
 type OnlineChecker interface {
@@ -19,14 +52,15 @@ type OnlineChecker interface {
 }
 
 type Handler struct {
-	users        *user.Repository
-	online       OnlineChecker
-	refreshTTL   time.Duration
-	started      time.Time
+	users      *user.Repository
+	online     OnlineChecker
+	refreshTTL time.Duration
+	cfg        RuntimeConfig
+	started    time.Time
 }
 
-func NewHandler(users *user.Repository, online OnlineChecker, refreshTTL time.Duration) *Handler {
-	return &Handler{users: users, online: online, refreshTTL: refreshTTL, started: time.Now().UTC()}
+func NewHandler(users *user.Repository, online OnlineChecker, refreshTTL time.Duration, cfg RuntimeConfig) *Handler {
+	return &Handler{users: users, online: online, refreshTTL: refreshTTL, cfg: cfg, started: time.Now().UTC()}
 }
 
 func (h *Handler) Stats(w http.ResponseWriter, r *http.Request) {
@@ -52,11 +86,13 @@ func (h *Handler) Stats(w http.ResponseWriter, r *http.Request) {
 		"push_tokens":            pushTotal,
 		"push_by_platform":       pushByPlatform,
 		"refresh_token_ttl_days": ttlDays,
+		"config":                 h.configPayload(),
 		"service": map[string]any{
 			"ok":       dbOK,
-			"version":  adminServiceVersion,
+			"version":  h.cfg.ServerVersion,
 			"uptime_s": int(time.Since(h.started).Seconds()),
 			"database": map[string]any{"ok": dbOK},
+			"draining": lifecycle.IsDraining(),
 		},
 	})
 }

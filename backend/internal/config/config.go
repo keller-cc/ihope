@@ -32,6 +32,11 @@ type Config struct {
 	ResetTokenTTL   time.Duration
 	UploadDir       string
 	MaxAvatarBytes  int64
+	MaxEncryptedFileBytes int64
+	CloudDriveURL         string
+	ServerVersion         string
+	DrainSeconds          int
+	AppDownloadURL        string
 	PushDriver         string
 	FCMServerKey       string
 	JPushAppKey        string
@@ -69,6 +74,12 @@ func Load() Config {
 		ResetTokenTTL:   envDurationMinutes("RESET_TOKEN_TTL_MIN", 30),
 		UploadDir:       env("UPLOAD_DIR", "uploads"),
 		MaxAvatarBytes:  int64(envInt("MAX_AVATAR_BYTES", 2*1024*1024)),
+		// 0 = 不限制；默认 300MB
+		MaxEncryptedFileBytes: int64(envIntAllowZero("MAX_ENCRYPTED_FILE_BYTES", 300*1024*1024)),
+		CloudDriveURL:         env("CLOUD_DRIVE_URL", "https://1t1.org"),
+		ServerVersion:         env("SERVER_VERSION", "2026-07-03 0.1.0 version"),
+		DrainSeconds:          envInt("DRAIN_SECONDS", 15),
+		AppDownloadURL:        env("APP_DOWNLOAD_URL", ""),
 		PushDriver:        env("PUSH_DRIVER", "log"),
 		FCMServerKey:      env("FCM_SERVER_KEY", ""),
 		JPushAppKey:       env("JPUSH_APP_KEY", ""),
@@ -128,6 +139,19 @@ func envInt(key string, fallback int) int {
 	return n
 }
 
+func envIntAllowZero(key string, fallback int) int {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return fallback
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 0 {
+		log.Printf("config: invalid %s=%q, use default %d", key, v, fallback)
+		return fallback
+	}
+	return n
+}
+
 func envDurationSeconds(key string, fallbackSec int) time.Duration {
 	return time.Duration(envInt(key, fallbackSec)) * time.Second
 }
@@ -142,4 +166,16 @@ func envDurationDays(key string, fallbackDays int) time.Duration {
 		return 0
 	}
 	return time.Duration(d) * 24 * time.Hour
+}
+
+// ClientAppDownloadURL App 更新包地址；未设 APP_DOWNLOAD_URL 时用 APP_PUBLIC_URL/api/app/download。
+func (c Config) ClientAppDownloadURL() string {
+	if u := strings.TrimSpace(c.AppDownloadURL); u != "" {
+		return u
+	}
+	base := strings.TrimRight(c.AppPublicURL, "/")
+	if base == "" {
+		return ""
+	}
+	return base + "/api/app/download"
 }

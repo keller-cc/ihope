@@ -598,6 +598,31 @@ class AuthStorage {
     }
   }
 
+  Future<void> importE2eeMaterial(Map<String, String> material) async {
+    for (final entry in material.entries) {
+      await _storage.write(key: entry.key, value: entry.value);
+    }
+  }
+
+  /// 导出 E2EE 相关 secure storage 条目（身份密钥、Signal、单聊/群密钥）。
+  Future<Map<String, String>> exportE2eeMaterial(String userId) async {
+    final all = await _storage.readAll();
+    final prefixes = [
+      'identity_seed_user_$userId',
+      'dm_session_${userId}_',
+      'signal_store_user_$userId',
+      'group_gmk_${userId}_',
+      'megolm_rotation_${userId}_',
+    ];
+    final out = <String, String>{};
+    for (final entry in all.entries) {
+      if (prefixes.any((p) => entry.key.startsWith(p))) {
+        out[entry.key] = entry.value;
+      }
+    }
+    return out;
+  }
+
   String _pinnedKey(String userId) => 'pinned_conversations_$userId';
 
   String _groupGmkKey(String ownerUserId, String conversationId, int epoch) =>

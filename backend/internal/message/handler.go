@@ -26,8 +26,9 @@ func NewHandler(svc *Service, convSvc *conversation.Service, notifier Notifier) 
 }
 
 type sendRequest struct {
-	Type       string `json:"type"`
-	Ciphertext string `json:"ciphertext"`
+	Type       string  `json:"type"`
+	Ciphertext string  `json:"ciphertext"`
+	FileID     *string `json:"file_id"`
 }
 
 // List GET /api/conversations/{id}/messages
@@ -84,6 +85,7 @@ func (h *Handler) Send(w http.ResponseWriter, r *http.Request) {
 		SenderID:       userID,
 		Type:           req.Type,
 		Ciphertext:     req.Ciphertext,
+		FileID:         req.FileID,
 	})
 	if errors.Is(err, ErrNotMember) {
 		httpx.WriteError(w, http.StatusForbidden, "forbidden", "not a conversation member")

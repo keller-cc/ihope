@@ -5,11 +5,15 @@ import (
 	"net/http"
 
 	"github.com/ihope/ihope/internal/admin"
+	"github.com/ihope/ihope/internal/apprelease"
 	"github.com/ihope/ihope/internal/auth"
 	"github.com/ihope/ihope/internal/config"
 	"github.com/ihope/ihope/internal/conversation"
+	"github.com/ihope/ihope/internal/devicelink"
+	"github.com/ihope/ihope/internal/filestore"
 	"github.com/ihope/ihope/internal/httpx"
 	"github.com/ihope/ihope/internal/jwt"
+	"github.com/ihope/ihope/internal/lifecycle"
 	"github.com/ihope/ihope/internal/message"
 	"github.com/ihope/ihope/internal/middleware"
 	"github.com/ihope/ihope/internal/signal"
@@ -26,6 +30,8 @@ type Server struct {
 	ws            *ws.Handler
 	signal        *signal.Handler
 	admin         *admin.Handler
+	deviceLink    *devicelink.Handler
+	files         *filestore.Handler
 	userRepo      *user.Repository
 	jwt           *jwt.Manager
 	loginLimit    *middleware.RateLimiter
@@ -42,6 +48,8 @@ func New(
 	wsHandler *ws.Handler,
 	signalHandler *signal.Handler,
 	adminHandler *admin.Handler,
+	deviceLinkHandler *devicelink.Handler,
+	fileHandler *filestore.Handler,
 ) *Server {
 	return &Server{
 		cfg:           cfg,
@@ -52,6 +60,8 @@ func New(
 		ws:            wsHandler,
 		signal:        signalHandler,
 		admin:         adminHandler,
+		deviceLink:    deviceLinkHandler,
+		files:         fileHandler,
 		userRepo:      userRepo,
 		jwt:           jwtMgr,
 		loginLimit:    middleware.NewRateLimiter(cfg.LoginRateLimit, cfg.LoginRateWindow),
@@ -63,6 +73,7 @@ func (s *Server) Router() http.Handler {
 
 	mux.HandleFunc("GET /api/health", s.handleHealth)
 	mux.HandleFunc("GET /health", s.handleHealth)
+	mux.HandleFunc("GET /api/app/download", apprelease.NewHandler(s.cfg.UploadDir).Download)
 
 	mux.Handle("POST /api/auth/register", s.loginLimit.Middleware(http.HandlerFunc(s.auth.Register)))
 	mux.Handle("POST /api/auth/login", s.loginLimit.Middleware(http.HandlerFunc(s.auth.Login)))
@@ -78,6 +89,8 @@ func (s *Server) Router() http.Handler {
 	mux.Handle("PATCH /api/users/me", authRequired(http.HandlerFunc(s.users.UpdateMe)))
 	mux.Handle("POST /api/users/me/avatar", authRequired(http.HandlerFunc(s.users.UploadAvatar)))
 	mux.Handle("PUT /api/users/me/push-token", authRequired(http.HandlerFunc(s.users.RegisterPushToken)))
+	mux.Handle("GET /api/devices", authRequired(http.HandlerFunc(s.users.ListDevices)))
+	mux.Handle("DELETE /api/devices/{deviceId}", authRequired(http.HandlerFunc(s.users.KickDevice)))
 	mux.HandleFunc("GET /api/avatars/{filename}", s.users.ServeAvatar)
 	mux.Handle("GET /api/users", authRequired(http.HandlerFunc(s.users.List)))
 
@@ -108,6 +121,17 @@ func (s *Server) Router() http.Handler {
 		mux.Handle("GET /ws", s.ws)
 	}
 
+	if s.deviceLink != nil {
+		mux.Handle("POST /api/device-link/init", authRequired(http.HandlerFunc(s.deviceLink.Init)))
+		mux.Handle("PUT /api/device-link/{id}/payload", authRequired(http.HandlerFunc(s.deviceLink.UploadPayload)))
+		mux.Handle("POST /api/device-link/complete", authRequired(http.HandlerFunc(s.deviceLink.Complete)))
+	}
+
+	if s.files != nil {
+		mux.Handle("POST /api/upload", authRequired(http.HandlerFunc(s.files.Upload)))
+		mux.Handle("GET /api/files/{id}", authRequired(http.HandlerFunc(s.files.Download)))
+	}
+
 	if s.admin != nil {
 		mux.Handle("GET /api/admin/stats", devAdminRequired(http.HandlerFunc(s.admin.Stats)))
 		mux.Handle("GET /api/admin/users", devAdminRequired(http.HandlerFunc(s.admin.ListUsers)))
@@ -115,15 +139,24 @@ func (s *Server) Router() http.Handler {
 		mux.Handle("POST /api/admin/users/{id}/disable", devAdminRequired(http.HandlerFunc(s.admin.DisableUser)))
 		mux.Handle("POST /api/admin/users/{id}/enable", devAdminRequired(http.HandlerFunc(s.admin.EnableUser)))
 		mux.Handle("POST /api/admin/users/{id}/devices/{deviceId}/kick", devAdminRequired(http.HandlerFunc(s.admin.KickDevice)))
+		mux.Handle("GET /api/admin/config", devAdminRequired(http.HandlerFunc(s.admin.Config)))
+		mux.Handle("POST /api/admin/drain", devAdminRequired(http.HandlerFunc(s.admin.Drain)))
 	}
 
 	mountAdminWeb(mux)
 
-	return cors(s.cfg.CORSAllowOrigin, mux)
+	return cors(s.cfg.CORSAllowOrigin, drainGuard(mux))
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"ok": true, "service": "ihope"})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"ok":       true,
+		"service":  "ihope",
+		"version":  s.cfg.ServerVersion,
+		"draining": lifecycle.IsDraining(),
+		"port":     s.cfg.Port,
+		"client":   clientConfigJSON(s.cfg),
+	})
 }
 
 func cors(allowOrigin string, next http.Handler) http.Handler {

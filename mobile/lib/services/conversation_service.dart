@@ -213,6 +213,7 @@ class ConversationService {
     String conversationId,
     String ciphertext, {
     String type = 'text',
+    String? fileId,
   }) async {
     final isMedia = type == 'audio' || type == 'image' || type == 'file';
     final data = await api.postJson(
@@ -220,6 +221,7 @@ class ConversationService {
       body: {
         'type': type,
         'ciphertext': ciphertext,
+        if (fileId != null) 'file_id': fileId,
       },
       receiveTimeout: isMedia ? const Duration(seconds: 120) : null,
       sendTimeout: isMedia ? const Duration(seconds: 120) : null,

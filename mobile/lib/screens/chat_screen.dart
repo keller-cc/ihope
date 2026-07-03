@@ -9,6 +9,9 @@ import '../models/user.dart';
 import '../services/auth_service.dart';
 import '../services/ws_service.dart';
 import '../utils/announcement_read.dart';
+import '../config/app_config.dart';
+import '../utils/cloud_drive_launcher.dart';
+import '../utils/media_payload.dart';
 import '../widgets/chat_input_bar.dart';
 import '../widgets/group_announcement_banner.dart';
 import '../widgets/offline_banner.dart';
@@ -20,6 +23,7 @@ import 'chat/chat_message_tile.dart';
 import 'chat/chat_outgoing_controller.dart';
 import 'chat/chat_scroll_coordinator.dart';
 import 'chat/chat_thread_loader.dart';
+import 'chat/large_file_send_choice.dart';
 import 'chat_history/chat_history_jump.dart';
 import 'chat_settings_screen.dart';
 import 'group_manage_screen.dart';
@@ -108,6 +112,7 @@ class _ChatScreenState extends State<ChatScreen> {
       onSent: _onMessageSent,
       onFailed: _onMessageFailed,
       onError: _showSnack,
+      onLargeFilePrompt: _promptLargeFile,
     );
 
     widget.auth.setOpenConversation(_conversation.id);
@@ -646,6 +651,49 @@ class _ChatScreenState extends State<ChatScreen> {
     await _outgoing.sendText(text);
   }
 
+  Future<void> _openCloudDrive() async {
+    try {
+      await CloudDriveLauncher.open();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e.toString())),
+      );
+    }
+  }
+
+  Future<LargeFileSendChoice> _promptLargeFile(int byteSize) async {
+    final sizeLabel = formatFileSizeMb(byteSize);
+    final limitLabel = formatFileSizeMb(AppConfig.maxFileBytes);
+    final choice = await showDialog<LargeFileSendChoice>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('文件较大'),
+        content: Text(
+          '该文件约 $sizeLabel，超过 $limitLabel 建议使用 ${CloudDriveLauncher.label} 分享。\n'
+          '您也可以仍通过 IM 直接发送（上限 $limitLabel）。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, LargeFileSendChoice.cancel),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () =>
+                Navigator.pop(ctx, LargeFileSendChoice.sendViaIm),
+            child: const Text('仍发送文件'),
+          ),
+          FilledButton(
+            onPressed: () =>
+                Navigator.pop(ctx, LargeFileSendChoice.cloudDrive),
+            child: Text('打开${CloudDriveLauncher.label}'),
+          ),
+        ],
+      ),
+    );
+    return choice ?? LargeFileSendChoice.cancel;
+  }
+
   ConversationMember? _peerMember(User me) {
     if (_isGroup) return null;
     for (final m in _conversation.members) {
@@ -767,6 +815,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 onImage: () => unawaited(_outgoing.pickImage()),
                 onCamera: () => unawaited(_outgoing.captureImage()),
                 onFile: () => unawaited(_outgoing.pickFile()),
+                onCloudDrive: () => unawaited(_openCloudDrive()),
               ),
           ],
         ),

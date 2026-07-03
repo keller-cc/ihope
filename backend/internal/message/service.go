@@ -19,13 +19,18 @@ const (
 	MaxLimit     = 100
 )
 
+type FileValidator interface {
+	ValidateForMessage(ctx context.Context, fileID, conversationID string) error
+}
+
 type Service struct {
 	messages *Repository
 	conv     *conversation.Repository
+	files    FileValidator
 }
 
-func NewService(messages *Repository, conv *conversation.Repository) *Service {
-	return &Service{messages: messages, conv: conv}
+func NewService(messages *Repository, conv *conversation.Repository, files FileValidator) *Service {
+	return &Service{messages: messages, conv: conv, files: files}
 }
 
 type SendInput struct {
@@ -33,6 +38,7 @@ type SendInput struct {
 	SenderID       string
 	Type           string
 	Ciphertext     string
+	FileID         *string
 }
 
 func (s *Service) Send(ctx context.Context, in SendInput) (*Message, error) {
@@ -63,7 +69,19 @@ func (s *Service) Send(ctx context.Context, in SendInput) (*Message, error) {
 		epoch = conv.Epoch
 	}
 
-	return s.messages.Create(ctx, in.ConversationID, in.SenderID, msgType, content, epoch)
+	var fileID *string
+	if in.FileID != nil && strings.TrimSpace(*in.FileID) != "" {
+		id := strings.TrimSpace(*in.FileID)
+		if s.files == nil {
+			return nil, ErrInvalidInput
+		}
+		if err := s.files.ValidateForMessage(ctx, id, in.ConversationID); err != nil {
+			return nil, ErrInvalidInput
+		}
+		fileID = &id
+	}
+
+	return s.messages.Create(ctx, in.ConversationID, in.SenderID, msgType, content, epoch, fileID)
 }
 
 func (s *Service) List(ctx context.Context, conversationID, userID string, beforeMessageID string, limit int, msgType string) ([]Message, bool, error) {
@@ -136,5 +154,5 @@ func (s *Service) SendSystemAtEpoch(
 		}
 	}
 
-	return s.messages.Create(ctx, conversationID, senderID, "system", text, epoch)
+	return s.messages.Create(ctx, conversationID, senderID, "system", text, epoch, nil)
 }

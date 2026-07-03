@@ -10,6 +10,8 @@ import (
 	"github.com/ihope/ihope/internal/auth"
 	"github.com/ihope/ihope/internal/config"
 	"github.com/ihope/ihope/internal/conversation"
+	"github.com/ihope/ihope/internal/devicelink"
+	"github.com/ihope/ihope/internal/filestore"
 	"github.com/ihope/ihope/internal/db"
 	"github.com/ihope/ihope/internal/jwt"
 	"github.com/ihope/ihope/internal/mail"
@@ -64,6 +66,10 @@ func TestConfig() config.Config {
 		ResetTokenTTL:   30 * time.Minute,
 		UploadDir:       "uploads",
 		MaxAvatarBytes:  2 * 1024 * 1024,
+		MaxEncryptedFileBytes: 300 * 1024 * 1024,
+		CloudDriveURL:         "https://1t1.org",
+		ServerVersion:         "2026-07-03 0.1.0 version",
+		DrainSeconds:          5,
 		RefreshTokenTTL: 30 * 24 * time.Hour,
 	}
 }
@@ -73,6 +79,7 @@ func NewTestServer(t *testing.T) *server.Server {
 
 	pool := OpenPool(t)
 	cfg := TestConfig()
+	cfg.UploadDir = t.TempDir()
 
 	userRepo := user.NewRepository(pool)
 	convRepo := conversation.NewRepository(pool)
@@ -83,7 +90,9 @@ func NewTestServer(t *testing.T) *server.Server {
 	convSvc := conversation.NewService(convRepo, userRepo)
 
 	hub := ws.NewHub()
-	msgSvc := message.NewService(msgRepo, convRepo)
+	fileRepo := filestore.NewRepository(pool)
+	fileSvc := filestore.NewService(fileRepo, convRepo, cfg.UploadDir, cfg.MaxEncryptedFileBytes)
+	msgSvc := message.NewService(msgRepo, convRepo, fileSvc)
 	pushSvc := push.New(cfg)
 	pushDispatch := push.NewDispatcher(pushSvc, userRepo, convRepo, hub)
 	msgNotify := server.NewMessageNotifier(hub, pushDispatch)
@@ -93,6 +102,8 @@ func NewTestServer(t *testing.T) *server.Server {
 
 	signalRepo := signalkds.NewRepository(pool)
 	signalSvc := signalkds.NewService(signalRepo)
+	deviceLinkRepo := devicelink.NewRepository(pool)
+	deviceLinkSvc := devicelink.NewService(deviceLinkRepo, 5*time.Minute)
 
 	return server.New(
 		cfg,
@@ -104,6 +115,8 @@ func NewTestServer(t *testing.T) *server.Server {
 		message.NewHandler(msgSvc, convSvc, msgNotify),
 		wsHandler,
 		signalkds.NewHandler(signalSvc),
-		admin.NewHandler(userRepo, hub, cfg.RefreshTokenTTL),
+		admin.NewHandler(userRepo, hub, cfg.RefreshTokenTTL, admin.RuntimeConfigFrom(cfg)),
+		devicelink.NewHandler(deviceLinkSvc),
+		filestore.NewHandler(fileSvc),
 	)
 }

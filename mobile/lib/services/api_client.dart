@@ -179,17 +179,43 @@ class ApiClient {
     required String field,
     required String filename,
     required List<int> bytes,
+    Map<String, String>? fields,
+    Duration? receiveTimeout,
+    Duration? sendTimeout,
   }) async {
     try {
       final form = FormData.fromMap({
+        if (fields != null) ...fields,
         field: MultipartFile.fromBytes(bytes, filename: filename),
       });
       final res = await _dio.post<Map<String, dynamic>>(
         path,
         data: form,
-        options: Options(contentType: 'multipart/form-data'),
+        options: Options(
+          contentType: 'multipart/form-data',
+          receiveTimeout: receiveTimeout,
+          sendTimeout: sendTimeout,
+        ),
       );
       return res.data ?? {};
+    } on DioException catch (e) {
+      throw _mapError(e);
+    }
+  }
+
+  Future<List<int>> getBytes(
+    String path, {
+    Duration? receiveTimeout,
+  }) async {
+    try {
+      final res = await _dio.get<List<int>>(
+        path,
+        options: Options(
+          responseType: ResponseType.bytes,
+          receiveTimeout: receiveTimeout,
+        ),
+      );
+      return res.data ?? [];
     } on DioException catch (e) {
       throw _mapError(e);
     }

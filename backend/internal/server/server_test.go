@@ -21,7 +21,7 @@ func TestHealthEndpoint(t *testing.T) {
 		LoginRateWindow: time.Minute,
 	}
 	jwtMgr := jwt.NewManager("test-secret-at-least-32-characters-long", 15*time.Minute)
-	srv := New(cfg, auth.NewHandler(nil), user.NewHandler(nil, cfg), nil, jwtMgr, nil, nil, nil, nil, admin.NewHandler(nil, nil, 0))
+	srv := New(cfg, auth.NewHandler(nil), user.NewHandler(nil, cfg), nil, jwtMgr, nil, nil, nil, nil, admin.NewHandler(nil, nil, 0, admin.RuntimeConfigFrom(cfg)), nil, nil)
 
 	rec := httptest.NewRecorder()
 	srv.Router().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/health", nil))

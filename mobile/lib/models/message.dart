@@ -31,6 +31,7 @@ class ChatMessage {
     required this.createdAt,
     this.epoch = 0,
     this.plaintext,
+    this.fileId,
     this.sendStatus = MessageSendStatus.sent,
   });
 
@@ -42,6 +43,7 @@ class ChatMessage {
   final DateTime createdAt;
   final int epoch;
   final String? plaintext;
+  final String? fileId;
   final MessageSendStatus sendStatus;
 
   bool get isLocalOutgoing => isLocalId(id);
@@ -64,6 +66,7 @@ class ChatMessage {
       createdAt: DateTime.parse(json['created_at'] as String),
       epoch: json['epoch'] as int? ?? 0,
       plaintext: json['plaintext'] as String?,
+      fileId: json['file_id'] as String?,
     );
   }
 
@@ -76,11 +79,13 @@ class ChatMessage {
         'created_at': createdAt.toUtc().toIso8601String(),
         'epoch': epoch,
         if (plaintext != null) 'plaintext': plaintext,
+        if (fileId != null) 'file_id': fileId,
       };
 
   ChatMessage copyWith({
     String? id,
     String? plaintext,
+    String? fileId,
     MessageSendStatus? sendStatus,
   }) {
     return ChatMessage(
@@ -92,6 +97,7 @@ class ChatMessage {
       createdAt: createdAt,
       epoch: epoch,
       plaintext: plaintext ?? this.plaintext,
+      fileId: fileId ?? this.fileId,
       sendStatus: sendStatus ?? this.sendStatus,
     );
   }
@@ -105,5 +111,6 @@ class ChatMessage {
         ciphertext: ciphertext,
         createdAt: createdAt,
         epoch: epoch,
+        fileId: fileId,
       );
 }
