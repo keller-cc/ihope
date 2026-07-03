@@ -18,6 +18,7 @@ type Config struct {
 	DatabaseURL     string
 	JWTSecret       string
 	JWTAccessTTL    time.Duration
+	RefreshTokenTTL time.Duration
 	AppPublicURL    string
 	CORSAllowOrigin string
 	MailDriver      string
@@ -35,7 +36,7 @@ type Config struct {
 	FCMServerKey       string
 	JPushAppKey        string
 	JPushMasterSecret  string
-	AdminEmails        []string
+	AdminSecret string
 }
 
 // Load 读取 .env 与环境变量。
@@ -54,6 +55,7 @@ func Load() Config {
 		DatabaseURL:     "postgres://" + dbUser + ":" + dbPassword + "@" + dbHost + ":" + dbPort + "/" + dbName + "?sslmode=disable",
 		JWTSecret:       env("JWT_SECRET", "dev-only-change-in-production-min-32-chars"),
 		JWTAccessTTL:    envDurationMinutes("JWT_ACCESS_TTL_MIN", 15),
+		RefreshTokenTTL: envDurationDays("REFRESH_TOKEN_TTL_DAYS", 30),
 		AppPublicURL:    env("APP_PUBLIC_URL", "http://localhost:"+port),
 		CORSAllowOrigin: env("CORS_ALLOW_ORIGIN", "*"),
 		MailDriver:      env("MAIL_DRIVER", "log"),
@@ -71,20 +73,9 @@ func Load() Config {
 		FCMServerKey:      env("FCM_SERVER_KEY", ""),
 		JPushAppKey:       env("JPUSH_APP_KEY", ""),
 		JPushMasterSecret: env("JPUSH_MASTER_SECRET", ""),
-		AdminEmails:       splitCSV(env("ADMIN_EMAILS", "")),
+		AdminSecret: env("ADMIN_SECRET", ""),
 	}
 }
-
-func splitCSV(raw string) []string {
-	parts := strings.Split(raw, ",")
-	out := make([]string, 0, len(parts))
-	for _, p := range parts {
-		p = strings.TrimSpace(p)
-		if p != "" {
-			out = append(out, p)
-		}
-	}
-	return out
 
 func loadDotEnv() {
 	if path := strings.TrimSpace(os.Getenv("ENV_FILE")); path != "" {
@@ -143,4 +134,12 @@ func envDurationSeconds(key string, fallbackSec int) time.Duration {
 
 func envDurationMinutes(key string, fallbackMin int) time.Duration {
 	return time.Duration(envInt(key, fallbackMin)) * time.Minute
+}
+
+func envDurationDays(key string, fallbackDays int) time.Duration {
+	d := envInt(key, fallbackDays)
+	if d <= 0 {
+		return 0
+	}
+	return time.Duration(d) * 24 * time.Hour
 }

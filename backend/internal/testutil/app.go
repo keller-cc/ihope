@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ihope/ihope/internal/admin"
 	"github.com/ihope/ihope/internal/auth"
 	"github.com/ihope/ihope/internal/config"
 	"github.com/ihope/ihope/internal/conversation"
@@ -63,7 +64,7 @@ func TestConfig() config.Config {
 		ResetTokenTTL:   30 * time.Minute,
 		UploadDir:       "uploads",
 		MaxAvatarBytes:  2 * 1024 * 1024,
-		PushDriver:      "log",
+		RefreshTokenTTL: 30 * 24 * time.Hour,
 	}
 }
 
@@ -103,5 +104,6 @@ func NewTestServer(t *testing.T) *server.Server {
 		message.NewHandler(msgSvc, convSvc, msgNotify),
 		wsHandler,
 		signalkds.NewHandler(signalSvc),
+		admin.NewHandler(userRepo, hub, cfg.RefreshTokenTTL),
 	)
 }

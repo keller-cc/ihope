@@ -1,32 +1,36 @@
 package middleware
 
 import (
-	"context"
+	"crypto/subtle"
 	"net/http"
+	"strings"
 
 	"github.com/ihope/ihope/internal/httpx"
 )
 
-// AdminChecker 判断用户是否为管理员。
-type AdminChecker interface {
-	IsAdmin(ctx context.Context, userID string) (bool, error)
-}
-
-// Admin 要求已通过 JWT 鉴权且 is_admin=true。
-func Admin(checker AdminChecker) func(http.Handler) http.Handler {
+// DevAdmin 校验开发者管理密钥（Authorization: Bearer <ADMIN_SECRET>）。
+// secret 为空时管理 API 不可用。
+func DevAdmin(secret string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			userID := UserIDFromContext(r.Context())
-			if userID == "" {
-				httpx.WriteError(w, http.StatusUnauthorized, "unauthorized", "missing user")
+			if strings.TrimSpace(secret) == "" {
+				httpx.WriteError(w, http.StatusServiceUnavailable, "admin_disabled", "admin secret not configured")
 				return
 			}
-			ok, err := checker.IsAdmin(r.Context(), userID)
-			if err != nil || !ok {
-				httpx.WriteError(w, http.StatusForbidden, "forbidden", "admin access required")
+			token := bearerToken(r)
+			if token == "" || subtle.ConstantTimeCompare([]byte(token), []byte(secret)) != 1 {
+				httpx.WriteError(w, http.StatusUnauthorized, "unauthorized", "invalid admin secret")
 				return
 			}
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+func bearerToken(r *http.Request) string {
+	header := r.Header.Get("Authorization")
+	if !strings.HasPrefix(header, "Bearer ") {
+		return ""
+	}
+	return strings.TrimSpace(strings.TrimPrefix(header, "Bearer "))
 }

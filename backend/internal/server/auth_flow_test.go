@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ihope/ihope/internal/admin"
 	"github.com/ihope/ihope/internal/auth"
 	"github.com/ihope/ihope/internal/jwt"
 	"github.com/ihope/ihope/internal/mail"
@@ -93,7 +94,7 @@ func TestResetPasswordFlowIntegration(t *testing.T) {
 	userRepo := user.NewRepository(pool)
 	jwtMgr := jwt.NewManager(cfg.JWTSecret, cfg.JWTAccessTTL)
 	authSvc := auth.NewService(cfg, userRepo, jwtMgr, capture)
-	handler := server.New(cfg, auth.NewHandler(authSvc), user.NewHandler(userRepo, cfg), userRepo, jwtMgr, nil, nil, nil, nil).Router()
+	handler := server.New(cfg, auth.NewHandler(authSvc), user.NewHandler(userRepo, cfg), userRepo, jwtMgr, nil, nil, nil, nil, admin.NewHandler(userRepo, nil, 30*24*time.Hour)).Router()
 
 	email := fmt.Sprintf("reset_%d@example.com", time.Now().UnixNano())
 	username := fmt.Sprintf("reset_%d", time.Now().UnixNano()%1_000_000_000)
@@ -200,6 +201,97 @@ func TestChangePasswordFlowIntegration(t *testing.T) {
 	}, "")
 	if newLoginRec.Code != http.StatusOK {
 		t.Fatalf("login with new password failed: %s", newLoginRec.Body.String())
+	}
+}
+
+func TestRefreshRejectsExpiredIdleTokenIntegration(t *testing.T) {
+	pool := testutil.OpenPool(t)
+	cfg := testutil.TestConfig()
+	cfg.RefreshTokenTTL = 24 * time.Hour
+
+	userRepo := user.NewRepository(pool)
+	jwtMgr := jwt.NewManager(cfg.JWTSecret, cfg.JWTAccessTTL)
+	authSvc := auth.NewService(cfg, userRepo, jwtMgr, &mail.CapturingSender{})
+	handler := server.New(cfg, auth.NewHandler(authSvc), user.NewHandler(userRepo, cfg), userRepo, jwtMgr, nil, nil, nil, nil, admin.NewHandler(userRepo, nil, cfg.RefreshTokenTTL)).Router()
+
+	email := fmt.Sprintf("ttl_%d@example.com", time.Now().UnixNano())
+	username := fmt.Sprintf("ttl_%d", time.Now().UnixNano()%1_000_000_000)
+	deviceID := "refresh-ttl-device"
+
+	doJSON(t, handler, http.MethodPost, "/api/auth/register", map[string]string{
+		"email":               email,
+		"username":            username,
+		"password":            "password123",
+		"identity_public_key": testutil.TestIdentityPublicKey,
+	}, "")
+
+	loginRec := doJSON(t, handler, http.MethodPost, "/api/auth/login", map[string]string{
+		"email": email, "password": "password123", "device_id": deviceID, "device_name": "t",
+	}, "")
+	var loginResp struct {
+		RefreshToken string `json:"refresh_token"`
+		User         struct {
+			ID string `json:"id"`
+		} `json:"user"`
+	}
+	decodeBody(t, loginRec.Body, &loginResp)
+
+	_, err := pool.Exec(t.Context(), `
+		UPDATE user_devices SET last_active_at = now() - interval '2 days'
+		WHERE user_id = $1 AND device_id = $2`, loginResp.User.ID, deviceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	refreshRec := doJSON(t, handler, http.MethodPost, "/api/auth/refresh", map[string]string{
+		"refresh_token": loginResp.RefreshToken,
+		"device_id":     deviceID,
+	}, "")
+	if refreshRec.Code != http.StatusUnauthorized {
+		t.Fatalf("refresh status = %d, want 401 body=%s", refreshRec.Code, refreshRec.Body.String())
+	}
+
+	hash, err := userRepo.GetDeviceRefreshHash(t.Context(), loginResp.User.ID, deviceID)
+	if err != user.ErrNotFound {
+		t.Fatalf("expected refresh cleared, hash=%q err=%v", hash, err)
+	}
+}
+
+func TestLogoutClearsRefreshTokenIntegration(t *testing.T) {
+	srv := testutil.NewTestServer(t)
+	handler := srv.Router()
+
+	email := fmt.Sprintf("logout_%d@example.com", time.Now().UnixNano())
+	username := fmt.Sprintf("logout_%d", time.Now().UnixNano()%1_000_000_000)
+	deviceID := "logout-device"
+
+	doJSON(t, handler, http.MethodPost, "/api/auth/register", map[string]string{
+		"email":               email,
+		"username":            username,
+		"password":            "password123",
+		"identity_public_key": testutil.TestIdentityPublicKey,
+	}, "")
+
+	loginRec := doJSON(t, handler, http.MethodPost, "/api/auth/login", map[string]string{
+		"email": email, "password": "password123", "device_id": deviceID, "device_name": "t",
+	}, "")
+	var loginResp struct {
+		AccessToken  string `json:"access_token"`
+		RefreshToken string `json:"refresh_token"`
+	}
+	decodeBody(t, loginRec.Body, &loginResp)
+
+	logoutRec := doJSON(t, handler, http.MethodPost, "/api/auth/logout", nil, loginResp.AccessToken)
+	if logoutRec.Code != http.StatusNoContent {
+		t.Fatalf("logout status = %d, want 204 body=%s", logoutRec.Code, logoutRec.Body.String())
+	}
+
+	refreshRec := doJSON(t, handler, http.MethodPost, "/api/auth/refresh", map[string]string{
+		"refresh_token": loginResp.RefreshToken,
+		"device_id":     deviceID,
+	}, "")
+	if refreshRec.Code != http.StatusUnauthorized {
+		t.Fatalf("refresh after logout status = %d, want 401", refreshRec.Code)
 	}
 }
 

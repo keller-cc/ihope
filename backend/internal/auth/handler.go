@@ -132,6 +132,21 @@ func (h *Handler) Refresh(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, resp)
 }
 
+// Logout POST /api/auth/logout — 清除当前设备的 refresh_token（需 access_token）。
+func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
+	userID := middleware.UserIDFromContext(r.Context())
+	deviceID := middleware.DeviceIDFromContext(r.Context())
+	if userID == "" || deviceID == "" {
+		httpx.WriteError(w, http.StatusUnauthorized, "unauthorized", "missing user or device")
+		return
+	}
+	if err := h.svc.Logout(r.Context(), userID, deviceID); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "logout failed")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // ForgotPassword POST /api/auth/forgot-password — 发重置邮件；邮箱不存在也返回 200。
 func (h *Handler) ForgotPassword(w http.ResponseWriter, r *http.Request) {
 	var req forgotPasswordRequest

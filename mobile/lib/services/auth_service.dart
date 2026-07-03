@@ -385,6 +385,11 @@ class AuthService {
   }
 
   Future<void> logout() async {
+    try {
+      await api.postJson('/api/auth/logout', body: {});
+    } catch (_) {
+      // 本地仍清会话；网络失败时服务端 token 可能残留直至 TTL
+    }
     await _clearAuthSession();
     _conversationCache.clear();
     _messagesMem.clear();

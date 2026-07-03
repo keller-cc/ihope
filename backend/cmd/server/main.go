@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/ihope/ihope/internal/admin"
 	"github.com/ihope/ihope/internal/auth"
 	"github.com/ihope/ihope/internal/config"
 	"github.com/ihope/ihope/internal/conversation"
@@ -66,7 +67,7 @@ func main() {
 		message.NewHandler(msgSvc, convSvc, msgNotify),
 		wsHandler,
 		signalkds.NewHandler(signalSvc),
-		admin.NewHandler(userRepo),
+		admin.NewHandler(userRepo, hub, cfg.RefreshTokenTTL),
 	)
 
 	httpServer := &http.Server{

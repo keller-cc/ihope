@@ -71,8 +71,9 @@ func (s *Server) Router() http.Handler {
 	mux.HandleFunc("POST /api/auth/reset-password", s.auth.ResetPassword)
 
 	authRequired := middleware.AuthActive(s.jwt, s.userRepo)
-	adminRequired := middleware.Admin(s.userRepo)
+	devAdminRequired := middleware.DevAdmin(s.cfg.AdminSecret)
 	mux.Handle("POST /api/auth/change-password", authRequired(http.HandlerFunc(s.auth.ChangePassword)))
+	mux.Handle("POST /api/auth/logout", authRequired(http.HandlerFunc(s.auth.Logout)))
 	mux.Handle("GET /api/users/me", authRequired(http.HandlerFunc(s.users.Me)))
 	mux.Handle("PATCH /api/users/me", authRequired(http.HandlerFunc(s.users.UpdateMe)))
 	mux.Handle("POST /api/users/me/avatar", authRequired(http.HandlerFunc(s.users.UploadAvatar)))
@@ -108,10 +109,12 @@ func (s *Server) Router() http.Handler {
 	}
 
 	if s.admin != nil {
-		mux.Handle("GET /api/admin/stats", authRequired(adminRequired(http.HandlerFunc(s.admin.Stats))))
-		mux.Handle("GET /api/admin/users", authRequired(adminRequired(http.HandlerFunc(s.admin.ListUsers))))
-		mux.Handle("POST /api/admin/users/{id}/disable", authRequired(adminRequired(http.HandlerFunc(s.admin.DisableUser))))
-		mux.Handle("POST /api/admin/users/{id}/enable", authRequired(adminRequired(http.HandlerFunc(s.admin.EnableUser))))
+		mux.Handle("GET /api/admin/stats", devAdminRequired(http.HandlerFunc(s.admin.Stats)))
+		mux.Handle("GET /api/admin/users", devAdminRequired(http.HandlerFunc(s.admin.ListUsers)))
+		mux.Handle("GET /api/admin/users/{id}", devAdminRequired(http.HandlerFunc(s.admin.GetUser)))
+		mux.Handle("POST /api/admin/users/{id}/disable", devAdminRequired(http.HandlerFunc(s.admin.DisableUser)))
+		mux.Handle("POST /api/admin/users/{id}/enable", devAdminRequired(http.HandlerFunc(s.admin.EnableUser)))
+		mux.Handle("POST /api/admin/users/{id}/devices/{deviceId}/kick", devAdminRequired(http.HandlerFunc(s.admin.KickDevice)))
 	}
 
 	mountAdminWeb(mux)

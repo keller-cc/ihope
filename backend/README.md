@@ -21,6 +21,8 @@ go run ./cmd/server
 | `DB_*` | 见 .env.example | 数据库连接 |
 | `JWT_SECRET` | — | JWT 密钥（≥32 字符） |
 | `JWT_ACCESS_TTL_MIN` | 15 | access_token 有效期（分钟） |
+| `REFRESH_TOKEN_TTL_DAYS` | 30 | refresh 闲置过期（天，0=不限） |
+| `ADMIN_SECRET` | — | 管理后台 `/admin/` 开发者密钥 |
 | `LOGIN_RATE_LIMIT` | 5 | 注册/登录限流次数 |
 | `LOGIN_RATE_WINDOW_SEC` | 60 | 限流窗口（秒） |
 | `RESET_TOKEN_TTL_MIN` | 30 | 找回密码 token 有效期（分钟） |
@@ -61,6 +63,8 @@ go test ./internal/server/... -count=1 -v -run Integration
 | `TestAuthFlowIntegration` | 注册 → 登录 → /me → refresh → forgot |
 | `TestResetPasswordFlowIntegration` | 找回密码 → reset → 旧 token 失效 → 新密码登录 |
 | `TestChangePasswordFlowIntegration` | 修改密码 → 旧 token 失效 → 新密码登录 |
+| `TestRefreshRejectsExpiredIdleTokenIntegration` | 闲置超 TTL → refresh 401 → 库中 token 清除 |
+| `TestLogoutClearsRefreshTokenIntegration` | logout → refresh 401 |
 
 ### 只跑会话集成测试
 

@@ -28,13 +28,21 @@ deploy/
 
 后端启动后访问 **`http://localhost:8080/admin/`**（静态页在仓库 `admin/`）。
 
-在 `deploy/.env` 配置管理员邮箱：
+在 `deploy/.env` 配置开发者密钥：
 
 ```env
-ADMIN_EMAILS=ops@example.com
+ADMIN_SECRET=your-long-random-dev-secret
 ```
 
-使用该邮箱登录管理页或 App 后自动获得管理员权限。详见 [`admin/README.md`](../admin/README.md)。
+管理页输入同一密钥即可，**无需 App 用户账号**。详见 [`admin/README.md`](../admin/README.md)。
+
+会话相关（`deploy/.env`）：
+
+```env
+REFRESH_TOKEN_TTL_DAYS=30
+```
+
+超过该天数未 refresh 的设备 token 失效；App 退出会调用 `POST /api/auth/logout` 清除当前设备 token。
 
 ---
 

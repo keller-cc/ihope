@@ -35,12 +35,31 @@ type User struct {
 
 // AdminUser 管理后台用户列表项。
 type AdminUser struct {
-	ID         string     `json:"id"`
-	Email      string     `json:"email"`
-	Username   string     `json:"username"`
-	IsAdmin    bool       `json:"is_admin"`
-	DisabledAt *time.Time `json:"disabled_at,omitempty"`
-	CreatedAt  time.Time  `json:"created_at"`
+	ID          string     `json:"id"`
+	Email       string     `json:"email"`
+	Username    string     `json:"username"`
+	IsAdmin     bool       `json:"is_admin"`
+	DisabledAt  *time.Time `json:"disabled_at,omitempty"`
+	CreatedAt   time.Time  `json:"created_at"`
+	DeviceCount int        `json:"device_count"`
+}
+
+// AdminDevice 管理后台设备项。
+type AdminDevice struct {
+	DeviceID     string    `json:"device_id"`
+	DeviceName   *string   `json:"device_name,omitempty"`
+	Platform     string    `json:"platform"`
+	LastActiveAt time.Time `json:"last_active_at"`
+	HasSession   bool      `json:"has_session"` // 库中仍有 refresh_token_hash
+	Online       bool      `json:"online"`
+	HasPush      bool      `json:"has_push"`
+	SessionState string    `json:"session_state"` // online / logged_in / idle / none
+}
+
+// AdminUserDetail 用户详情（含设备）。
+type AdminUserDetail struct {
+	AdminUser
+	Devices []AdminDevice `json:"devices"`
 }
 
 // PublicUser 用户列表/会话成员展示（不含邮箱）。
@@ -348,6 +367,30 @@ func (r *Repository) GetDeviceRefreshHash(ctx context.Context, userID, deviceID 
 	return *hash, nil
 }
 
+// DeviceSession 设备登录态（refresh + 最后活跃时间）。
+type DeviceSession struct {
+	RefreshHash  string
+	LastActiveAt time.Time
+}
+
+func (r *Repository) GetDeviceSession(ctx context.Context, userID, deviceID string) (*DeviceSession, error) {
+	var hash *string
+	var lastActive time.Time
+	err := r.pool.QueryRow(ctx, `
+		SELECT refresh_token_hash, last_active_at FROM user_devices
+		WHERE user_id = $1 AND device_id = $2`, userID, deviceID).Scan(&hash, &lastActive)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if hash == nil || *hash == "" {
+		return nil, ErrNotFound
+	}
+	return &DeviceSession{RefreshHash: *hash, LastActiveAt: lastActive}, nil
+}
+
 func (r *Repository) CreatePasswordResetToken(ctx context.Context, userID, tokenHash string, expiresAt time.Time) error {
 	_, err := r.pool.Exec(ctx, `
 		INSERT INTO password_reset_tokens (user_id, token_hash, expires_at)
@@ -508,6 +551,10 @@ func (r *Repository) SyncAdminByEmail(ctx context.Context, userID, email string,
 	return err
 }
 
+func (r *Repository) Ping(ctx context.Context) error {
+	return r.pool.Ping(ctx)
+}
+
 func (r *Repository) AdminCounts(ctx context.Context) (total, disabled int, err error) {
 	err = r.pool.QueryRow(ctx, `
 		SELECT
@@ -516,18 +563,55 @@ func (r *Repository) AdminCounts(ctx context.Context) (total, disabled int, err 
 	return total, disabled, err
 }
 
-func (r *Repository) ListForAdmin(ctx context.Context, limit, offset int) ([]AdminUser, error) {
+func (r *Repository) CountForAdmin(ctx context.Context, query string) (int, error) {
+	query = strings.TrimSpace(query)
+	var total int
+	var err error
+	if query == "" {
+		err = r.pool.QueryRow(ctx, `SELECT COUNT(*) FROM users`).Scan(&total)
+	} else {
+		pattern := "%" + query + "%"
+		err = r.pool.QueryRow(ctx, `
+			SELECT COUNT(*) FROM users
+			WHERE email ILIKE $1 OR username ILIKE $1`, pattern).Scan(&total)
+	}
+	return total, err
+}
+
+func (r *Repository) ListForAdmin(ctx context.Context, query string, limit, offset int, sortBy, sortOrder string) ([]AdminUser, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
 	if offset < 0 {
 		offset = 0
 	}
-	rows, err := r.pool.Query(ctx, `
-		SELECT id, email, username, is_admin, disabled_at, created_at
-		FROM users
-		ORDER BY created_at DESC
-		LIMIT $1 OFFSET $2`, limit, offset)
+	query = strings.TrimSpace(query)
+	orderSQL := adminOrderClause(sortBy, sortOrder)
+	var rows pgx.Rows
+	var err error
+	if query == "" {
+		rows, err = r.pool.Query(ctx, `
+			SELECT u.id, u.email, u.username, u.is_admin, u.disabled_at, u.created_at,
+				COALESCE(d.cnt, 0)
+			FROM users u
+			LEFT JOIN (
+				SELECT user_id, COUNT(*) AS cnt FROM user_devices GROUP BY user_id
+			) d ON d.user_id = u.id
+			`+orderSQL+`
+			LIMIT $1 OFFSET $2`, limit, offset)
+	} else {
+		pattern := "%" + query + "%"
+		rows, err = r.pool.Query(ctx, `
+			SELECT u.id, u.email, u.username, u.is_admin, u.disabled_at, u.created_at,
+				COALESCE(d.cnt, 0)
+			FROM users u
+			LEFT JOIN (
+				SELECT user_id, COUNT(*) AS cnt FROM user_devices GROUP BY user_id
+			) d ON d.user_id = u.id
+			WHERE u.email ILIKE $1 OR u.username ILIKE $1
+			`+orderSQL+`
+			LIMIT $2 OFFSET $3`, pattern, limit, offset)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -535,12 +619,124 @@ func (r *Repository) ListForAdmin(ctx context.Context, limit, offset int) ([]Adm
 	var out []AdminUser
 	for rows.Next() {
 		var u AdminUser
-		if err := rows.Scan(&u.ID, &u.Email, &u.Username, &u.IsAdmin, &u.DisabledAt, &u.CreatedAt); err != nil {
+		if err := rows.Scan(&u.ID, &u.Email, &u.Username, &u.IsAdmin, &u.DisabledAt, &u.CreatedAt, &u.DeviceCount); err != nil {
 			return nil, err
 		}
 		out = append(out, u)
 	}
 	return out, rows.Err()
+}
+
+func adminOrderClause(sortBy, sortOrder string) string {
+	col := "u.username"
+	switch sortBy {
+	case "email":
+		col = "u.email"
+	case "created_at":
+		col = "u.created_at"
+	case "device_count":
+		col = "COALESCE(d.cnt, 0)"
+	default:
+		sortBy = "username"
+	}
+	dir := "ASC"
+	if strings.EqualFold(strings.TrimSpace(sortOrder), "desc") {
+		dir = "DESC"
+	}
+	tie := ", u.email ASC"
+	if sortBy == "email" {
+		tie = ", u.username ASC"
+	} else if sortBy == "created_at" {
+		tie = ", u.username ASC"
+	} else if sortBy == "device_count" {
+		tie = ", u.username ASC"
+	}
+	return "ORDER BY " + col + " " + dir + tie
+}
+
+func (r *Repository) GetForAdmin(ctx context.Context, userID string) (*AdminUserDetail, error) {
+	var u AdminUser
+	err := r.pool.QueryRow(ctx, `
+		SELECT u.id, u.email, u.username, u.is_admin, u.disabled_at, u.created_at,
+			COALESCE(d.cnt, 0)
+		FROM users u
+		LEFT JOIN (
+			SELECT user_id, COUNT(*) AS cnt FROM user_devices GROUP BY user_id
+		) d ON d.user_id = u.id
+		WHERE u.id = $1`, userID).Scan(
+		&u.ID, &u.Email, &u.Username, &u.IsAdmin, &u.DisabledAt, &u.CreatedAt, &u.DeviceCount,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	devices, err := r.ListDevicesForAdmin(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	return &AdminUserDetail{AdminUser: u, Devices: devices}, nil
+}
+
+func (r *Repository) ListDevicesForAdmin(ctx context.Context, userID string) ([]AdminDevice, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT device_id, device_name, COALESCE(platform, ''), last_active_at,
+			(refresh_token_hash IS NOT NULL AND refresh_token_hash <> ''),
+			(push_token IS NOT NULL AND push_token <> '')
+		FROM user_devices
+		WHERE user_id = $1
+		ORDER BY last_active_at DESC`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []AdminDevice
+	for rows.Next() {
+		var d AdminDevice
+		if err := rows.Scan(&d.DeviceID, &d.DeviceName, &d.Platform, &d.LastActiveAt, &d.HasSession, &d.HasPush); err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
+func (r *Repository) KickDevice(ctx context.Context, userID, deviceID string) error {
+	tag, err := r.pool.Exec(ctx, `
+		UPDATE user_devices SET refresh_token_hash = NULL
+		WHERE user_id = $1 AND device_id = $2`, userID, deviceID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (r *Repository) AdminPushStats(ctx context.Context) (int, map[string]int, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT COALESCE(NULLIF(platform, ''), 'unknown'), COUNT(*)
+		FROM user_devices
+		WHERE push_token IS NOT NULL AND push_token <> ''
+		GROUP BY 1`)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer rows.Close()
+	byPlatform := make(map[string]int)
+	total := 0
+	for rows.Next() {
+		var platform string
+		var n int
+		if err := rows.Scan(&platform, &n); err != nil {
+			return 0, nil, err
+		}
+		byPlatform[platform] = n
+		total += n
+	}
+	return total, byPlatform, rows.Err()
 }
 
 func (r *Repository) DisableUser(ctx context.Context, userID string) error {

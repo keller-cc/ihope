@@ -141,10 +141,6 @@ func (s *Service) Login(ctx context.Context, in LoginInput) (*TokenResponse, err
 		return nil, ErrAccountDisabled
 	}
 
-	if err := s.users.SyncAdminByEmail(ctx, u.ID, u.Email, s.cfg.AdminEmails); err != nil {
-		return nil, err
-	}
-
 	return s.issueTokens(ctx, u, deviceID, strings.TrimSpace(in.DeviceName))
 }
 
@@ -177,12 +173,29 @@ func (s *Service) Refresh(ctx context.Context, refreshToken, deviceID string) (*
 		return nil, ErrAccountDisabled
 	}
 
-	storedHash, err := s.users.GetDeviceRefreshHash(ctx, userID, deviceID)
-	if err != nil || storedHash != tokenHash {
+	storedHash, err := s.users.GetDeviceSession(ctx, userID, deviceID)
+	if err != nil || storedHash.RefreshHash != tokenHash {
+		return nil, ErrInvalidRefresh
+	}
+	if s.cfg.RefreshTokenTTL > 0 && time.Since(storedHash.LastActiveAt) > s.cfg.RefreshTokenTTL {
+		_ = s.users.KickDevice(ctx, userID, deviceID)
 		return nil, ErrInvalidRefresh
 	}
 
 	return s.issueTokens(ctx, u, deviceID, "")
+}
+
+func (s *Service) Logout(ctx context.Context, userID, deviceID string) error {
+	userID = strings.TrimSpace(userID)
+	deviceID = strings.TrimSpace(deviceID)
+	if userID == "" || deviceID == "" {
+		return ErrInvalidRefresh
+	}
+	err := s.users.KickDevice(ctx, userID, deviceID)
+	if err == user.ErrNotFound {
+		return nil
+	}
+	return err
 }
 
 func (s *Service) ChangePassword(ctx context.Context, userID, currentPassword, newPassword string) error {
