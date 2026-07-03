@@ -1,6 +1,9 @@
 package push
 
-import "testing"
+import (
+	"context"
+	"testing"
+)
 
 func TestBodyForType(t *testing.T) {
 	tests := map[string]string{
@@ -20,7 +23,7 @@ func TestBodyForType(t *testing.T) {
 
 func TestLogSender(t *testing.T) {
 	s := logSender{}
-	err := s.Send(t.Context(), "token-abc", "android", Payload{
+	err := s.Send(context.Background(), "token-abc", "android", Payload{
 		ConversationID: "conv-1",
 		MessageID:      "msg-1",
 		MessageType:    "text",
@@ -37,7 +40,7 @@ func TestLogSender(t *testing.T) {
 
 func TestServiceNilToken(t *testing.T) {
 	svc := &Service{sender: logSender{}}
-	if err := svc.Send(t.Context(), "", "android", Payload{}); err != nil {
+	if err := svc.Send(context.Background(), "", "android", Payload{}); err != nil {
 		t.Fatal(err)
 	}
 }

@@ -3,6 +3,7 @@ package server_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -236,7 +237,7 @@ func TestRefreshRejectsExpiredIdleTokenIntegration(t *testing.T) {
 	}
 	decodeBody(t, loginRec.Body, &loginResp)
 
-	_, err := pool.Exec(t.Context(), `
+	_, err := pool.Exec(context.Background(), `
 		UPDATE user_devices SET last_active_at = now() - interval '2 days'
 		WHERE user_id = $1 AND device_id = $2`, loginResp.User.ID, deviceID)
 	if err != nil {
@@ -251,7 +252,7 @@ func TestRefreshRejectsExpiredIdleTokenIntegration(t *testing.T) {
 		t.Fatalf("refresh status = %d, want 401 body=%s", refreshRec.Code, refreshRec.Body.String())
 	}
 
-	hash, err := userRepo.GetDeviceRefreshHash(t.Context(), loginResp.User.ID, deviceID)
+	hash, err := userRepo.GetDeviceRefreshHash(context.Background(), loginResp.User.ID, deviceID)
 	if err != user.ErrNotFound {
 		t.Fatalf("expected refresh cleared, hash=%q err=%v", hash, err)
 	}
