@@ -1,0 +1,9 @@
+.git
+.cursor
+**/node_modules
+deploy/data
+deploy/.env
+mobile
+docs
+*.md
+!backend/README.md

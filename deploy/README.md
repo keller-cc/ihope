@@ -1,7 +1,11 @@
 # deploy 目录说明
 
-本目录用于 **本地开发与将来生产部署** 的 Docker / 环境配置。  
-当前仅包含 **开发用 PostgreSQL**；后端在宿主机用 `go run` 启动。
+本目录用于 **本地开发** 与 **生产 Docker 部署** 的环境配置。
+
+| 场景 | Compose 文件 |
+|------|----------------|
+| 本地开发（仅 PostgreSQL） | `docker-compose.dev.yml` + 宿主机 `go run` |
+| 生产 / 一体化验收 | `docker-compose.yml`（postgres + backend + nginx） |
 
 ---
 
@@ -11,16 +15,21 @@
 deploy/
 ├── README.md                 # 本说明
 ├── docker-compose.dev.yml    # 本地开发：只启动 PostgreSQL
+├── docker-compose.yml        # 生产：postgres + backend + nginx
+├── nginx.conf                # 生产 Nginx 反代（REST + WebSocket）
+├── upgrade-dev.ps1           # 开发无感升级脚本
 ├── .env                      # 本地密钥与端口（勿提交 Git）
-└── data/                     # Docker 数据卷（自动生成，勿提交 Git）
-    └── postgres/             # PostgreSQL 数据文件（表、用户密码等）
+└── data/                     # dev compose 数据卷（勿提交 Git）
+    └── postgres/
 ```
 
 | 路径 | 是否提交 Git | 说明 |
 |------|--------------|------|
-| `docker-compose.dev.yml` | 是 | Compose 编排定义 |
-| `.env` | 否 | 从项目根 `.env.example` 复制而来 |
-| `data/postgres/` | 否 | 容器运行后自动创建，删目录 = 重置数据库 |
+| `docker-compose.dev.yml` | 是 | 开发用 PostgreSQL |
+| `docker-compose.yml` | 是 | 生产编排 |
+| `nginx.conf` | 是 | 生产反代配置 |
+| `.env` | 否 | 从项目根 `.env.example` 复制 |
+| `data/postgres/` | 否 | dev 卷数据，删目录 = 重置库 |
 
 ---
 
@@ -153,11 +162,44 @@ IHope/
 
 ---
 
-## 生产环境（尚未实现）
+## 生产环境（docker compose）
 
-开发指南中规划的生产部署还会包含：
+`docker-compose.yml`：PostgreSQL + Go 后端 + Nginx（默认对外 **80** 端口）。
 
-- `docker-compose.yml` — postgres + backend + nginx
-- `nginx.conf` — HTTPS 反向代理
+```powershell
+cd deploy
+copy ..\.env.example .env
+# 编辑 .env：DB_PASSWORD、JWT_SECRET、ADMIN_SECRET、APP_PUBLIC_URL=https://你的域名
+docker compose up -d --build
+docker compose ps
+curl http://localhost/api/health
+```
 
-当前仓库 **只有** `docker-compose.dev.yml`，专用于本地一人开发。
+| 服务 | 说明 |
+|------|------|
+| `postgres` | 数据卷 `postgres_data`，不暴露到公网 |
+| `backend` | 镜像自 `backend/Dockerfile`；上传目录卷 `uploads_data` |
+| `nginx` | 反代 REST + `/ws`；`client_max_body_size 320m` |
+
+**生产 `.env` 注意：**
+
+- `APP_PUBLIC_URL` 设为公网 HTTPS 地址（App 更新包、邮件链接）
+- compose 会将 `DB_HOST` 覆盖为 `postgres`，勿依赖 `127.0.0.1`
+- `CORS_ALLOW_ORIGIN` 生产建议填 App/Web 域名，勿用 `*`
+- APK 分发：把包放进卷 `uploads_data` 的 `releases/latest.apk`，或设 `APP_DOWNLOAD_URL`
+- 可选 `HTTP_PORT=8080` 若 80 已被占用
+
+**HTTPS：** 可在宿主机 Nginx/Caddy 终止 TLS 并反代到 `127.0.0.1:80`；或在 `nginx.conf` 增加 443 并挂载 certbot 证书目录。
+
+**构建上下文：** 仓库根目录（含 `admin/`）；见根目录 `.dockerignore`。
+
+**发布 APK：**
+
+```powershell
+cd mobile
+flutter build apk --release
+# 复制到 uploads 卷（容器名 ihope-backend）
+docker cp build\app\outputs\flutter-apk\app-release.apk ihope-backend:/data/uploads/releases/latest.apk
+```
+
+---

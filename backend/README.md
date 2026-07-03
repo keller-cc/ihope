@@ -4,6 +4,8 @@ Go 1.22+ REST API，当前实现阶段 1 账号体系 + 阶段 2 会话与消息
 
 ## 启动
 
+**本地开发**（仅数据库在 Docker，后端 `go run`）：
+
 ```powershell
 cd deploy
 docker compose -f docker-compose.dev.yml up -d
@@ -11,6 +13,8 @@ docker compose -f docker-compose.dev.yml up -d
 cd ..\backend
 go run ./cmd/server
 ```
+
+**生产 / 一体化验收**（postgres + backend + nginx）见 [deploy/README.md](../deploy/README.md)。
 
 ## 配置
 
