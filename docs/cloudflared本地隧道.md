@@ -161,6 +161,20 @@ cd D:\IHope\deploy
 
 脚本会在 8082 起新后端 → 切换 `.active-backend-port` → 排空旧 8081。**无需改 Tunnel 或 `config.yml`。**
 
+### 电脑重启后（无感模式）
+
+devproxy 与 Tunnel 仍占 **8080**；后端端口看 `.active-backend-port`：
+
+```powershell
+# 窗口3：后端（8081 或 8082）
+$port = (Get-Content D:\IHope\deploy\.active-backend-port -Raw).Trim()
+if (-not $port) { $port = "8081" }
+cd D:\IHope\backend
+$env:ENV_FILE="D:\IHope\deploy\.env"
+$env:SERVER_PORT=$port
+go run ./cmd/server
+```
+
 ---
 
 ## 五、常用命令
