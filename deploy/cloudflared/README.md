@@ -61,8 +61,8 @@ copy D:\cloudflared\mytunnel.json .cloudflared\mytunnel.json
 `deploy/.env` 建议：
 
 ```env
-APP_PUBLIC_URL=http://im.clprince.top
-CORS_ALLOW_ORIGIN=http://im.clprince.top
+APP_PUBLIC_URL=https://im.clprince.top
+CORS_ALLOW_ORIGIN=https://im.clprince.top
 ADMIN_SECRET=至少32字符的随机串
 ```
 
@@ -97,12 +97,12 @@ cd D:\IHope\deploy\cloudflared
 
 ```powershell
 curl http://127.0.0.1:8080/api/health
-curl http://im.clprince.top/api/health
+curl https://im.clprince.top/api/health
 ```
 
-管理页：`http://im.clprince.top/admin/`（密钥 = `ADMIN_SECRET`）
+管理页：`https://im.clprince.top/admin/`（密钥 = `ADMIN_SECRET`）
 
-App：**个人资料 → 服务器** → `http://im.clprince.top`
+App：**个人资料 → 服务器** → `https://im.clprince.top`
 
 ---
 
@@ -251,7 +251,7 @@ cd D:\IHope\deploy\cloudflared
 
 ### App / Release
 
-- 连 A：`http://im.clprince.top`
+- 连 A：`https://im.clprince.top`
 - 连 B：`http://dev-im.clprince.top`（个人资料 → 服务器，或单独打 APK / 改 `prod.json`）
 
 两套环境 **数据库、`.env`、后端数据互不影响**（各自本机 Docker + 本机 `deploy/.env`），除非你把 B 的 `DB_HOST` 指到 A（一般不需要）。

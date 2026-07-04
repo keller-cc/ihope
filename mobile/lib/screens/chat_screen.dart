@@ -17,6 +17,7 @@ import '../widgets/chat_input_bar.dart';
 import '../widgets/app_page_route.dart';
 import '../widgets/group_announcement_banner.dart';
 import '../widgets/offline_banner.dart';
+import '../widgets/voice_hint_toast.dart';
 import 'announcement_detail_screen.dart';
 import 'group_announcements_screen.dart';
 import 'chat/chat_app_bar.dart';
@@ -161,6 +162,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   void dispose() {
+    VoiceHintToast.hide();
     if (_messages.isNotEmpty) {
       unawaited(
         widget.auth.markConversationRead(
@@ -182,6 +184,8 @@ class _ChatScreenState extends State<ChatScreen> {
 
   void _showSnack(String message) {
     if (!mounted) return;
+    if (VoiceHintToast.show(context, message)) return;
+    ScaffoldMessenger.of(context).clearSnackBars();
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
   }
 

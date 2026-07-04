@@ -55,10 +55,10 @@ ADMIN_SECRET=your-long-random-dev-secret
 
 **Cloudflare Tunnel 内测**（域名 `im.clprince.top`）时，管理页与 health 走公网：
 
-- `http://im.clprince.top/admin/`
-- `http://im.clprince.top/api/health`
+- `https://im.clprince.top/admin/`
+- `https://im.clprince.top/api/health`
 
-`deploy/.env` 需设 `APP_PUBLIC_URL=http://im.clprince.top`、`CORS_ALLOW_ORIGIN=http://im.clprince.top`。详见 [cloudflared/README.md](./cloudflared/README.md)。
+`deploy/.env` 需设 `APP_PUBLIC_URL=https://im.clprince.top`、`CORS_ALLOW_ORIGIN=https://im.clprince.top`。详见 [cloudflared/README.md](./cloudflared/README.md)。
 
 会话相关（`deploy/.env`）：
 
