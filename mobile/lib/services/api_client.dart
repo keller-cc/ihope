@@ -197,11 +197,7 @@ class ApiClient {
       form.files.add(
         MapEntry(
           field,
-          MultipartFile.fromBytes(
-            bytes,
-            filename: filename,
-            length: bytes.length,
-          ),
+          MultipartFile.fromBytes(bytes, filename: filename),
         ),
       );
       final res = await _dio.post<Map<String, dynamic>>(
