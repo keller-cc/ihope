@@ -48,10 +48,9 @@ func (s *Service) Upload(ctx context.Context, in UploadInput) (*File, error) {
 	if byteSize < 0 {
 		byteSize = 0
 	}
-	if s.maxBytes > 0 {
-		if byteSize <= 0 || byteSize > s.maxBytes {
-			return nil, ErrInvalidInput
-		}
+	// 客户端 multipart 的 file part 常不带 Content-Length；仅在有声明大小时预检。
+	if s.maxBytes > 0 && byteSize > s.maxBytes {
+		return nil, ErrInvalidInput
 	}
 
 	ok, err := s.conv.IsActiveMember(ctx, in.ConversationID, in.UploaderID)

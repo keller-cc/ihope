@@ -184,6 +184,7 @@ class ApiClient {
     Map<String, String>? fields,
     Duration? receiveTimeout,
     Duration? sendTimeout,
+    Duration? connectTimeout,
   }) async {
     try {
       // 服务端按 part 顺序解析：conversation_id 须在 file 之前。
@@ -196,7 +197,11 @@ class ApiClient {
       form.files.add(
         MapEntry(
           field,
-          MultipartFile.fromBytes(bytes, filename: filename),
+          MultipartFile.fromBytes(
+            bytes,
+            filename: filename,
+            length: bytes.length,
+          ),
         ),
       );
       final res = await _dio.post<Map<String, dynamic>>(
@@ -204,6 +209,7 @@ class ApiClient {
         data: form,
         options: Options(
           contentType: 'multipart/form-data',
+          connectTimeout: connectTimeout ?? const Duration(seconds: 60),
           receiveTimeout: receiveTimeout,
           sendTimeout: sendTimeout,
         ),

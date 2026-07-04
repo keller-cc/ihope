@@ -21,6 +21,7 @@ class FileUploadService {
         fields: {'conversation_id': conversationId},
         receiveTimeout: timeout,
         sendTimeout: timeout,
+        connectTimeout: timeout,
       );
       final id = data['file_id'];
       if (id is! String || id.isEmpty) {

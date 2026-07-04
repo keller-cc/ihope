@@ -40,7 +40,7 @@ String friendlyTransferError(Object error) {
     return '网络中断，请稍后重试（当前为整包上传，不支持断点续传）';
   }
   if (msg.contains('validation') || msg.contains('invalid upload')) {
-    return '文件超过服务端上限，请使用 1t1 网盘或压缩后重试';
+    return '文件上传被拒绝，请更新服务端后重试，或使用 1t1 网盘';
   }
   return error.toString();
 }
