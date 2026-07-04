@@ -64,4 +64,5 @@ coverage/
 
 # Cloudflare Tunnel：凭证勿提交；cloudflared.exe 例外可提交
 deploy/cloudflared/.cloudflared/
+deploy/cloudflared/config.local.yml
 !deploy/cloudflared/cloudflared.exe

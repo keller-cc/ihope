@@ -197,3 +197,61 @@ cd D:\IHope\deploy\cloudflared
 - 内测可用 HTTP；正式 Release APK 建议 VPS + HTTPS
 
 更多 VPS 部署见 [无备案国内部署指南.md](../../docs/无备案国内部署指南.md)；Cloudflare 橙云/VPS 方案见 [Cloudflare部署指南.md](../../docs/Cloudflare部署指南.md)。
+
+---
+
+## 八、两台电脑各用一套 Tunnel（不共用凭证）
+
+**原则：** 一个 Tunnel = 一份凭证 JSON + 一个（或多个）Public Hostname。**不要**把同一份 `mytunnel.json` 拷到两台电脑同时跑——域名会抢连接，行为不可控。
+
+推荐：**子域名分开**，例如：
+
+| 电脑 | Tunnel 名（示例） | 公网域名 | 凭证文件 |
+|------|-------------------|----------|----------|
+| A（主） | `mytunnel` | `im.cplprince.top` | `.cloudflared/mytunnel.json` |
+| B（副） | `mytunnel-b` | `dev-im.cplprince.top` | `.cloudflared/mytunnel-b.json` |
+
+### Cloudflare 控制台（电脑 B 一次性）
+
+1. Zero Trust → **Networks → Tunnels** → **Create a tunnel**（新建，不要复用 A 的）
+2. 起名如 `mytunnel-b`，下载 **另一份** JSON
+3. **Public Hostname** 添加：`dev-im.cplprince.top` → `http://127.0.0.1:8080`（子域名可自定，与 A 不同即可）
+4. WebSockets 保持 **ON**
+
+### 电脑 B 本机
+
+```powershell
+cd D:\IHope\deploy\cloudflared
+
+# 第二套凭证
+mkdir .cloudflared -Force
+copy \\A电脑或U盘\mytunnel-b.json .cloudflared\mytunnel-b.json
+
+# 第二套 config（勿提交 Git）
+copy config.local.yml.example config.local.yml
+# 编辑 hostname / tunnel 名 / credentials 路径，与控制台一致
+
+# deploy/.env 改为 B 的域名
+# APP_PUBLIC_URL=http://dev-im.cplprince.top
+# CORS_ALLOW_ORIGIN=http://dev-im.cplprince.top
+```
+
+启动 Tunnel（注意 `--config`）：
+
+```powershell
+cd D:\IHope\deploy\cloudflared
+.\cloudflared.exe tunnel --config config.local.yml run
+```
+
+电脑 A 仍用默认：
+
+```powershell
+.\cloudflared.exe tunnel --config config.yml run
+```
+
+### App / Release
+
+- 连 A：`http://im.cplprince.top`
+- 连 B：`http://dev-im.cplprince.top`（个人资料 → 服务器，或单独打 APK / 改 `prod.json`）
+
+两套环境 **数据库、`.env`、后端数据互不影响**（各自本机 Docker + 本机 `deploy/.env`），除非你把 B 的 `DB_HOST` 指到 A（一般不需要）。

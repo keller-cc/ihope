@@ -1,0 +1,15 @@
+# 第二台电脑 / 第二套 Tunnel 配置模板
+# 用法：
+#   copy config.local.yml.example config.local.yml
+#   把 Cloudflare 第二套 Tunnel 的 JSON 放到 .cloudflared/mytunnel-b.json
+#   .\cloudflared.exe tunnel --config config.local.yml run
+#
+# Cloudflare 控制台需单独再建一个 Tunnel，并绑定不同子域名（勿与 im.cplprince.top 共用凭证）
+
+tunnel: mytunnel-b
+credentials-file: .cloudflared/mytunnel-b.json
+
+ingress:
+  - hostname: dev-im.cplprince.top
+    service: http://127.0.0.1:8080
+  - service: http_status:404
