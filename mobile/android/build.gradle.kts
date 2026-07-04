@@ -51,10 +51,11 @@ allprojects {
     }
 }
 
-// 部分 Flutter 插件仍声明 Java 8；统一 JVM 21，不依赖 android.newDsl / CommonExtension
+// 部分 Flutter 插件仍声明 Java 8；统一 JVM 21（勿用 options.release，AGP 会报错）
 subprojects {
     tasks.withType<JavaCompile>().configureEach {
-        options.release.set(21)
+        sourceCompatibility = JavaVersion.VERSION_21.toString()
+        targetCompatibility = JavaVersion.VERSION_21.toString()
     }
     tasks.withType<KotlinJvmCompile>().configureEach {
         compilerOptions.jvmTarget.set(JvmTarget.JVM_21)
