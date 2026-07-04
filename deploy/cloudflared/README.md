@@ -2,7 +2,7 @@
 
 在 **尚无 VPS** 或 **本机开发** 时，用 Cloudflare Tunnel 把 `im.你的域名` 指到本机 `8080`，外网可访问 IHope 后端。
 
-本项目域名：**`cplrince.top`**，IM API 子域：**`im.cplprince.top`**（Cloudflare NS 已接入）。
+本项目域名：**`clprince.top`**，IM API 子域：**`im.clprince.top`**（Cloudflare NS 已接入）。
 
 ## 目录
 
@@ -20,13 +20,13 @@
 ### 单后端（简单内测）
 
 ```
-App / 浏览器 → im.cplprince.top → cloudflared → 127.0.0.1:8080 → go run ./cmd/server
+App / 浏览器 → im.clprince.top → cloudflared → 127.0.0.1:8080 → go run ./cmd/server
 ```
 
 ### 无感升级（devproxy）
 
 ```
-App → im.cplprince.top → cloudflared → 127.0.0.1:8080 → devproxy → 8081 或 8082
+App → im.clprince.top → cloudflared → 127.0.0.1:8080 → devproxy → 8081 或 8082
 ```
 
 Tunnel **始终**连 `127.0.0.1:8080`；升级时只换 8081/8082，**不改** `config.yml`。见下文「无感升级」。
@@ -37,7 +37,7 @@ Tunnel **始终**连 `127.0.0.1:8080`；升级时只换 8081/8082，**不改** `
 
 1. [Zero Trust](https://one.dash.cloudflare.com/) → **Networks → Tunnels** → 创建 Tunnel（如 `mytunnel`）
 2. 下载凭证 JSON（形如 `xxxxxxxx.json`）
-3. **Public Hostname**：`im.cplprince.top` → Service `http://127.0.0.1:8080`（网页配置与本地 `config.yml` 二选一或保持一致）
+3. **Public Hostname**：`im.clprince.top` → Service `http://127.0.0.1:8080`（网页配置与本地 `config.yml` 二选一或保持一致）
 4. 域名 NS 已在 Cloudflare 时，Tunnel 会自动写 DNS
 5. **Network → WebSockets → ON**（聊天 WebSocket 需要）
 
@@ -54,15 +54,15 @@ copy D:\cloudflared\mytunnel.json .cloudflared\mytunnel.json
 # 或把 Zero Trust 下载的 json 复制为 deploy\cloudflared\.cloudflared\mytunnel.json
 ```
 
-`config.yml` 已指向 `im.cplprince.top` 与 `127.0.0.1:8080`。
+`config.yml` 已指向 `im.clprince.top` 与 `127.0.0.1:8080`。
 
 **务必使用 `127.0.0.1`，不要用 `localhost`**，否则 Windows 上可能出现 `dial tcp [::1]:8080 ... refused`。
 
 `deploy/.env` 建议：
 
 ```env
-APP_PUBLIC_URL=http://im.cplprince.top
-CORS_ALLOW_ORIGIN=http://im.cplprince.top
+APP_PUBLIC_URL=http://im.clprince.top
+CORS_ALLOW_ORIGIN=http://im.clprince.top
 ADMIN_SECRET=至少32字符的随机串
 ```
 
@@ -97,12 +97,12 @@ cd D:\IHope\deploy\cloudflared
 
 ```powershell
 curl http://127.0.0.1:8080/api/health
-curl http://im.cplprince.top/api/health
+curl http://im.clprince.top/api/health
 ```
 
-管理页：`http://im.cplprince.top/admin/`（密钥 = `ADMIN_SECRET`）
+管理页：`http://im.clprince.top/admin/`（密钥 = `ADMIN_SECRET`）
 
-App：**个人资料 → 服务器** → `http://im.cplprince.top`
+App：**个人资料 → 服务器** → `http://im.clprince.top`
 
 ---
 
@@ -208,14 +208,14 @@ cd D:\IHope\deploy\cloudflared
 
 | 电脑 | Tunnel 名（示例） | 公网域名 | 凭证文件 |
 |------|-------------------|----------|----------|
-| A（主） | `mytunnel` | `im.cplprince.top` | `.cloudflared/mytunnel.json` |
-| B（副） | `mytunnel-b` | `dev-im.cplprince.top` | `.cloudflared/mytunnel-b.json` |
+| A（主） | `mytunnel` | `im.clprince.top` | `.cloudflared/mytunnel.json` |
+| B（副） | `mytunnel-b` | `dev-im.clprince.top` | `.cloudflared/mytunnel-b.json` |
 
 ### Cloudflare 控制台（电脑 B 一次性）
 
 1. Zero Trust → **Networks → Tunnels** → **Create a tunnel**（新建，不要复用 A 的）
 2. 起名如 `mytunnel-b`，下载 **另一份** JSON
-3. **Public Hostname** 添加：`dev-im.cplprince.top` → `http://127.0.0.1:8080`（子域名可自定，与 A 不同即可）
+3. **Public Hostname** 添加：`dev-im.clprince.top` → `http://127.0.0.1:8080`（子域名可自定，与 A 不同即可）
 4. WebSockets 保持 **ON**
 
 ### 电脑 B 本机
@@ -232,8 +232,8 @@ copy config.local.yml.example config.local.yml
 # 编辑 hostname / tunnel 名 / credentials 路径，与控制台一致
 
 # deploy/.env 改为 B 的域名
-# APP_PUBLIC_URL=http://dev-im.cplprince.top
-# CORS_ALLOW_ORIGIN=http://dev-im.cplprince.top
+# APP_PUBLIC_URL=http://dev-im.clprince.top
+# CORS_ALLOW_ORIGIN=http://dev-im.clprince.top
 ```
 
 启动 Tunnel（注意 `--config`）：
@@ -251,7 +251,7 @@ cd D:\IHope\deploy\cloudflared
 
 ### App / Release
 
-- 连 A：`http://im.cplprince.top`
-- 连 B：`http://dev-im.cplprince.top`（个人资料 → 服务器，或单独打 APK / 改 `prod.json`）
+- 连 A：`http://im.clprince.top`
+- 连 B：`http://dev-im.clprince.top`（个人资料 → 服务器，或单独打 APK / 改 `prod.json`）
 
 两套环境 **数据库、`.env`、后端数据互不影响**（各自本机 Docker + 本机 `deploy/.env`），除非你把 B 的 `DB_HOST` 指到 A（一般不需要）。

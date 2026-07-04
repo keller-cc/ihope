@@ -6,6 +6,6 @@ tunnel: mytunnel
 credentials-file: .cloudflared/mytunnel.json
 
 ingress:
-  - hostname: im.cplprince.top
+  - hostname: im.clprince.top
     service: http://127.0.0.1:8080
   - service: http_status:404

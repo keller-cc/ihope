@@ -53,12 +53,12 @@ ADMIN_SECRET=your-long-random-dev-secret
 
 管理页输入同一密钥即可，**无需 App 用户账号**。详见 [`admin/README.md`](../admin/README.md)。
 
-**Cloudflare Tunnel 内测**（域名 `im.cplprince.top`）时，管理页与 health 走公网：
+**Cloudflare Tunnel 内测**（域名 `im.clprince.top`）时，管理页与 health 走公网：
 
-- `http://im.cplprince.top/admin/`
-- `http://im.cplprince.top/api/health`
+- `http://im.clprince.top/admin/`
+- `http://im.clprince.top/api/health`
 
-`deploy/.env` 需设 `APP_PUBLIC_URL=http://im.cplprince.top`、`CORS_ALLOW_ORIGIN=http://im.cplprince.top`。详见 [cloudflared/README.md](./cloudflared/README.md)。
+`deploy/.env` 需设 `APP_PUBLIC_URL=http://im.clprince.top`、`CORS_ALLOW_ORIGIN=http://im.clprince.top`。详见 [cloudflared/README.md](./cloudflared/README.md)。
 
 会话相关（`deploy/.env`）：
 
