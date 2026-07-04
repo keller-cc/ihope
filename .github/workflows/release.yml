@@ -5,6 +5,11 @@ on:
     tags:
       - "v*"
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to attach release assets to"
+        required: true
+        default: "v2026-07-04-0.1.0"
 
 permissions:
   contents: write
@@ -17,6 +22,8 @@ jobs:
         working-directory: mobile
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.tag) || github.ref }}
 
       - uses: subosito/flutter-action@v2
         with:
@@ -38,9 +45,16 @@ jobs:
             --dart-define-from-file=config/prod.json \
             --dart-define-from-file=config/domestic.json
 
+      - name: Verify APK artifact
+        run: |
+          ls -lh build/app/outputs/flutter-apk/
+          test -f build/app/outputs/flutter-apk/app-domestic-release.apk
+
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
           files: mobile/build/app/outputs/flutter-apk/app-domestic-release.apk
           generate_release_notes: true
           fail_on_unmatched_files: true
+          make_latest: true

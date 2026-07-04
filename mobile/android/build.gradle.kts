@@ -2,6 +2,9 @@ import com.android.build.gradle.BaseExtension
 import org.gradle.api.tasks.Exec
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.tasks.KotlinJvmCompile
+
+apply(from = "maven_repositories.gradle.kts")
+
 // MSYS2/Mingw 在 PATH 里会让 CMake 误用主机 GCC，导致 NDK 编译失败
 fun ndkSafePath(): String =
     (System.getenv("PATH") ?: "")
@@ -18,10 +21,7 @@ fun ndkSafePath(): String =
 
 allprojects {
     repositories {
-        maven { url = uri("https://maven.aliyun.com/repository/google") }
-        maven { url = uri("https://maven.aliyun.com/repository/public") }
-        google()
-        mavenCentral()
+        configureIhopeRepositories(cnMavenMirrorEnabled(rootProject))
     }
     tasks.withType<Exec>().configureEach {
         environment("PATH", ndkSafePath())

@@ -4,3 +4,6 @@ flutter.sdk=D:\\Flutter\\flutter
 
 # 国内包（domestic flavor）极光 AppKey，与极光控制台、后端 JPUSH_APP_KEY 一致
 JPUSH_APPKEY=
+
+# 设为 false 时强制走 google()/mavenCentral()（阿里云 502 时可临时关闭）
+# useCnMavenMirror=false
