@@ -1,7 +1,4 @@
 import org.gradle.api.tasks.Exec
-import org.gradle.api.tasks.compile.JavaCompile
-import org.jetbrains.kotlin.gradle.dsl.JvmTarget
-import org.jetbrains.kotlin.gradle.tasks.KotlinJvmCompile
 
 /** GitHub Actions / CI 不使用阿里云镜像（海外 runner 易 502）。 */
 fun cnMavenMirrorEnabled(): Boolean {
@@ -48,17 +45,6 @@ allprojects {
     }
     tasks.withType<Exec>().configureEach {
         environment("PATH", ndkSafePath())
-    }
-}
-
-// 部分 Flutter 插件仍声明 Java 8；统一 JVM 21（勿用 options.release，AGP 会报错）
-subprojects {
-    tasks.withType<JavaCompile>().configureEach {
-        sourceCompatibility = JavaVersion.VERSION_21.toString()
-        targetCompatibility = JavaVersion.VERSION_21.toString()
-    }
-    tasks.withType<KotlinJvmCompile>().configureEach {
-        compilerOptions.jvmTarget.set(JvmTarget.JVM_21)
     }
 }
 
