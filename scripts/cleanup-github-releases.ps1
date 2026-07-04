@@ -1,10 +1,13 @@
-# 删除 GitHub 上所有 Release 与远程 tag（需 gh 已登录：gh auth login）
-# 用法：.\scripts\cleanup-github-releases.ps1
-# 可选：-KeepTag v2026-07-04-moses  保留指定 tag
+# 列出并删除 GitHub Release（含无 tag 孤儿、草稿；Releases 页可能看不到）
+# 用法：
+#   gh auth login
+#   .\scripts\cleanup-github-releases.ps1 -KeepTag v2026-07-04-moses
+#   .\scripts\cleanup-github-releases.ps1 -ListOnly   # 只查看，不删除
 
 param(
     [string]$Repo = "keller-cc/ihope",
-    [string]$KeepTag = ""
+    [string]$KeepTag = "",
+    [switch]$ListOnly
 )
 
 $ErrorActionPreference = "Stop"
@@ -20,24 +23,34 @@ if ($LASTEXITCODE -ne 0) {
     throw "Run: gh auth login"
 }
 
-$releases = gh release list --repo $Repo --limit 200 --json tagName,id 2>$null | ConvertFrom-Json
-if ($releases) {
-    foreach ($r in $releases) {
-        if ($KeepTag -and $r.tagName -eq $KeepTag) { continue }
-        Write-Host "Deleting release $($r.tagName)..."
-        gh release delete $r.tagName --repo $Repo --yes --cleanup-tag 2>$null
-        if ($LASTEXITCODE -ne 0) {
-            gh release delete $r.tagName --repo $Repo --yes
-        }
+# 完整 API 列表（含 draft、tag_name 为空的孤儿 Release；gh release list 会漏掉后者）
+$releases = gh api "repos/$Repo/releases?per_page=100" | ConvertFrom-Json
+
+if (-not $releases -or $releases.Count -eq 0) {
+    Write-Host "No releases found."
+    exit 0
+}
+
+Write-Host "All releases ($($releases.Count)):"
+foreach ($r in $releases) {
+    $tag = if ($r.tag_name) { $r.tag_name } else { "(no tag / orphan)" }
+    $flags = @()
+    if ($r.draft) { $flags += "draft" }
+    if ($r.prerelease) { $flags += "prerelease" }
+    $flagStr = if ($flags.Count) { " [$($flags -join ', ')]" } else { "" }
+    Write-Host "  id=$($r.id) tag=$tag name=$($r.name)$flagStr"
+}
+
+if ($ListOnly) { exit 0 }
+
+foreach ($r in $releases) {
+    if ($KeepTag -and $r.tag_name -eq $KeepTag) {
+        Write-Host "Keeping $($r.tag_name) (id=$($r.id))"
+        continue
     }
+    Write-Host "Deleting release id=$($r.id) tag=$($r.tag_name) name=$($r.name)..."
+    gh api -X DELETE "repos/$Repo/releases/$($r.id)"
 }
 
-$tags = gh api "repos/$Repo/tags" --paginate -q '.[].name' 2>$null
-foreach ($t in $tags) {
-    if ($KeepTag -and $t -eq $KeepTag) { continue }
-    Write-Host "Deleting tag $t..."
-    gh api -X DELETE "repos/$Repo/git/refs/tags/$t" 2>$null
-}
-
-Write-Host "Done. Remaining tags:"
-gh release list --repo $Repo --limit 10
+Write-Host "`nRemaining:"
+gh api "repos/$Repo/releases?per_page=100" -q '.[] | {id, tag: .tag_name, name, draft}' 
