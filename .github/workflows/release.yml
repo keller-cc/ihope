@@ -21,9 +21,10 @@ jobs:
       run:
         working-directory: mobile
     steps:
+      # 始终从 main 构建（旧 tag 可能不含 CI 修复）；Release 仍挂到指定 tag
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.tag) || github.ref }}
+          ref: main
 
       - uses: subosito/flutter-action@v2
         with:
@@ -39,6 +40,9 @@ jobs:
           echo "{\"API_BASE\":\"${{ secrets.API_BASE }}\"}" > config/prod.json
 
       - name: Build domestic release APK
+        env:
+          CI: "true"
+          ORG_GRADLE_PROJECT_useCnMavenMirror: "false"
         run: |
           flutter pub get
           flutter build apk --release --flavor domestic \
