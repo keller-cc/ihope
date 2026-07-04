@@ -1575,7 +1575,7 @@ class AuthService {
         await ensureGroupKeys(conv, epochs: [base.epoch]);
       } catch (_) {}
     }
-    final dec = await (await ensureCryptoReady()).decryptMessage(conv, base);
+    final dec = await _decryptMessageOrRecover(conv, base);
     if (dec.type == 'file') {
       if (persistFile) {
         return _finalizeDecryptedMedia(
@@ -1596,6 +1596,21 @@ class AuthService {
       return dec.copyWith(plaintext: ChatMessage.decryptPlaceholder);
     }
     return _finalizeDecryptedMedia(conversation.id, dec);
+  }
+
+  /// Signal PreKey 消息只能解密一次；二次解密失败时回退到已落盘明文。
+  Future<ChatMessage> _decryptMessageOrRecover(
+    ConversationItem conv,
+    ChatMessage base,
+  ) async {
+    final dec =
+        await (await ensureCryptoReady()).decryptMessage(conv, base);
+    if (!ChatMessage.isDecryptFailure(dec.plaintext)) return dec;
+    final recovered = await _resolvePlaintext(conv.id, base.id);
+    if (recovered != null && _isUsableMediaPlaintext(base.type, recovered)) {
+      return base.copyWith(plaintext: recovered);
+    }
+    return dec;
   }
 
   Future<String?> _resolvePlaintext(
@@ -1781,10 +1796,31 @@ class AuthService {
         }
         continue;
       }
+      if (ChatMessage.isDecryptFailure(msg.plaintext)) {
+        final recovered = await _resolvePlaintext(
+          conversation.id,
+          msg.id,
+          thread: out,
+        );
+        if (recovered != null &&
+            _isUsableMediaPlaintext(msg.type, recovered)) {
+          out.add(msg.copyWith(plaintext: recovered));
+          continue;
+        }
+      }
       if (msg.plaintext != null &&
           msg.plaintext!.isNotEmpty &&
           !await messagePlaintextNeedsRepair(msg)) {
         out.add(msg);
+        continue;
+      }
+      final preResolved = await _resolvePlaintext(
+        conversation.id,
+        msg.id,
+        thread: out,
+      );
+      if (preResolved != null && _isUsableMediaPlaintext(msg.type, preResolved)) {
+        out.add(msg.copyWith(plaintext: preResolved));
         continue;
       }
       try {
@@ -1795,6 +1831,14 @@ class AuthService {
     }
     unawaited(_cacheDecryptedResults(conversation.id, out));
     return out;
+  }
+
+  /// 仅合并已解密明文，避免 [cacheMessages] 全量替换时抹掉历史缓存。
+  Future<void> cacheDecryptedMessages(
+    String conversationId,
+    List<ChatMessage> messages,
+  ) async {
+    await _cacheDecryptedResults(conversationId, messages);
   }
 
   /// 仅解密群公告（不触碰整段聊天记录）。

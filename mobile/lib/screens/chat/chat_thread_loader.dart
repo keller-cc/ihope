@@ -42,11 +42,17 @@ class ChatThreadLoader {
         byId[cached.id] = cached;
       } else {
         final pt = cached.plaintext;
+        final rpt = remote.plaintext;
+        final remoteBad = rpt == null ||
+            rpt.isEmpty ||
+            ChatMessage.isDecryptPlaceholder(rpt) ||
+            ChatMessage.isDecryptFailure(rpt);
         if (pt != null &&
             pt.isNotEmpty &&
             !ChatMessage.isDecryptPlaceholder(pt) &&
             !ChatMessage.isDecryptFailure(pt) &&
-            _shouldPreferCachedPlaintext(remote.type, pt)) {
+            _shouldPreferCachedPlaintext(remote.type, pt) &&
+            remoteBad) {
           byId[cached.id] = remote.copyWith(plaintext: pt);
         }
       }
@@ -122,9 +128,8 @@ class ChatThreadLoader {
   }
 
   Future<void> cacheIfReady(List<ChatMessage> messages) async {
-    final cacheable = messages.where((m) => m.isCacheable).toList();
-    if (cacheable.isEmpty) return;
-    await auth.cacheMessages(conversation.id, cacheable);
+    if (messages.isEmpty) return;
+    await auth.cacheDecryptedMessages(conversation.id, messages);
   }
 
   void cacheMessageIfReady(List<ChatMessage> messages, ChatMessage msg) {
@@ -136,10 +141,7 @@ class ChatThreadLoader {
         ChatMessage.isDecryptFailure(pt)) {
       return;
     }
-    auth.cacheMessages(
-      conversation.id,
-      messages.where((m) => m.isCacheable).toList(),
-    );
+    unawaited(auth.cacheDecryptedMessages(conversation.id, [msg]));
   }
 
   /// 保留本机未送达的乐观消息，以及尚未出现在 [fresh] 中的已发送消息

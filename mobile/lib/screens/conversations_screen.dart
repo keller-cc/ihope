@@ -964,6 +964,7 @@ class _ConversationsScreenState extends State<ConversationsScreen>
       return;
     }
     await _reloadMessageCache(conv.id);
+    await _refreshPreviewFor(conv.id);
     await _refreshUnreadCounts();
     await _refreshPinOrder();
   }
