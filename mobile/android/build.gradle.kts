@@ -1,9 +1,27 @@
-import com.android.build.gradle.BaseExtension
+import com.android.build.api.dsl.CommonExtension
 import org.gradle.api.tasks.Exec
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.tasks.KotlinJvmCompile
 
-apply(from = "maven_repositories.gradle.kts")
+/** GitHub Actions / CI 不使用阿里云镜像（海外 runner 易 502）。 */
+fun cnMavenMirrorEnabled(): Boolean {
+    if (System.getenv("CI") == "true" || System.getenv("GITHUB_ACTIONS") == "true") {
+        return false
+    }
+    val local = java.util.Properties()
+    rootProject.file("local.properties").takeIf { it.isFile }?.inputStream()?.use {
+        local.load(it)
+    }
+    when (local.getProperty("useCnMavenMirror")?.lowercase()) {
+        "false", "0" -> return false
+        "true", "1" -> return true
+    }
+    val gradle = java.util.Properties()
+    rootProject.file("gradle.properties").takeIf { it.isFile }?.inputStream()?.use {
+        gradle.load(it)
+    }
+    return gradle.getProperty("useCnMavenMirror", "false") != "false"
+}
 
 // MSYS2/Mingw 在 PATH 里会让 CMake 误用主机 GCC，导致 NDK 编译失败
 fun ndkSafePath(): String =
@@ -21,7 +39,12 @@ fun ndkSafePath(): String =
 
 allprojects {
     repositories {
-        configureIhopeRepositories(cnMavenMirrorEnabled(rootProject))
+        if (cnMavenMirrorEnabled()) {
+            maven { url = uri("https://maven.aliyun.com/repository/google") }
+            maven { url = uri("https://maven.aliyun.com/repository/public") }
+        }
+        google()
+        mavenCentral()
     }
     tasks.withType<Exec>().configureEach {
         environment("PATH", ndkSafePath())
@@ -31,9 +54,8 @@ allprojects {
 // 部分 Flutter 插件仍声明 Java 8，在新 JDK 下会打印「源值 8 已过时」警告
 subprojects {
     afterEvaluate {
-        extensions.findByType(BaseExtension::class.java)?.apply {
-            @Suppress("DEPRECATION")
-            compileSdkVersion(36)
+        extensions.findByType(CommonExtension::class.java)?.apply {
+            compileSdk = 36
             compileOptions {
                 sourceCompatibility = JavaVersion.VERSION_21
                 targetCompatibility = JavaVersion.VERSION_21
