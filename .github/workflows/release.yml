@@ -31,10 +31,29 @@ jobs:
           distribution: temurin
           java-version: "21"
 
+      # 预装 Android cmdline-tools / sdkmanager（避免 Gradle 构建时在线拉 CMake 偶发 zip 损坏）
+      - uses: android-actions/setup-android@v3
+
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
           cache: true
+
+      - name: Install CMake (retry corrupted SDK downloads)
+        run: |
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+          pkg="cmake;3.22.1"
+          for attempt in 1 2 3 4 5; do
+            rm -rf "${ANDROID_HOME}/.temp" "${ANDROID_HOME}/cmake/3.22.1" 2>/dev/null || true
+            if sdkmanager --install "$pkg"; then
+              echo "Installed $pkg on attempt $attempt"
+              exit 0
+            fi
+            echo "sdkmanager attempt $attempt failed; retrying in 20s..."
+            sleep 20
+          done
+          echo "::error::Failed to install $pkg after 5 attempts"
+          exit 1
 
       - name: Configure production API
         run: |
