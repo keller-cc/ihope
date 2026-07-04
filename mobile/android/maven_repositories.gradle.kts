@@ -20,7 +20,7 @@ fun cnMavenMirrorEnabled(rootDir: java.io.File): Boolean {
     rootDir.resolve("gradle.properties").takeIf { it.isFile }?.inputStream()?.use {
         gradle.load(it)
     }
-    return gradle.getProperty("useCnMavenMirror", "true") != "false"
+    return gradle.getProperty("useCnMavenMirror", "false") != "false"
 }
 
 fun cnMavenMirrorEnabled(settings: Settings): Boolean =

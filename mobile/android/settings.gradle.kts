@@ -1,5 +1,3 @@
-apply(from = "maven_repositories.gradle.kts")
-
 pluginManagement {
     val flutterSdkPath =
         run {
@@ -12,8 +10,36 @@ pluginManagement {
 
     includeBuild("$flutterSdkPath/packages/flutter_tools/gradle")
 
+    // pluginManagement 先于 apply(from=...) 求值，仓库须内联配置（CI 禁用阿里云镜像）
     repositories {
-        configureIhopePluginRepositories(cnMavenMirrorEnabled(settings))
+        val useCnMirror =
+            System.getenv("CI") != "true" &&
+                System.getenv("GITHUB_ACTIONS") != "true" &&
+                run {
+                    val local = java.util.Properties()
+                    file("local.properties").takeIf { it.isFile }?.inputStream()?.use {
+                        local.load(it)
+                    }
+                    when (local.getProperty("useCnMavenMirror")?.lowercase()) {
+                        "false", "0" -> false
+                        "true", "1" -> true
+                        else -> {
+                            val gradle = java.util.Properties()
+                            file("gradle.properties").takeIf { it.isFile }?.inputStream()?.use {
+                                gradle.load(it)
+                            }
+                            gradle.getProperty("useCnMavenMirror", "false") != "false"
+                        }
+                    }
+                }
+        if (useCnMirror) {
+            maven { url = uri("https://maven.aliyun.com/repository/google") }
+            maven { url = uri("https://maven.aliyun.com/repository/public") }
+            maven { url = uri("https://maven.aliyun.com/repository/gradle-plugin") }
+        }
+        google()
+        mavenCentral()
+        gradlePluginPortal()
     }
 }
 
