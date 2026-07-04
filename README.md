@@ -17,7 +17,7 @@
 | [GitHub Releases](https://github.com/keller-cc/ihope/releases) | CI 构建 domestic APK（仓库 Secret `API_BASE`） |
 | [推送配置](docs/推送配置指南.md) | 后台通知、极光/FCM、应用内横幅 |
 | [无备案国内部署](docs/无备案国内部署指南.md) | 香港 VPS + 域名 + HTTPS |
-| [Cloudflare Tunnel 本地穿透](docs/cloudflared本地隧道.md) | 本机 + `docs/cloudflared.exe` + Tunnel |
+| [Cloudflare Tunnel 本地穿透](deploy/cloudflared/README.md) | `deploy/cloudflared/`（含 `cloudflared.exe`） |
 | [需求规格](docs/需求规格说明书.md) | 完整需求 |
 
 ## 快速开始

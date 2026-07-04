@@ -1,0 +1,11 @@
+# Cloudflare Tunnel 配置模板
+# 用法：copy config.yml.example config.yml 后按注释修改
+# credentials JSON 勿提交 Git，见 deploy/cloudflared/README.md
+
+tunnel: mytunnel
+credentials-file: .cloudflared/mytunnel.json
+
+ingress:
+  - hostname: im.cplprince.top
+    service: http://127.0.0.1:8080
+  - service: http_status:404

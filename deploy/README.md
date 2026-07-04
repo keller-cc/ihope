@@ -14,6 +14,11 @@
 ```
 deploy/
 ├── README.md                 # 本说明
+├── cloudflared/              # Cloudflare Tunnel（Windows 本地穿透）
+│   ├── README.md
+│   ├── cloudflared.exe       # 已纳入 Git
+│   ├── config.yml
+│   └── .cloudflared/         # 凭证 JSON（勿提交）
 ├── docker-compose.dev.yml    # 本地开发：只启动 PostgreSQL
 ├── docker-compose.yml        # 生产：postgres + backend + nginx
 ├── nginx.conf                # 生产 Nginx 反代（REST + WebSocket）
@@ -30,6 +35,7 @@ deploy/
 | `docker-compose.yml` | 是 | 生产编排 |
 | `nginx.conf` | 是 | 生产反代配置（HTTP 80） |
 | `nginx-ssl.conf.example` | 是 | HTTPS 443 模板，复制后改域名与证书路径 |
+| `cloudflared/` | 部分 | Tunnel 客户端与配置；`.cloudflared/*.json` 勿提交 |
 | `.env` | 否 | 从项目根 `.env.example` 复制 |
 | `data/postgres/` | 否 | dev 卷数据，删目录 = 重置库 |
 
@@ -46,6 +52,13 @@ ADMIN_SECRET=your-long-random-dev-secret
 ```
 
 管理页输入同一密钥即可，**无需 App 用户账号**。详见 [`admin/README.md`](../admin/README.md)。
+
+**Cloudflare Tunnel 内测**（域名 `im.cplprince.top`）时，管理页与 health 走公网：
+
+- `http://im.cplprince.top/admin/`
+- `http://im.cplprince.top/api/health`
+
+`deploy/.env` 需设 `APP_PUBLIC_URL=http://im.cplprince.top`、`CORS_ALLOW_ORIGIN=http://im.cplprince.top`。详见 [cloudflared/README.md](./cloudflared/README.md)。
 
 会话相关（`deploy/.env`）：
 

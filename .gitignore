@@ -62,6 +62,6 @@ uploads/
 coverage/
 *.coverprofile
 
-# Cloudflare Tunnel 本地凭证与个人配置（docs/cloudflared.exe 由 *.exe 忽略）
-docs/config.yml
-docs/.cloudflared/
+# Cloudflare Tunnel：凭证勿提交；cloudflared.exe 例外可提交
+deploy/cloudflared/.cloudflared/
+!deploy/cloudflared/cloudflared.exe

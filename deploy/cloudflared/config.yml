@@ -1,0 +1,8 @@
+tunnel: mytunnel
+# 相对路径相对于本 config.yml 所在目录（deploy/cloudflared/）
+credentials-file: .cloudflared/mytunnel.json
+
+ingress:
+  - hostname: im.cplprince.top
+    service: http://127.0.0.1:8080
+  - service: http_status:404

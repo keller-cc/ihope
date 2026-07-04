@@ -38,6 +38,7 @@ flutter pub get
 | Android 模拟器 | `http://10.0.2.2:8080` |
 | Windows / iOS 模拟器 | `http://localhost:8080` |
 | 真机（同 WiFi） | `http://<电脑局域网IP>:8080` |
+| Cloudflare Tunnel | `http://im.cplprince.top`（App 内 **个人资料 → 服务器** 或 `prod.json`） |
 
 **App 内可改**：登录页 →「服务器：…」/ 个人资料 → **服务器**（保存后需重新登录）。
 
@@ -95,7 +96,7 @@ flutter run --flavor global --dart-define-from-file=config/global.json
 ```powershell
 cd D:\IHope\mobile
 copy config\prod.json.example config\prod.json
-# 编辑 prod.json：API_BASE 设为 https://你的域名
+# 编辑 prod.json：Tunnel 内测 http://im.cplprince.top；VPS 上线后 https://im.cplprince.top
 ```
 
 2. 打 release 包（国内 / 海外 flavor）：
@@ -103,7 +104,8 @@ copy config\prod.json.example config\prod.json
 ```powershell
 .\scripts\build-release.ps1                    # domestic + global
 .\scripts\build-release.ps1 -Flavor domestic   # 仅国内
-.\scripts\build-release.ps1 -ApiBase "https://im.example.com"  # 覆盖 prod.json
+.\scripts\build-release.ps1 -ApiBase "http://im.cplprince.top"  # Tunnel 内测（HTTP）
+.\scripts\build-release.ps1 -ApiBase "https://im.cplprince.top"  # VPS + HTTPS
 ```
 
 输出：`build\app\outputs\flutter-apk\app-<flavor>-release.apk`。
@@ -116,7 +118,7 @@ copy config\prod.json.example config\prod.json
 
 无需本地 Android SDK，在 GitHub 上构建并发布到 **Releases**：
 
-1. 仓库 **Settings → Secrets → Actions** 添加 **`API_BASE`**（与 `prod.json` 相同，如 `https://im.example.com`）
+1. 仓库 **Settings → Secrets → Actions** 添加 **`API_BASE`**（Tunnel 内测：`http://im.cplprince.top`；正式：`https://im.cplprince.top`）
 2. **Actions → Release APK → Run workflow**，分支选 **main**，Tag 填 `v2026-07-04-0.1.0`（或已有 tag）
 3. 成功后到 [GitHub Releases](https://github.com/keller-cc/ihope/releases) 下载 `app-domestic-release.apk`
 
