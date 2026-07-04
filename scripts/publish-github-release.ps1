@@ -1,7 +1,7 @@
 # 将已构建的 domestic release APK 上传到 GitHub Release（需 gh CLI 或 GITHUB_TOKEN）。
 # 用法：
-#   .\scripts\publish-github-release.ps1 -Tag v2026-07-04-0.1.0
-#   $env:GITHUB_TOKEN = "ghp_..." ; .\scripts\publish-github-release.ps1 -Tag v2026-07-04-0.1.0
+#   .\scripts\publish-github-release.ps1 -Tag v2026-07-04-moses
+#   $env:GITHUB_TOKEN = "ghp_..." ; .\scripts\publish-github-release.ps1 -Tag v2026-07-04-moses
 
 param(
     [Parameter(Mandatory = $true)]
