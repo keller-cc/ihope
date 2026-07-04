@@ -1,0 +1,14 @@
+# Cloudflare Tunnel 配置模板
+# 用法：copy config.yml.example config.yml 后按注释修改
+# credentials JSON 勿提交 Git，见 docs/cloudflared本地隧道.md
+
+tunnel: mytunnel
+# 相对路径相对于本 config.yml 所在目录（docs/）
+credentials-file: .cloudflared/mytunnel.json
+
+ingress:
+  # Cloudflare Zero Trust 里配置的 Public Hostname
+  - hostname: im.example.com
+    # 固定指向 devproxy 或单后端；用 127.0.0.1，勿用 localhost（Windows IPv6 问题）
+    service: http://127.0.0.1:8080
+  - service: http_status:404

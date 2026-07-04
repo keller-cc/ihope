@@ -61,3 +61,7 @@ uploads/
 # 测试与临时
 coverage/
 *.coverprofile
+
+# Cloudflare Tunnel 本地凭证与个人配置（docs/cloudflared.exe 由 *.exe 忽略）
+docs/config.yml
+docs/.cloudflared/
