@@ -12,8 +12,10 @@
 | [API 与 Postman 测试](docs/API与Postman测试指南.md) | 启动、测 API |
 | [后端说明](backend/README.md) | 目录、限流、命令 |
 | [Windows 开发环境](docs/Windows开发环境.md) | 目录布局、启动、排错 |
-| [移动端](mobile/README.md) | Flutter API 地址、双模拟器 |
+| [移动端](mobile/README.md) | Flutter API 地址、双模拟器、GitHub Release |
 | [开发指南](docs/开发指南.md) | 分阶段路线 |
+| [GitHub Releases](https://github.com/keller-cc/ihope/releases) | CI 构建 domestic APK（仓库 Secret `API_BASE`） |
+| [推送配置](docs/推送配置指南.md) | 后台通知、极光/FCM、应用内横幅 |
 | [需求规格](docs/需求规格说明书.md) | 完整需求 |
 
 ## 快速开始

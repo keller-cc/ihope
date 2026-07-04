@@ -125,7 +125,7 @@ flutter run --flavor domestic -d emulator-5556
 
 成功一次后 `.dart_tool/hooks_runner/sqlite3/` 会缓存，后续可不再下载。
 
-**Gradle 下载超时** — 项目已配国内镜像；仍失败时删 `%USERPROFILE%\.gradle\wrapper\dists\` 下对应版本目录后 `flutter clean && flutter pub get`。
+**Gradle 下载超时** — 在 `mobile/android/local.properties`（勿提交 git）增加 `useCnMavenMirror=true` 启用阿里云 Maven 镜像；仍失败时删 `%USERPROFILE%\.gradle\wrapper\dists\` 下对应版本目录后 `flutter clean && flutter pub get`。GitHub Actions / CI 固定 `ORG_GRADLE_PROJECT_useCnMavenMirror=false`，不走国内镜像。
 
 **Kotlin 缓存损坏**（`incremental caches` 等）：
 

@@ -254,11 +254,17 @@ class _ChatScreenState extends State<ChatScreen> {
       if (_isStale(epoch)) return;
       final list = await _thread.resolve(cached: cached, fetchRemote: true);
       if (_isStale(epoch) || !mounted) return;
+      if (!_scrollCoord.tailPinned) {
+        _scrollCoord.beginScrollLockForTailInsert();
+      }
       setState(
         () => _messages = ChatThreadLoader.preserveLocalOutgoing(list, _messages),
       );
       final me = widget.auth.currentUser;
       if (me != null) _scrollCoord.bindThread(_messages, me.id);
+      if (!_scrollCoord.tailPinned) {
+        _scrollCoord.endScrollLockAfterTailInsert();
+      }
       unawaited(_thread.cacheIfReady(_messages));
     } catch (_) {}
   }
@@ -456,7 +462,6 @@ class _ChatScreenState extends State<ChatScreen> {
     final fromPeer = me == null || materialized.senderId != me.id;
     final atBottom = _scrollCoord.isAtBottom;
     if (!atBottom) {
-      // TODO(scroll-lock): 浏览历史时尾部插入仍会顶掉视口，待后续实现。
       _scrollCoord.beginScrollLockForTailInsert();
     }
 

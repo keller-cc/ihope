@@ -273,5 +273,73 @@ void main() {
 
       expect(coord.unreadDividerIndex, isNull);
     });
+
+    testWidgets('scroll lock preserves pixels when tail grows in reverse list',
+        (tester) async {
+      final scroll = ScrollController();
+      final messages = ValueNotifier<List<String>>(
+        List.generate(20, (i) => 'msg-$i'),
+      );
+      var changed = 0;
+      final coord = ChatScrollCoordinator(
+        scrollController: scroll,
+        onChanged: () => changed++,
+        isMounted: () => true,
+        onReachedBottom: () {},
+      );
+      coord.attach();
+      addTearDown(() {
+        coord.detach();
+        scroll.dispose();
+        messages.dispose();
+      });
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: ValueListenableBuilder<List<String>>(
+              valueListenable: messages,
+              builder: (context, items, _) {
+                // ignore: unused_local_variable
+                final _ = changed;
+                return CustomScrollView(
+                  reverse: true,
+                  controller: scroll,
+                  slivers: [
+                    SliverList(
+                      delegate: SliverChildBuilderDelegate(
+                        (context, index) {
+                          final msgIndex = items.length - 1 - index;
+                          return SizedBox(
+                            height: 48,
+                            child: Text(items[msgIndex]),
+                          );
+                        },
+                        childCount: items.length,
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.drag(find.byType(CustomScrollView), const Offset(0, -120));
+      await tester.pumpAndSettle();
+
+      coord.tailPinned = false;
+      final before = scroll.position.pixels;
+
+      coord.beginScrollLockForTailInsert();
+      messages.value = [...messages.value, 'msg-new'];
+      await tester.pump();
+      coord.endScrollLockAfterTailInsert();
+      await tester.pumpAndSettle();
+
+      expect(scroll.position.pixels, closeTo(before, 1.0));
+    });
   });
 }

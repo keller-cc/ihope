@@ -66,11 +66,13 @@ flutter run --flavor domestic --dart-define-from-file=config/domestic.json
 
 类似 QQ 的分层：
 
-1. **前台聊天**：WebSocket，当前会话不弹横幅  
-2. **后台进程存活**：前台服务保 WebSocket + **本地系统通知**（无需第三方）  
+1. **前台聊天**：WebSocket 实时；不在当前会话时，App 顶部 **应用内横幅**（回到首页可见，不经系统通知栏）  
+2. **后台进程存活**：前台服务保 WebSocket + **系统栏本地通知**（无需第三方）  
 3. **App 被系统杀掉**：**FCM**（海外 `global`）；国内离线兜底 **暂不含极光**（见下）
 
-用户在 **个人资料 → 通知** 开启并授权后，**零第三方配置** 即可测第 2 层。
+用户在 **个人资料 → 通知** 开启并授权后，**零第三方配置** 即可测第 2 层。登录后 WebSocket 监听同时驱动 **应用内顶部横幅**（前台）与后台系统通知。
+
+**真机建议**：除开启通知外，将 IHope 加入系统 **电池优化白名单 / 允许后台运行**，否则进程易被杀死，只能依赖 FCM/极光离线推送。
 
 ```powershell
 # 国内 Android（包名 .cn；离线极光暂不可用）
@@ -109,6 +111,28 @@ copy config\prod.json.example config\prod.json
 **Android 网络安全：** release 且 `API_BASE` 为 `https://` 时禁止明文 HTTP；debug 始终允许；release 若 `--dart-define=API_BASE=http://...` 则允许 HTTP（局域网联调包）。
 
 上传到服务器：见 [deploy/README.md](../deploy/README.md)「发布 APK」。
+
+### GitHub Actions 发布
+
+无需本地 Android SDK，在 GitHub 上构建并发布到 **Releases**：
+
+1. 仓库 **Settings → Secrets → Actions** 添加 **`API_BASE`**（与 `prod.json` 相同，如 `https://im.example.com`）
+2. **Actions → Release APK → Run workflow**，分支选 **main**，Tag 填 `v2026-07-04-0.1.0`（或已有 tag）
+3. 成功后到 [GitHub Releases](https://github.com/keller-cc/ihope/releases) 下载 `app-domestic-release.apk`
+
+推送 `v*` tag 也会自动触发；工作流（`softprops/action-gh-release`）始终从 **main** 最新代码构建 domestic APK（避免旧 tag 缺少 CI 修复）。
+
+无 `gh` CLI 时，可用根目录 `scripts/publish-github-release.ps1` 手动上传本地 APK（需 `GITHUB_TOKEN`）。
+
+### Gradle 国内镜像（仅本地）
+
+在 `mobile/android/local.properties`（勿提交 git）增加：
+
+```properties
+useCnMavenMirror=true
+```
+
+国内 Gradle 下载慢或 Aliyun 502 时可启用。**GitHub Actions / CI** 固定 `ORG_GRADLE_PROJECT_useCnMavenMirror=false`，不走国内镜像。
 
 ## 双模拟器联调
 

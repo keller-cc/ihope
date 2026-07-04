@@ -53,6 +53,11 @@ class ChatScrollCoordinator {
   bool _suppressScrollHandling = false;
   final _messageItemKeys = <String, GlobalKey>{};
 
+  /// 浏览历史时尾部插入新消息：记录插入前滚动位置，布局后补偿 extent 增量。
+  double? _scrollLockPixels;
+  double? _scrollLockMaxExtent;
+  double? _scrollLockMinExtent;
+
   List<ChatMessage> _threadMessages = const [];
   String? _meId;
   bool _enterUnreadIdsInitialized = false;
@@ -78,6 +83,7 @@ class ChatScrollCoordinator {
     scrollController.removeListener(_onScroll);
     _focusTimer?.cancel();
     _cancelArrowTimers();
+    _clearScrollLock();
     _unreadSessionActive = false;
   }
 
@@ -559,10 +565,50 @@ class ChatScrollCoordinator {
     WidgetsBinding.instance.addPostFrameCallback((_) => once());
   }
 
-  // TODO(scroll-lock): reverse 列表尾部插入仍会顶掉视口，待后续实现。
-  void beginScrollLockForTailInsert() {}
+  /// reverse 列表尾部插入时保持视口锚点（用户正在浏览历史）。
+  void beginScrollLockForTailInsert() {
+    if (tailPinned || !scrollController.hasClients) return;
+    final pos = scrollController.position;
+    _scrollLockPixels = pos.pixels;
+    _scrollLockMaxExtent = pos.maxScrollExtent;
+    _scrollLockMinExtent = pos.minScrollExtent;
+  }
 
-  void endScrollLockAfterTailInsert() {}
+  void endScrollLockAfterTailInsert() {
+    if (_scrollLockPixels == null) return;
+    void once() {
+      if (!scrollController.hasClients) {
+        _clearScrollLock();
+        return;
+      }
+      final pos = scrollController.position;
+      final locked = _scrollLockPixels!;
+      final maxDelta = pos.maxScrollExtent - (_scrollLockMaxExtent ?? pos.maxScrollExtent);
+      final minDelta = pos.minScrollExtent - (_scrollLockMinExtent ?? pos.minScrollExtent);
+      // reverse 列表尾部插入常改 minScrollExtent；正向改 maxScrollExtent。
+      var target = locked - minDelta + maxDelta;
+      if ((pos.pixels - locked).abs() > 0.5 && maxDelta.abs() < 0.5 && minDelta.abs() < 0.5) {
+        target = locked;
+      }
+      if ((pos.pixels - target).abs() > 0.5) {
+        _suppressScrollHandling = true;
+        try {
+          pos.jumpTo(target.clamp(pos.minScrollExtent, pos.maxScrollExtent));
+        } catch (_) {
+          // position may be disposed between frame and callback
+        }
+        _suppressScrollHandling = false;
+      }
+      _clearScrollLock();
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) => once());
+  }
+
+  void _clearScrollLock() {
+    _scrollLockPixels = null;
+    _scrollLockMaxExtent = null;
+    _scrollLockMinExtent = null;
+  }
 
   void stickToTailIfPinned() {
     if (!tailPinned) return;
