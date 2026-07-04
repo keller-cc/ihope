@@ -68,6 +68,7 @@ class _ChatScreenState extends State<ChatScreen> {
   Set<String> _announcementReadIds = {};
   final Set<String> _dismissedAnnouncementBannerIds = {};
   String? _pendingFocusMessageId;
+  bool _popInProgress = false;
 
   bool get _isGroup => _conversation.type == 'group';
 
@@ -734,15 +735,20 @@ class _ChatScreenState extends State<ChatScreen> {
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, _) async {
-        if (didPop || !mounted) return;
-        if (!isArchived && _messages.isNotEmpty) {
-          await widget.auth.markConversationRead(
-            _conversation.id,
-            upTo: _messages.last.createdAt,
-          );
+        if (didPop || !mounted || _popInProgress) return;
+        _popInProgress = true;
+        try {
+          if (!isArchived && _messages.isNotEmpty) {
+            await widget.auth.markConversationRead(
+              _conversation.id,
+              upTo: _messages.last.createdAt,
+            );
+          }
+          if (!mounted) return;
+          Navigator.of(context).pop(isArchived ? 'left' : null);
+        } finally {
+          _popInProgress = false;
         }
-        if (!mounted) return;
-        Navigator.of(context).pop(isArchived ? 'left' : null);
       },
       child: Scaffold(
         appBar: ChatAppBar(

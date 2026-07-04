@@ -924,6 +924,7 @@ class _ConversationsScreenState extends State<ConversationsScreen>
     }
     final result = await Navigator.of(context).push<Object?>(
       appPageRoute(
+        wrapNavigationPopScope: false,
         builder: (_) => ChatScreen(
           auth: widget.auth,
           conversation: item,

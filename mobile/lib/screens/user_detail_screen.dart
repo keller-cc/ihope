@@ -40,6 +40,7 @@ class UserDetailScreen extends StatelessWidget {
       if (!context.mounted) return;
       await Navigator.of(context).pushReplacement(
         appPageRoute(
+          wrapNavigationPopScope: false,
           builder: (_) => ChatScreen(auth: auth, conversation: conv),
         ),
       );
