@@ -13,6 +13,7 @@ import '../utils/media_payload.dart';
 import '../utils/message_time.dart';
 import '../widgets/home_connection_status.dart';
 import '../widgets/offline_banner.dart';
+import '../widgets/conversation_action_bubbles.dart';
 import '../widgets/swipe_action_tile.dart';
 import '../widgets/user_avatar.dart';
 import '../widgets/app_page_route.dart';
@@ -676,63 +677,57 @@ class _ConversationsScreenState extends State<ConversationsScreen>
     bool isPinned, {
     Offset? anchor,
   }) async {
-    final overlay =
-        Overlay.of(context).context.findRenderObject() as RenderBox;
-    final Offset menuAnchor;
-    if (anchor != null) {
-      menuAnchor = anchor;
-    } else {
-      final box = context.findRenderObject() as RenderBox?;
-      if (box == null || !box.hasSize) return;
-      menuAnchor = box.localToGlobal(box.size.center(Offset.zero));
-    }
-    final position = RelativeRect.fromRect(
-      Rect.fromCenter(center: menuAnchor, width: 0, height: 0),
-      Offset.zero & overlay.size,
+    final overlay = Overlay.of(context, rootOverlay: true);
+    final box = context.findRenderObject() as RenderBox?;
+    if (box == null || !box.hasSize) return;
+
+    final tileRect = box.localToGlobal(Offset.zero) & box.size;
+    final top = (tileRect.top - 52).clamp(
+      MediaQuery.paddingOf(context).top + 8,
+      tileRect.top - 8,
     );
 
-    final action = await showMenu<String>(
-      context: context,
-      position: position,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      items: [
-        PopupMenuItem(
-          value: 'pin',
-          child: _menuRow(
-            isPinned ? Icons.push_pin_outlined : Icons.push_pin,
-            isPinned ? '取消置顶' : '置顶',
+    late OverlayEntry entry;
+    void dismiss() {
+      entry.remove();
+    }
+
+    entry = OverlayEntry(
+      builder: (ctx) => Stack(
+        children: [
+          Positioned.fill(
+            child: GestureDetector(
+              onTap: dismiss,
+              behavior: HitTestBehavior.opaque,
+              child: const ColoredBox(color: Color(0x1A000000)),
+            ),
           ),
-        ),
-        PopupMenuItem(
-          value: 'read',
-          child: _menuRow(Icons.done_all, '标记已读'),
-        ),
-        PopupMenuItem(
-          value: 'delete',
-          child: _menuRow(Icons.delete_outline, '删除', color: Colors.red),
-        ),
-      ],
+          Positioned(
+            left: 0,
+            right: 0,
+            top: top,
+            child: Center(
+              child: ConversationActionBubbles(
+                isPinned: isPinned,
+                onPin: () {
+                  dismiss();
+                  unawaited(_pinConversation(item, !isPinned));
+                },
+                onRead: () {
+                  dismiss();
+                  unawaited(_markConversationRead(item));
+                },
+                onDelete: () {
+                  dismiss();
+                  unawaited(_deleteConversation(item));
+                },
+              ),
+            ),
+          ),
+        ],
+      ),
     );
-    if (!mounted || action == null) return;
-    switch (action) {
-      case 'pin':
-        await _pinConversation(item, !isPinned);
-      case 'read':
-        await _markConversationRead(item);
-      case 'delete':
-        await _deleteConversation(item);
-    }
-  }
-
-  Widget _menuRow(IconData icon, String label, {Color? color}) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(icon, size: 20, color: color),
-        const SizedBox(width: 12),
-        Text(label, style: color != null ? TextStyle(color: color) : null),
-      ],
-    );
+    overlay.insert(entry);
   }
 
   Future<void> _deleteConversation(ConversationItem item) async {
@@ -1314,13 +1309,11 @@ class _ConversationsScreenState extends State<ConversationsScreen>
                                   ),
                                   actions: [
                                     SwipeAction(
-                                      icon: isPinned
-                                          ? Icons.push_pin_outlined
-                                          : Icons.push_pin,
-                                      label: isPinned ? '取消' : '置顶',
-                                      color: Colors.orange,
+                                      icon: Icons.delete_outline,
+                                      label: '删除',
+                                      color: Colors.red,
                                       onTap: () => unawaited(
-                                        _pinConversation(item, !isPinned),
+                                        _deleteConversation(item),
                                       ),
                                     ),
                                     SwipeAction(
@@ -1332,11 +1325,13 @@ class _ConversationsScreenState extends State<ConversationsScreen>
                                       ),
                                     ),
                                     SwipeAction(
-                                      icon: Icons.delete_outline,
-                                      label: '删除',
-                                      color: Colors.red,
+                                      icon: isPinned
+                                          ? Icons.push_pin_outlined
+                                          : Icons.push_pin,
+                                      label: isPinned ? '取消' : '置顶',
+                                      color: Colors.orange,
                                       onTap: () => unawaited(
-                                        _deleteConversation(item),
+                                        _pinConversation(item, !isPinned),
                                       ),
                                     ),
                                   ],

@@ -1,21 +1,7 @@
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
-class SwipeAction {
-  const SwipeAction({
-    required this.icon,
-    required this.label,
-    required this.color,
-    required this.onTap,
-  });
-
-  final IconData icon;
-  final String label;
-  final Color color;
-  final VoidCallback onTap;
-}
-
-/// 左滑露出操作按钮（纯本地交互，无额外依赖）。
+/// 左滑露出操作气泡（置顶 → 已读 → 删除 依次露出）。
 class SwipeActionTile extends StatefulWidget {
   const SwipeActionTile({
     super.key,
@@ -32,13 +18,29 @@ class SwipeActionTile extends StatefulWidget {
   State<SwipeActionTile> createState() => _SwipeActionTileState();
 }
 
+class SwipeAction {
+  const SwipeAction({
+    required this.icon,
+    required this.label,
+    required this.color,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String label;
+  final Color color;
+  final VoidCallback onTap;
+}
+
 class _SwipeActionTileState extends State<SwipeActionTile> {
   double _offset = 0;
-  static const _actionWidth = 72.0;
+  static const _bubbleWidth = 76.0;
+  static const _bubbleTop = 10.0;
 
-  double get _maxOffset => widget.actions.length * _actionWidth;
+  /// 右端先露出：actions 中靠前项在左侧，靠后项贴会话行右缘。
+  double get _maxOffset => widget.actions.length * _bubbleWidth;
 
-  bool get _isOpen => _offset <= -_actionWidth * 0.5;
+  bool get _isOpen => _offset <= -_bubbleWidth * 0.5;
 
   void _close() {
     if (_offset == 0) return;
@@ -61,22 +63,36 @@ class _SwipeActionTileState extends State<SwipeActionTile> {
     setState(() => _offset = open ? -_maxOffset : 0);
   }
 
-  Widget _buildActionButton(SwipeAction action) {
-    return Expanded(
-      child: Material(
-        color: action.color,
-        child: InkWell(
-          onTap: () => _runAction(action),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(action.icon, color: Colors.white, size: 22),
-              const SizedBox(height: 4),
-              Text(
-                action.label,
-                style: const TextStyle(color: Colors.white, fontSize: 11),
+  Widget _buildBubble(SwipeAction action) {
+    return SizedBox(
+      width: _bubbleWidth,
+      child: Center(
+        child: Material(
+          color: action.color,
+          elevation: 2,
+          shadowColor: Colors.black26,
+          borderRadius: BorderRadius.circular(20),
+          clipBehavior: Clip.antiAlias,
+          child: InkWell(
+            onTap: () => _runAction(action),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(action.icon, color: Colors.white, size: 18),
+                  const SizedBox(height: 2),
+                  Text(
+                    action.label,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
               ),
-            ],
+            ),
           ),
         ),
       ),
@@ -93,15 +109,12 @@ class _SwipeActionTileState extends State<SwipeActionTile> {
         children: [
           Positioned(
             right: 0,
-            top: 0,
-            bottom: 0,
+            top: _bubbleTop,
             width: _maxOffset,
             child: Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: widget.actions.map(_buildActionButton).toList(),
+              children: widget.actions.map(_buildBubble).toList(),
             ),
           ),
-          // 手势层必须在 Transform 内部，否则平移只改视觉位置，整行仍拦截右侧按钮点击。
           Transform.translate(
             offset: Offset(_offset, 0),
             child: RawGestureDetector(

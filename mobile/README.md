@@ -125,6 +125,22 @@ copy config\prod.json.example config\prod.json
 
 无 `gh` CLI 时，可用根目录 `scripts/publish-github-release.ps1` 手动上传本地 APK（需 `GITHUB_TOKEN`）。
 
+### Release 签名（覆盖安装需签名一致）
+
+此前 CI 使用 runner 临时 debug 证书，与本地包签名不同，会导致「应用签名不一致」无法覆盖安装。
+
+1. **生成一次**（在 `mobile/android` 下）：
+   ```powershell
+   .\create-release-keystore.ps1
+   copy key.properties.example key.properties
+   # 编辑 key.properties 填入密码
+   ```
+2. **GitHub Secrets**（CI 与本地用同一份 `ihope-release.jks`）：
+   - `ANDROID_KEYSTORE_BASE64`：`ihope-release.jks` 的 base64
+   - `ANDROID_KEYSTORE_PASSWORD` / `ANDROID_KEY_PASSWORD`
+   - `ANDROID_KEY_ALIAS` = `ihope`
+3. **首次换签名**：需先卸载旧 APK，再安装新包；之后同密钥可正常覆盖更新。
+
 ### Gradle 国内镜像（仅本地）
 
 在 `mobile/android/local.properties`（勿提交 git）增加：
