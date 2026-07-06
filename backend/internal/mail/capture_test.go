@@ -17,4 +17,10 @@ func TestCapturingSender(t *testing.T) {
 	if c.LastTo != "a@b.com" || c.LastResetURL != "http://x?token=t" {
 		t.Fatalf("unexpected capture: %+v", c)
 	}
+	if err := c.SendEmailVerification("a@b.com", "http://x/verify?token=v"); err != nil {
+		t.Fatal(err)
+	}
+	if c.LastVerifyURL != "http://x/verify?token=v" {
+		t.Fatalf("unexpected verify url: %q", c.LastVerifyURL)
+	}
 }

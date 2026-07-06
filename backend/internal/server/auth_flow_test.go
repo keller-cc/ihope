@@ -41,6 +41,7 @@ func TestAuthFlowIntegration(t *testing.T) {
 	if regRec.Code != http.StatusCreated {
 		t.Fatalf("register status = %d body = %s", regRec.Code, regRec.Body.String())
 	}
+	verifyRegisteredEmail(t, handler, regRec)
 
 	// login
 	loginBody := map[string]string{
@@ -101,12 +102,13 @@ func TestResetPasswordFlowIntegration(t *testing.T) {
 	username := fmt.Sprintf("reset_%d", time.Now().UnixNano()%1_000_000_000)
 	deviceID := "reset-device"
 
-	doJSON(t, handler, http.MethodPost, "/api/auth/register", map[string]string{
+	regRec := doJSON(t, handler, http.MethodPost, "/api/auth/register", map[string]string{
 		"email":               email,
 		"username":            username,
 		"password":            "password123",
 		"identity_public_key": testutil.TestIdentityPublicKey,
 	}, "")
+	verifyRegisteredEmail(t, handler, regRec)
 
 	loginRec := doJSON(t, handler, http.MethodPost, "/api/auth/login", map[string]string{
 		"email": email, "password": "password123", "device_id": deviceID, "device_name": "t",
@@ -160,12 +162,13 @@ func TestChangePasswordFlowIntegration(t *testing.T) {
 	deviceID := "change-device"
 	password := "password123"
 
-	doJSON(t, handler, http.MethodPost, "/api/auth/register", map[string]string{
+	regRec := doJSON(t, handler, http.MethodPost, "/api/auth/register", map[string]string{
 		"email":               email,
 		"username":            username,
 		"password":            password,
 		"identity_public_key": testutil.TestIdentityPublicKey,
 	}, "")
+	verifyRegisteredEmail(t, handler, regRec)
 
 	loginRec := doJSON(t, handler, http.MethodPost, "/api/auth/login", map[string]string{
 		"email": email, "password": password, "device_id": deviceID, "device_name": "t",
@@ -219,12 +222,13 @@ func TestRefreshRejectsExpiredIdleTokenIntegration(t *testing.T) {
 	username := fmt.Sprintf("ttl_%d", time.Now().UnixNano()%1_000_000_000)
 	deviceID := "refresh-ttl-device"
 
-	doJSON(t, handler, http.MethodPost, "/api/auth/register", map[string]string{
+	regRec := doJSON(t, handler, http.MethodPost, "/api/auth/register", map[string]string{
 		"email":               email,
 		"username":            username,
 		"password":            "password123",
 		"identity_public_key": testutil.TestIdentityPublicKey,
 	}, "")
+	verifyRegisteredEmail(t, handler, regRec)
 
 	loginRec := doJSON(t, handler, http.MethodPost, "/api/auth/login", map[string]string{
 		"email": email, "password": "password123", "device_id": deviceID, "device_name": "t",
@@ -266,12 +270,13 @@ func TestLogoutClearsRefreshTokenIntegration(t *testing.T) {
 	username := fmt.Sprintf("logout_%d", time.Now().UnixNano()%1_000_000_000)
 	deviceID := "logout-device"
 
-	doJSON(t, handler, http.MethodPost, "/api/auth/register", map[string]string{
+	regRec := doJSON(t, handler, http.MethodPost, "/api/auth/register", map[string]string{
 		"email":               email,
 		"username":            username,
 		"password":            "password123",
 		"identity_public_key": testutil.TestIdentityPublicKey,
 	}, "")
+	verifyRegisteredEmail(t, handler, regRec)
 
 	loginRec := doJSON(t, handler, http.MethodPost, "/api/auth/login", map[string]string{
 		"email": email, "password": "password123", "device_id": deviceID, "device_name": "t",
@@ -317,6 +322,72 @@ func TestUsersMeUnauthorized(t *testing.T) {
 	rec := doJSON(t, handler, http.MethodGet, "/api/users/me", nil, "")
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401", rec.Code)
+	}
+}
+
+func TestEmailVerificationFlowIntegration(t *testing.T) {
+	pool := testutil.OpenPool(t)
+	cfg := testutil.TestConfig()
+	capture := &mail.CapturingSender{}
+
+	userRepo := user.NewRepository(pool)
+	jwtMgr := jwt.NewManager(cfg.JWTSecret, cfg.JWTAccessTTL)
+	authSvc := auth.NewService(cfg, userRepo, jwtMgr, capture)
+	handler := server.New(cfg, auth.NewHandler(authSvc), user.NewHandler(userRepo, cfg), userRepo, jwtMgr, nil, nil, nil, nil, admin.NewHandler(userRepo, nil, 30*24*time.Hour, admin.RuntimeConfigFrom(cfg)), nil, nil).Router()
+
+	email := fmt.Sprintf("verify_%d@example.com", time.Now().UnixNano())
+	username := fmt.Sprintf("verify_%d", time.Now().UnixNano()%1_000_000_000)
+	deviceID := "verify-device"
+
+	regRec := doJSON(t, handler, http.MethodPost, "/api/auth/register", map[string]string{
+		"email":               email,
+		"username":            username,
+		"password":            "password123",
+		"identity_public_key": testutil.TestIdentityPublicKey,
+	}, "")
+	if regRec.Code != http.StatusCreated {
+		t.Fatalf("register status = %d body = %s", regRec.Code, regRec.Body.String())
+	}
+
+	loginBefore := doJSON(t, handler, http.MethodPost, "/api/auth/login", map[string]string{
+		"email": email, "password": "password123", "device_id": deviceID,
+	}, "")
+	if loginBefore.Code != http.StatusForbidden {
+		t.Fatalf("unverified login status = %d, want 403 body=%s", loginBefore.Code, loginBefore.Body.String())
+	}
+
+	token := mail.ExtractTokenFromVerifyURL(capture.LastVerifyURL)
+	if token == "" {
+		t.Fatalf("missing verify token in url %q", capture.LastVerifyURL)
+	}
+
+	verifyRec := doJSON(t, handler, http.MethodPost, "/api/auth/verify-email", map[string]string{"token": token}, "")
+	if verifyRec.Code != http.StatusOK {
+		t.Fatalf("verify status = %d body = %s", verifyRec.Code, verifyRec.Body.String())
+	}
+
+	loginAfter := doJSON(t, handler, http.MethodPost, "/api/auth/login", map[string]string{
+		"email": email, "password": "password123", "device_id": deviceID,
+	}, "")
+	if loginAfter.Code != http.StatusOK {
+		t.Fatalf("verified login status = %d body = %s", loginAfter.Code, loginAfter.Body.String())
+	}
+}
+
+func verifyRegisteredEmail(t *testing.T, handler http.Handler, regRec *httptest.ResponseRecorder) {
+	t.Helper()
+	var resp struct {
+		DevVerifyToken string `json:"dev_verify_token"`
+	}
+	decodeBody(t, regRec.Body, &resp)
+	if resp.DevVerifyToken == "" {
+		t.Fatal("missing dev_verify_token in register response")
+	}
+	verifyRec := doJSON(t, handler, http.MethodPost, "/api/auth/verify-email", map[string]string{
+		"token": resp.DevVerifyToken,
+	}, "")
+	if verifyRec.Code != http.StatusOK {
+		t.Fatalf("verify status = %d body = %s", verifyRec.Code, verifyRec.Body.String())
 	}
 }
 

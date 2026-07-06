@@ -17,7 +17,9 @@ var (
 	ErrInvalidCredentials = errors.New("invalid credentials")
 	ErrInvalidRefresh     = errors.New("invalid refresh token")
 	ErrInvalidResetToken  = errors.New("invalid or expired reset token")
+	ErrInvalidVerifyToken = errors.New("invalid or expired verification token")
 	ErrAccountDisabled    = errors.New("account disabled")
+	ErrEmailNotVerified   = errors.New("email not verified")
 )
 
 // Service 账号业务逻辑，依赖 user.Repository 持久化、JWTManager 签发令牌、mail.Sender 发信。
@@ -30,6 +32,11 @@ type Service struct {
 
 func NewService(cfg config.Config, users *user.Repository, jwtMgr *jwt.Manager, mailer mail.Sender) *Service {
 	return &Service{cfg: cfg, users: users, jwt: jwtMgr, mailer: mailer}
+}
+
+type RegisterResult struct {
+	User          *user.User
+	DevVerifyToken string
 }
 
 type RegisterInput struct {
@@ -91,7 +98,7 @@ func (s *Service) ForgotPassword(ctx context.Context, email string) (string, err
 	return "", nil
 }
 
-func (s *Service) Register(ctx context.Context, in RegisterInput) (*user.User, error) {
+func (s *Service) Register(ctx context.Context, in RegisterInput) (*RegisterResult, error) {
 	email := NormalizeEmail(in.Email)
 	username := strings.TrimSpace(in.Username)
 	identityKey := strings.TrimSpace(in.IdentityPublicKey)
@@ -117,7 +124,79 @@ func (s *Service) Register(ctx context.Context, in RegisterInput) (*user.User, e
 		return nil, err
 	}
 
-	return s.users.Create(ctx, email, username, hash, identityKey)
+	u, err := s.users.Create(ctx, email, username, hash, identityKey)
+	if err != nil {
+		return nil, err
+	}
+
+	devToken, err := s.sendEmailVerification(ctx, u.ID, u.Email)
+	if err != nil {
+		return nil, err
+	}
+
+	return &RegisterResult{User: u, DevVerifyToken: devToken}, nil
+}
+
+func (s *Service) ResendVerification(ctx context.Context, email string) (string, error) {
+	email = NormalizeEmail(email)
+	if !ValidateEmail(email) {
+		return "", nil
+	}
+
+	u, _, err := s.users.GetByEmail(ctx, email)
+	if errors.Is(err, user.ErrNotFound) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	if u.EmailVerified {
+		return "", nil
+	}
+	return s.sendEmailVerification(ctx, u.ID, u.Email)
+}
+
+func (s *Service) VerifyEmail(ctx context.Context, token string) error {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return ErrInvalidVerifyToken
+	}
+
+	userID, err := s.users.ConsumeEmailVerificationToken(ctx, HashToken(token))
+	if err != nil {
+		return ErrInvalidVerifyToken
+	}
+	verified, err := s.users.IsEmailVerified(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if !verified {
+		return ErrInvalidVerifyToken
+	}
+	return nil
+}
+
+func (s *Service) sendEmailVerification(ctx context.Context, userID, email string) (string, error) {
+	plain, tokenHash, err := NewResetToken()
+	if err != nil {
+		return "", err
+	}
+
+	expires := time.Now().Add(s.cfg.EmailVerifyTTL)
+	if err := s.users.CreateEmailVerificationToken(ctx, userID, tokenHash, expires); err != nil {
+		return "", err
+	}
+
+	verifyURL := fmt.Sprintf("%s/api/auth/verify-email?token=%s", trimSlash(s.cfg.AppPublicURL), plain)
+	if err := s.mailer.SendEmailVerification(email, verifyURL); err != nil {
+		return "", err
+	}
+
+	driver := strings.ToLower(strings.TrimSpace(s.cfg.MailDriver))
+	if driver == "" || driver == "log" {
+		return plain, nil
+	}
+	return "", nil
 }
 
 func (s *Service) Login(ctx context.Context, in LoginInput) (*TokenResponse, error) {
@@ -144,6 +223,9 @@ func (s *Service) Login(ctx context.Context, in LoginInput) (*TokenResponse, err
 	}
 	if disabled {
 		return nil, ErrAccountDisabled
+	}
+	if !u.EmailVerified {
+		return nil, ErrEmailNotVerified
 	}
 
 	return s.issueTokens(ctx, u, deviceID, strings.TrimSpace(in.DeviceName))

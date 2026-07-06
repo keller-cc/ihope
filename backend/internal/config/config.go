@@ -30,6 +30,7 @@ type Config struct {
 	LoginRateLimit  int
 	LoginRateWindow time.Duration
 	ResetTokenTTL   time.Duration
+	EmailVerifyTTL  time.Duration
 	UploadDir       string
 	MaxAvatarBytes  int64
 	MaxEncryptedFileBytes int64
@@ -72,6 +73,7 @@ func Load() Config {
 		LoginRateLimit:  envInt("LOGIN_RATE_LIMIT", 5),
 		LoginRateWindow: envDurationSeconds("LOGIN_RATE_WINDOW_SEC", 60),
 		ResetTokenTTL:   envDurationMinutes("RESET_TOKEN_TTL_MIN", 30),
+		EmailVerifyTTL:  envDurationMinutes("EMAIL_VERIFY_TTL_MIN", 24*60),
 		UploadDir:       env("UPLOAD_DIR", "uploads"),
 		MaxAvatarBytes:  int64(envInt("MAX_AVATAR_BYTES", 2*1024*1024)),
 		// 0 = 不限制；默认 300MB

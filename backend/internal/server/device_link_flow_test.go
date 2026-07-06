@@ -18,12 +18,13 @@ func TestDeviceLinkFlowIntegration(t *testing.T) {
 	oldDevice := "old-device-link"
 	newDevice := "new-device-link"
 
-	doJSON(t, handler, http.MethodPost, "/api/auth/register", map[string]string{
+	regRec := doJSON(t, handler, http.MethodPost, "/api/auth/register", map[string]string{
 		"email":               email,
 		"username":            username,
 		"password":            "password123",
 		"identity_public_key": testutil.TestIdentityPublicKey,
 	}, "")
+	verifyRegisteredEmail(t, handler, regRec)
 
 	oldLogin := doJSON(t, handler, http.MethodPost, "/api/auth/login", map[string]string{
 		"email": email, "password": "password123", "device_id": oldDevice, "device_name": "old",

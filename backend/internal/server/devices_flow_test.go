@@ -18,12 +18,13 @@ func TestUserDevicesListAndKickIntegration(t *testing.T) {
 	deviceA := "device-a-list"
 	deviceB := "device-b-kick"
 
-	doJSON(t, handler, http.MethodPost, "/api/auth/register", map[string]string{
+	regRec := doJSON(t, handler, http.MethodPost, "/api/auth/register", map[string]string{
 		"email":               email,
 		"username":            username,
 		"password":            "password123",
 		"identity_public_key": testutil.TestIdentityPublicKey,
 	}, "")
+	verifyRegisteredEmail(t, handler, regRec)
 
 	loginA := doJSON(t, handler, http.MethodPost, "/api/auth/login", map[string]string{
 		"email": email, "password": "password123", "device_id": deviceA, "device_name": "Phone",

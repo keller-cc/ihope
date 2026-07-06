@@ -111,6 +111,7 @@ docker logs ihope-postgres-dev --tail 30            # 日志
 | `SERVER_PORT` | 后端 HTTP 端口 |
 | `MAIL_DRIVER` | `log` = 开发打印邮件；生产用 `smtp` |
 | `SMTP_*` | 生产发信配置 |
+| `EMAIL_VERIFY_TTL_MIN` | 注册验证链接有效期（分钟，默认 1440） |
 | `JPUSH_APP_KEY` / `JPUSH_MASTER_SECRET` | 国内极光推送（可选） |
 | `FCM_SERVER_KEY` | 海外 Firebase 推送（可选） |
 

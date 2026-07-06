@@ -64,6 +64,7 @@ func TestConfig() config.Config {
 		LoginRateLimit:  5,
 		LoginRateWindow: time.Minute,
 		ResetTokenTTL:   30 * time.Minute,
+		EmailVerifyTTL:  24 * time.Hour,
 		UploadDir:       "uploads",
 		MaxAvatarBytes:  2 * 1024 * 1024,
 		MaxEncryptedFileBytes: 300 * 1024 * 1024,

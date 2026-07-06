@@ -27,8 +27,9 @@ type User struct {
 	Email             string     `json:"email"`
 	Username          string     `json:"username"`
 	AvatarURL         *string    `json:"avatar_url"`
-	IdentityPublicKey string    `json:"identity_public_key"`
-	CreatedAt         time.Time `json:"created_at"`
+	IdentityPublicKey string     `json:"identity_public_key"`
+	EmailVerified     bool       `json:"email_verified"`
+	CreatedAt         time.Time  `json:"created_at"`
 	UpdatedAt         time.Time  `json:"updated_at"`
 }
 
@@ -92,7 +93,7 @@ func (r *Repository) Create(ctx context.Context, email, username, passwordHash, 
 	row := r.pool.QueryRow(ctx, `
 		INSERT INTO users (email, username, password_hash, identity_public_key)
 		VALUES ($1, $2, $3, $4)
-		RETURNING id, email, username, avatar_url, identity_public_key, created_at, updated_at`,
+		RETURNING id, email, username, avatar_url, identity_public_key, email_verified_at, created_at, updated_at`,
 		email, username, passwordHash, identityPublicKey,
 	)
 	u, err := scanUser(row)
@@ -114,7 +115,7 @@ func (r *Repository) Create(ctx context.Context, email, username, passwordHash, 
 
 func (r *Repository) GetByID(ctx context.Context, id string) (*User, error) {
 	row := r.pool.QueryRow(ctx, `
-		SELECT id, email, username, avatar_url, identity_public_key, created_at, updated_at
+		SELECT id, email, username, avatar_url, identity_public_key, email_verified_at, created_at, updated_at
 		FROM users WHERE id = $1`, id)
 	u, err := scanUser(row)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -232,7 +233,7 @@ func (r *Repository) ListPublic(ctx context.Context, excludeUserID, query string
 
 func (r *Repository) GetByEmail(ctx context.Context, email string) (*User, string, error) {
 	row := r.pool.QueryRow(ctx, `
-		SELECT id, email, username, avatar_url, identity_public_key, created_at, updated_at, password_hash
+		SELECT id, email, username, avatar_url, identity_public_key, email_verified_at, created_at, updated_at, password_hash
 		FROM users WHERE email = $1`, email)
 	var passwordHash string
 	u, err := scanUserWithPassword(row, &passwordHash)
@@ -264,7 +265,7 @@ func (r *Repository) UpdateUsername(ctx context.Context, userID, username string
 	row := r.pool.QueryRow(ctx, `
 		UPDATE users SET username = $2, updated_at = now()
 		WHERE id = $1
-		RETURNING id, email, username, avatar_url, identity_public_key, created_at, updated_at`,
+		RETURNING id, email, username, avatar_url, identity_public_key, email_verified_at, created_at, updated_at`,
 		userID, username,
 	)
 	u, err := scanUser(row)
@@ -284,7 +285,7 @@ func (r *Repository) UpdateAvatarURL(ctx context.Context, userID string, avatarU
 	row := r.pool.QueryRow(ctx, `
 		UPDATE users SET avatar_url = $2, updated_at = now()
 		WHERE id = $1
-		RETURNING id, email, username, avatar_url, identity_public_key, created_at, updated_at`,
+		RETURNING id, email, username, avatar_url, identity_public_key, email_verified_at, created_at, updated_at`,
 		userID, avatarURL,
 	)
 	u, err := scanUser(row)
@@ -298,7 +299,7 @@ func (r *Repository) UpdateIdentityPublicKey(ctx context.Context, userID, identi
 	row := r.pool.QueryRow(ctx, `
 		UPDATE users SET identity_public_key = $2, updated_at = now()
 		WHERE id = $1
-		RETURNING id, email, username, avatar_url, identity_public_key, created_at, updated_at`,
+		RETURNING id, email, username, avatar_url, identity_public_key, email_verified_at, created_at, updated_at`,
 		userID, identityPublicKey,
 	)
 	u, err := scanUser(row)
@@ -447,25 +448,91 @@ func (r *Repository) ConsumePasswordResetToken(ctx context.Context, tokenHash st
 	return userID, nil
 }
 
+func (r *Repository) CreateEmailVerificationToken(ctx context.Context, userID, tokenHash string, expiresAt time.Time) error {
+	_, err := r.pool.Exec(ctx, `
+		DELETE FROM email_verification_tokens
+		WHERE user_id = $1 AND used_at IS NULL`, userID)
+	if err != nil {
+		return err
+	}
+	_, err = r.pool.Exec(ctx, `
+		INSERT INTO email_verification_tokens (user_id, token_hash, expires_at)
+		VALUES ($1, $2, $3)`, userID, tokenHash, expiresAt)
+	return err
+}
+
+func (r *Repository) ConsumeEmailVerificationToken(ctx context.Context, tokenHash string) (string, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var userID string
+	err = tx.QueryRow(ctx, `
+		SELECT user_id FROM email_verification_tokens
+		WHERE token_hash = $1 AND used_at IS NULL AND expires_at > now()
+		FOR UPDATE`, tokenHash).Scan(&userID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", errors.New("invalid or expired token")
+	}
+	if err != nil {
+		return "", err
+	}
+
+	if _, err := tx.Exec(ctx, `
+		UPDATE email_verification_tokens SET used_at = now()
+		WHERE token_hash = $1`, tokenHash); err != nil {
+		return "", err
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE users SET email_verified_at = now(), updated_at = now()
+		WHERE id = $1 AND email_verified_at IS NULL`, userID); err != nil {
+		return "", err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return "", err
+	}
+	return userID, nil
+}
+
+func (r *Repository) IsEmailVerified(ctx context.Context, userID string) (bool, error) {
+	var verifiedAt *time.Time
+	err := r.pool.QueryRow(ctx, `
+		SELECT email_verified_at FROM users WHERE id = $1`, userID).Scan(&verifiedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, ErrNotFound
+	}
+	if err != nil {
+		return false, err
+	}
+	return verifiedAt != nil, nil
+}
+
 type scannable interface {
 	Scan(dest ...any) error
 }
 
 func scanUser(row scannable) (*User, error) {
 	var u User
-	err := row.Scan(&u.ID, &u.Email, &u.Username, &u.AvatarURL, &u.IdentityPublicKey, &u.CreatedAt, &u.UpdatedAt)
+	var verifiedAt *time.Time
+	err := row.Scan(&u.ID, &u.Email, &u.Username, &u.AvatarURL, &u.IdentityPublicKey, &verifiedAt, &u.CreatedAt, &u.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
+	u.EmailVerified = verifiedAt != nil
 	return &u, nil
 }
 
 func scanUserWithPassword(row scannable, passwordHash *string) (*User, error) {
 	var u User
-	err := row.Scan(&u.ID, &u.Email, &u.Username, &u.AvatarURL, &u.IdentityPublicKey, &u.CreatedAt, &u.UpdatedAt, passwordHash)
+	var verifiedAt *time.Time
+	err := row.Scan(&u.ID, &u.Email, &u.Username, &u.AvatarURL, &u.IdentityPublicKey, &verifiedAt, &u.CreatedAt, &u.UpdatedAt, passwordHash)
 	if err != nil {
 		return nil, err
 	}
+	u.EmailVerified = verifiedAt != nil
 	return &u, nil
 }
 

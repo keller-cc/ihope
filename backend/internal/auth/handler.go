@@ -3,7 +3,9 @@ package auth
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/ihope/ihope/internal/httpx"
 	"github.com/ihope/ihope/internal/middleware"
@@ -52,7 +54,7 @@ type changePasswordRequest struct {
 	NewPassword     string `json:"new_password"`
 }
 
-// Register POST /api/auth/register — 注册新用户，返回 user（不含密码）。
+// Register POST /api/auth/register — 注册新用户，发送验证邮件。
 func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 	var req registerRequest
 	if err := httpx.DecodeJSON(r, &req); err != nil {
@@ -60,7 +62,7 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	u, err := h.svc.Register(r.Context(), RegisterInput{
+	result, err := h.svc.Register(r.Context(), RegisterInput{
 		Email:             req.Email,
 		Username:          req.Username,
 		Password:          req.Password,
@@ -78,7 +80,14 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	httpx.WriteJSON(w, http.StatusCreated, map[string]any{"user": u})
+	resp := map[string]any{
+		"user":    result.User,
+		"message": "verification email sent; check your inbox to activate",
+	}
+	if result.DevVerifyToken != "" {
+		resp["dev_verify_token"] = result.DevVerifyToken
+	}
+	httpx.WriteJSON(w, http.StatusCreated, resp)
 }
 
 // Login POST /api/auth/login — 验证邮箱密码，签发 access_token + refresh_token。
@@ -101,6 +110,10 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	}
 	if errors.Is(err, ErrAccountDisabled) {
 		httpx.WriteError(w, http.StatusForbidden, "account_disabled", "account disabled")
+		return
+	}
+	if errors.Is(err, ErrEmailNotVerified) {
+		httpx.WriteError(w, http.StatusForbidden, "email_not_verified", "verify your email before signing in")
 		return
 	}
 	if err != nil {
@@ -145,6 +158,79 @@ func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+type verifyEmailRequest struct {
+	Token string `json:"token"`
+}
+
+type resendVerificationRequest struct {
+	Email string `json:"email"`
+}
+
+// VerifyEmail GET /api/auth/verify-email?token= — 点击邮件链接激活（返回简单 HTML）。
+func (h *Handler) VerifyEmail(w http.ResponseWriter, r *http.Request) {
+	token := strings.TrimSpace(r.URL.Query().Get("token"))
+	if token == "" {
+		writeVerifyEmailHTML(w, http.StatusBadRequest, "缺少验证 token", false)
+		return
+	}
+	if err := h.svc.VerifyEmail(r.Context(), token); errors.Is(err, ErrInvalidVerifyToken) {
+		writeVerifyEmailHTML(w, http.StatusBadRequest, "链接无效或已过期", false)
+		return
+	} else if err != nil {
+		writeVerifyEmailHTML(w, http.StatusInternalServerError, "验证失败，请稍后重试", false)
+		return
+	}
+	writeVerifyEmailHTML(w, http.StatusOK, "邮箱已验证，可以返回 App 登录", true)
+}
+
+// VerifyEmailJSON POST /api/auth/verify-email — App/脚本用 JSON 提交 token。
+func (h *Handler) VerifyEmailJSON(w http.ResponseWriter, r *http.Request) {
+	var req verifyEmailRequest
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_json", "invalid request body")
+		return
+	}
+	if err := h.svc.VerifyEmail(r.Context(), req.Token); errors.Is(err, ErrInvalidVerifyToken) {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_token", "invalid or expired verification token")
+		return
+	} else if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "verification failed")
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]string{"message": "email verified"})
+}
+
+// ResendVerification POST /api/auth/resend-verification — 重发验证邮件。
+func (h *Handler) ResendVerification(w http.ResponseWriter, r *http.Request) {
+	var req resendVerificationRequest
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_json", "invalid request body")
+		return
+	}
+
+	token, err := h.svc.ResendVerification(r.Context(), req.Email)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "could not process request")
+		return
+	}
+
+	resp := map[string]string{"message": "if the email exists and is not verified, a verification link has been sent"}
+	if token != "" {
+		resp["dev_verify_token"] = token
+	}
+	httpx.WriteJSON(w, http.StatusOK, resp)
+}
+
+func writeVerifyEmailHTML(w http.ResponseWriter, status int, message string, ok bool) {
+	title := "邮箱验证"
+	if ok {
+		title = "验证成功"
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(status)
+	_, _ = fmt.Fprintf(w, `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>%s</title><style>body{font-family:system-ui,sans-serif;max-width:32rem;margin:4rem auto;padding:0 1rem;color:#0f172a}h1{font-size:1.5rem}p{line-height:1.6;color:#334155}</style></head><body><h1>%s</h1><p>%s</p></body></html>`, title, title, message)
 }
 
 // ForgotPassword POST /api/auth/forgot-password — 发重置邮件；邮箱不存在也返回 200。

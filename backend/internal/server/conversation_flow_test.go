@@ -478,8 +478,18 @@ func registerUser(t *testing.T, handler http.Handler, email, username, password 
 		User struct {
 			ID string `json:"id"`
 		} `json:"user"`
+		DevVerifyToken string `json:"dev_verify_token"`
 	}
 	decodeBody(t, rec.Body, &resp)
+	if resp.DevVerifyToken == "" {
+		t.Fatal("missing dev_verify_token")
+	}
+	verifyRec := doJSON(t, handler, http.MethodPost, "/api/auth/verify-email", map[string]string{
+		"token": resp.DevVerifyToken,
+	}, "")
+	if verifyRec.Code != http.StatusOK {
+		t.Fatalf("verify status = %d body = %s", verifyRec.Code, verifyRec.Body.String())
+	}
 	return struct{ ID string }{ID: resp.User.ID}
 }
 

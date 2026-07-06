@@ -42,12 +42,13 @@ func TestProfileFlowIntegration(t *testing.T) {
 	newUsername := fmt.Sprintf("new_%d", time.Now().UnixNano()%1_000_000_000)
 	password := "password123"
 
-	doJSON(t, handler, http.MethodPost, "/api/auth/register", map[string]string{
+	regRec := doJSON(t, handler, http.MethodPost, "/api/auth/register", map[string]string{
 		"email":               email,
 		"username":            username,
 		"password":            password,
 		"identity_public_key": testutil.TestIdentityPublicKey,
 	}, "")
+	verifyRegisteredEmail(t, handler, regRec)
 
 	loginRec := doJSON(t, handler, http.MethodPost, "/api/auth/login", map[string]string{
 		"email": email, "password": password, "device_id": "profile-device", "device_name": "t",

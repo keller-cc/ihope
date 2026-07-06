@@ -6,10 +6,10 @@ import '../utils/version_label.dart';
 class AppVersionInfo {
   AppVersionInfo._();
 
-  /// 发版日期；构建时可 `--dart-define=APP_RELEASE_DATE=2026-07-03` 覆盖。
+  /// 发版日期；构建时可 `--dart-define=APP_RELEASE_DATE=2026-07-06` 覆盖。
   static const releaseDate = String.fromEnvironment(
     'APP_RELEASE_DATE',
-    defaultValue: '2026-07-03',
+    defaultValue: '2026-07-06',
   );
 
   static PackageInfo? _info;

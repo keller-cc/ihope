@@ -77,6 +77,9 @@ func (s *Server) Router() http.Handler {
 
 	mux.Handle("POST /api/auth/register", s.loginLimit.Middleware(http.HandlerFunc(s.auth.Register)))
 	mux.Handle("POST /api/auth/login", s.loginLimit.Middleware(http.HandlerFunc(s.auth.Login)))
+	mux.HandleFunc("GET /api/auth/verify-email", s.auth.VerifyEmail)
+	mux.HandleFunc("POST /api/auth/verify-email", s.auth.VerifyEmailJSON)
+	mux.Handle("POST /api/auth/resend-verification", s.loginLimit.Middleware(http.HandlerFunc(s.auth.ResendVerification)))
 	mux.HandleFunc("POST /api/auth/refresh", s.auth.Refresh)
 	mux.HandleFunc("POST /api/auth/forgot-password", s.auth.ForgotPassword)
 	mux.HandleFunc("POST /api/auth/reset-password", s.auth.ResetPassword)
