@@ -1,17 +1,18 @@
 import 'package:flutter/material.dart';
 
+import '../services/api_client.dart';
 import '../services/auth_service.dart';
 import '../widgets/auth_form.dart';
+import '../widgets/app_page_route.dart';
+import 'verify_email_pending_screen.dart';
 
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({
     super.key,
     required this.auth,
-    required this.onRegistered,
   });
 
   final AuthService auth;
-  final VoidCallback onRegistered;
 
   @override
   State<RegisterScreen> createState() => _RegisterScreenState();
@@ -60,14 +61,23 @@ class _RegisterScreenState extends State<RegisterScreen> {
       _error = null;
     });
     try {
-      await widget.auth.register(
+      final result = await widget.auth.register(
         email: _email.text,
         username: _username.text,
         password: _password.text,
       );
       if (!mounted) return;
-      widget.onRegistered();
-      Navigator.of(context).pop();
+      await Navigator.of(context).pushReplacement(
+        appPageRoute(
+          builder: (_) => VerifyEmailPendingScreen(
+            auth: widget.auth,
+            email: result.email,
+            initialDevToken: result.devVerifyToken,
+          ),
+        ),
+      );
+    } on ApiException catch (e) {
+      setState(() => _error = e.message);
     } catch (e) {
       setState(() => _error = e.toString());
     } finally {
@@ -115,7 +125,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
           const SizedBox(height: 24),
           SubmitButton(
             loading: _loading,
-            label: '注册并登录',
+            label: '注册',
             onPressed: _submit,
           ),
         ],

@@ -29,6 +29,13 @@ import 'recent_emoji_store.dart';
 import 'signal_kds_service.dart';
 import 'ws_service.dart';
 
+class RegisterResult {
+  const RegisterResult({required this.email, this.devVerifyToken});
+
+  final String email;
+  final String? devVerifyToken;
+}
+
 class AuthService {
   AuthService({
     ApiClient? api,
@@ -293,13 +300,20 @@ class AuthService {
     required String password,
   }) async {
     final deviceId = await storage.deviceId();
-    final data = await api.postJson('/api/auth/login', body: {
-      'email': email.trim(),
-      'password': password,
-      'device_id': deviceId,
-      'device_name': 'Flutter',
-    });
-    await _saveTokenResponse(data);
+    try {
+      final data = await api.postJson('/api/auth/login', body: {
+        'email': email.trim(),
+        'password': password,
+        'device_id': deviceId,
+        'device_name': 'Flutter',
+      });
+      await _saveTokenResponse(data);
+    } on ApiException catch (e) {
+      if (e.isEmailNotVerified) {
+        throw ApiException('请先验证邮箱后再登录', code: 'email_not_verified');
+      }
+      rethrow;
+    }
     await AppConfig.refresh(api);
     final identityRotated = await _ensureSignalIdentity();
     _crypto = await _buildChatCrypto();
@@ -310,7 +324,7 @@ class AuthService {
     return currentUser!;
   }
 
-  Future<User> register({
+  Future<RegisterResult> register({
     required String email,
     required String username,
     required String password,
@@ -326,13 +340,29 @@ class AuthService {
           storage.writeSignalStore('email_$normalizedEmail', data),
     );
     final pubKey = await preRegisterDm.identityPublicKeyBase64();
-    await api.postJson('/api/auth/register', body: {
+    final data = await api.postJson('/api/auth/register', body: {
       'email': email.trim(),
       'username': username.trim(),
       'password': password,
       'identity_public_key': pubKey,
     });
-    return login(email: email, password: password);
+    return RegisterResult(
+      email: email.trim(),
+      devVerifyToken: data['dev_verify_token'] as String?,
+    );
+  }
+
+  Future<String?> resendVerification(String email) async {
+    final data = await api.postJson('/api/auth/resend-verification', body: {
+      'email': email.trim(),
+    });
+    return data['dev_verify_token'] as String?;
+  }
+
+  Future<void> verifyEmail(String token) async {
+    await api.postJson('/api/auth/verify-email', body: {
+      'token': token.trim(),
+    });
   }
 
   Future<User> updateUsername(String username) async {

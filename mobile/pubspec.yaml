@@ -1,7 +1,7 @@
 name: ihope
 description: IHope messenger by CLPRINCE (E2EE chat)
 publish_to: "none"
-version: 0.1.4+6
+version: 0.1.4+7
 
 environment:
   sdk: ^3.8.0

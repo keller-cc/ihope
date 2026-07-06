@@ -4,10 +4,13 @@ import 'package:flutter/foundation.dart';
 import '../config/server_config.dart';
 
 class ApiException implements Exception {
-  ApiException(this.message, {this.statusCode});
+  ApiException(this.message, {this.statusCode, this.code});
 
   final String message;
   final int? statusCode;
+  final String? code;
+
+  bool get isEmailNotVerified => code == 'email_not_verified';
 
   @override
   String toString() => message;
@@ -239,7 +242,12 @@ class ApiClient {
     if (data is Map<String, dynamic>) {
       final message = data['error'];
       if (message is String && message.isNotEmpty) {
-        return ApiException(message, statusCode: e.response?.statusCode);
+        final code = data['code'];
+        return ApiException(
+          message,
+          statusCode: e.response?.statusCode,
+          code: code is String ? code : null,
+        );
       }
     }
     return ApiException(

@@ -1,12 +1,14 @@
 import 'package:flutter/material.dart';
 
 import '../config/server_config.dart';
+import '../services/api_client.dart';
 import '../services/auth_service.dart';
 import '../widgets/auth_form.dart';
 import '../widgets/app_page_route.dart';
 import 'forgot_password_screen.dart';
 import 'register_screen.dart';
 import 'server_settings_screen.dart';
+import 'verify_email_pending_screen.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({
@@ -46,6 +48,29 @@ class _LoginScreenState extends State<LoginScreen> {
         password: _password.text,
       );
       widget.onLoggedIn();
+    } on ApiException catch (e) {
+      setState(() => _error = e.message);
+      if (e.isEmailNotVerified && mounted) {
+        final email = _email.text.trim();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('请先验证邮箱'),
+            action: SnackBarAction(
+              label: '去验证',
+              onPressed: () {
+                Navigator.of(context).push(
+                  appPageRoute(
+                    builder: (_) => VerifyEmailPendingScreen(
+                      auth: widget.auth,
+                      email: email,
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+        );
+      }
     } catch (e) {
       setState(() => _error = e.toString());
     } finally {
@@ -118,10 +143,7 @@ class _LoginScreenState extends State<LoginScreen> {
                 : () {
                     Navigator.of(context).push(
                       appPageRoute(
-                        builder: (_) => RegisterScreen(
-                          auth: widget.auth,
-                          onRegistered: widget.onLoggedIn,
-                        ),
+                        builder: (_) => RegisterScreen(auth: widget.auth),
                       ),
                     );
                   },
