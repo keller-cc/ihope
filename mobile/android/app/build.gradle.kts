@@ -1,4 +1,5 @@
 import java.util.Base64
+import java.util.Properties
 
 plugins {
 
@@ -48,10 +49,10 @@ android {
 
     ndkVersion = flutter.ndkVersion
 
-    val keystoreProperties = java.util.Properties()
+    val keystoreProperties = Properties()
     val keystorePropertiesFile = rootProject.file("key.properties")
     if (keystorePropertiesFile.exists()) {
-        keystoreProperties.load(java.io.FileInputStream(keystorePropertiesFile))
+        keystorePropertiesFile.inputStream().use { keystoreProperties.load(it) }
     }
 
     signingConfigs {

@@ -87,6 +87,8 @@ jobs:
         env:
           CI: "true"
           ORG_GRADLE_PROJECT_useCnMavenMirror: "false"
+          ORG_GRADLE_PROJECT_android.newDsl: "false"
+          ORG_GRADLE_PROJECT_android.builtInKotlin: "false"
         run: |
           flutter pub get
           flutter build apk --release --flavor domestic \
