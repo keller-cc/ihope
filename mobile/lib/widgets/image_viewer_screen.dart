@@ -108,7 +108,6 @@ class _ImageViewerScreenState extends State<ImageViewerScreen> {
     setState(() {
       _saving = true;
       _progress = 0;
-      _loadError = null;
     });
     try {
       final bytes = await _bytesForSave();

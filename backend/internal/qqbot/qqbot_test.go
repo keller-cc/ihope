@@ -26,19 +26,19 @@ func TestWrapRunes(t *testing.T) {
 	}
 }
 
-func TestReadQuoteLines(t *testing.T) {
+func TestReadQuoteEntries(t *testing.T) {
 	dir := t.TempDir()
 	path := dir + "/quotes.txt"
-	content := "第一句金句\n来自@甲\n\n第二句金句\n来自@乙"
+	content := "第一句金句\n\n来自@甲\n\n---\n\n第二句金句\n来自@乙"
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	lines, err := ReadQuoteLines(path)
+	entries, err := ReadQuoteEntries(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(lines) != 2 || lines[0] != "第一句金句" || lines[1] != "第二句金句" {
-		t.Fatalf("lines=%v", lines)
+	if len(entries) != 2 || entries[0].Body != "第一句金句" || entries[1].Body != "第二句金句" {
+		t.Fatalf("entries=%v", entries)
 	}
 }
 

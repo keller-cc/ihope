@@ -1756,13 +1756,12 @@ class AuthService {
     final fileId = message.fileId;
     if (fileId == null || fileId.isEmpty) return null;
 
-    if (await MediaLocalCache.needsFullImageDownload(
+    final needsFull = await MediaLocalCache.needsFullImageDownload(
       messageId: message.id,
       plaintext: message.plaintext,
       fileId: fileId,
-    )) {
-      // 继续下载原图（可能仅有缩略图或残缺文件）
-    } else if (await MediaLocalCache.hasPayloadFile(message.id)) {
+    );
+    if (!needsFull && await MediaLocalCache.hasPayloadFile(message.id)) {
       return MediaLocalCache.load(message.id);
     }
 

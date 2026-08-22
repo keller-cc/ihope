@@ -22,6 +22,12 @@ import (
 	"golang.org/x/image/math/fixed"
 )
 
+var (
+	cardBg    = color.RGBA{R: 245, G: 240, B: 230, A: 255}
+	cardText  = color.RGBA{R: 60, G: 48, B: 36, A: 255}
+	cardMuted = color.RGBA{R: 110, G: 95, B: 80, A: 255}
+)
+
 type PoetryQuote struct {
 	Hitokoto string `json:"hitokoto"`
 	From     string `json:"from"`
@@ -53,25 +59,27 @@ func FetchPoetry(ctx context.Context, apiURL string) (PoetryQuote, error) {
 	return q, nil
 }
 
-// RenderPoetryCard 将诗词渲染为竖版 PNG 图卡（无角标水印）。
 func RenderPoetryCard(quote PoetryQuote, fontPath string) ([]byte, error) {
-	from := strings.TrimSpace(quote.From)
-	if who := strings.TrimSpace(quote.FromWho); who != "" {
+	sub := poetrySourceLine(quote)
+	return renderVerticalPoetryCard(quote.Hitokoto, sub, fontPath)
+}
+
+func poetrySourceLine(q PoetryQuote) string {
+	from := strings.TrimSpace(q.From)
+	if who := strings.TrimSpace(q.FromWho); who != "" {
 		if from != "" {
 			from = from + " · " + who
 		} else {
 			from = who
 		}
 	}
-	sub := ""
-	if from != "" {
-		sub = "—— " + from
+	if from == "" {
+		return ""
 	}
-	return renderVerticalPoetryCard(quote.Hitokoto, sub, fontPath)
+	return "—— " + from
 }
 
-// renderLiteraryCard 横排金句等正文图卡；footer 为空时不绘制角标。
-func renderLiteraryCard(mainText, subLine, footer, fontPath string) ([]byte, error) {
+func renderLiteraryCard(mainText, subLine, fontPath string) ([]byte, error) {
 	mainText = strings.TrimSpace(mainText)
 	if mainText == "" {
 		return nil, fmt.Errorf("正文为空")
@@ -87,8 +95,7 @@ func renderLiteraryCard(mainText, subLine, footer, fontPath string) ([]byte, err
 
 	const W = 720
 	const padX = 48
-	maxChars := 18
-	lines := layoutLiteraryLines(mainText, maxChars)
+	lines := layoutLiteraryLines(mainText, 18)
 	const maxBodyLines = 18
 	if len(lines) > maxBodyLines {
 		lines = lines[:maxBodyLines]
@@ -99,16 +106,11 @@ func renderLiteraryCard(mainText, subLine, footer, fontPath string) ([]byte, err
 	}
 
 	lineHeight := 40
-	bodyHeight := len(lines) * lineHeight
-	footerPad := 0
-	if strings.TrimSpace(footer) != "" {
-		footerPad = 56
-	}
 	subPad := 0
 	if strings.TrimSpace(subLine) != "" {
 		subPad = 64
 	}
-	H := 120 + bodyHeight + subPad + footerPad + 80
+	H := 120 + len(lines)*lineHeight + subPad + 80
 	if H < 480 {
 		H = 480
 	}
@@ -117,11 +119,7 @@ func renderLiteraryCard(mainText, subLine, footer, fontPath string) ([]byte, err
 	}
 
 	img := image.NewRGBA(image.Rect(0, 0, W, H))
-	bg := color.RGBA{R: 245, G: 240, B: 230, A: 255}
-	draw.Draw(img, img.Bounds(), &image.Uniform{C: bg}, image.Point{}, draw.Src)
-
-	accent := color.RGBA{R: 60, G: 48, B: 36, A: 255}
-	muted := color.RGBA{R: 110, G: 95, B: 80, A: 255}
+	draw.Draw(img, img.Bounds(), &image.Uniform{C: cardBg}, image.Point{}, draw.Src)
 
 	y := 96
 	for _, line := range lines {
@@ -129,17 +127,11 @@ func renderLiteraryCard(mainText, subLine, footer, fontPath string) ([]byte, err
 			y += lineHeight / 2
 			continue
 		}
-		drawString(img, face, line, padX, y, accent)
+		drawString(img, face, line, padX, y, cardText)
 		y += lineHeight
 	}
-
-	bottom := H - 48
-	if foot := strings.TrimSpace(footer); foot != "" {
-		drawString(img, small, foot, padX, bottom, muted)
-		bottom -= 40
-	}
 	if sub := strings.TrimSpace(subLine); sub != "" {
-		drawString(img, small, sub, padX, bottom, muted)
+		drawString(img, small, sub, padX, H-48, cardMuted)
 	}
 
 	var buf bytes.Buffer
@@ -149,7 +141,6 @@ func renderLiteraryCard(mainText, subLine, footer, fontPath string) ([]byte, err
 	return buf.Bytes(), nil
 }
 
-// renderVerticalPoetryCard 竖排诗词图卡：自上而下、自右而左分列，无水印角标。
 func renderVerticalPoetryCard(mainText, subLine, fontPath string) ([]byte, error) {
 	mainText = strings.TrimSpace(mainText)
 	if mainText == "" {
@@ -211,11 +202,7 @@ func renderVerticalPoetryCard(mainText, subLine, fontPath string) ([]byte, error
 	}
 
 	img := image.NewRGBA(image.Rect(0, 0, W, H))
-	bg := color.RGBA{R: 245, G: 240, B: 230, A: 255}
-	draw.Draw(img, img.Bounds(), &image.Uniform{C: bg}, image.Point{}, draw.Src)
-
-	accent := color.RGBA{R: 60, G: 48, B: 36, A: 255}
-	muted := color.RGBA{R: 110, G: 95, B: 80, A: 255}
+	draw.Draw(img, img.Bounds(), &image.Uniform{C: cardBg}, image.Point{}, draw.Src)
 
 	for i, colText := range cols {
 		x := W - pad - charW - i*(charW+colGap)
@@ -224,13 +211,12 @@ func renderVerticalPoetryCard(mainText, subLine, fontPath string) ([]byte, error
 			if unicode.IsSpace(r) {
 				continue
 			}
-			drawString(img, face, string(r), x, y, accent)
+			drawString(img, face, string(r), x, y, cardText)
 			y += charH
 		}
 	}
-
 	if sub := strings.TrimSpace(subLine); sub != "" {
-		drawString(img, small, sub, pad, H-pad-8, muted)
+		drawString(img, small, sub, pad, H-pad-8, cardMuted)
 	}
 
 	var buf bytes.Buffer
@@ -240,7 +226,6 @@ func renderVerticalPoetryCard(mainText, subLine, fontPath string) ([]byte, error
 	return buf.Bytes(), nil
 }
 
-// poetryColumnsFromText 将诗词拆为竖排列（先按行，再按句读标点）。
 func poetryColumnsFromText(text string) []string {
 	text = strings.TrimSpace(text)
 	if text == "" {
@@ -373,11 +358,6 @@ func wrapRunes(s string, maxPerLine int) []string {
 	return lines
 }
 
-func measure(face font.Face, s string) int {
-	d := &font.Drawer{Face: face}
-	return d.MeasureString(s).Round()
-}
-
 func drawString(img *image.RGBA, face font.Face, s string, x, y int, col color.Color) {
 	d := &font.Drawer{
 		Dst:  img,
@@ -386,5 +366,4 @@ func drawString(img *image.RGBA, face font.Face, s string, x, y int, col color.C
 		Dot:  fixed.P(x, y),
 	}
 	d.DrawString(s)
-	_ = utf8.RuneCountInString(s)
 }

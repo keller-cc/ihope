@@ -6,10 +6,11 @@ import 'package:path_provider/path_provider.dart';
 import 'media_payload.dart';
 import 'image_thumbnail.dart';
 
-/// 应用内私有媒体缓存（用户无感）：聊天内展示/播放用。
-/// 导出到相册或 Download/IHope 由 [MediaSave] / [MediaDownloadIndex] 在用户主动操作时完成。
+/// 聊天媒体私有缓存；导出相册见 [MediaSave] / [MediaDownloadIndex]。
 class MediaLocalCache {
   MediaLocalCache._();
+
+  static const _fullImageRatio = 0.9;
 
   static Future<void> clearAll() async {
     try {
@@ -120,14 +121,12 @@ class MediaLocalCache {
     return false;
   }
 
-  /// 字节数是否达到附件声明的原图体积（用于区分 preview 与完整文件）。
   static bool hasFullImageBytes(int byteLen, String? plaintext) {
     final expected = expectedAttachmentBytes(plaintext);
     if (expected == null || expected <= 0) return true;
-    return byteLen >= expected * 0.9;
+    return byteLen >= expected * _fullImageRatio;
   }
 
-  /// 远程图片附件是否尚未拉取原图（仅有缩略图或本地文件体积不足）。
   static Future<bool> needsFullImageDownload({
     required String messageId,
     required String? plaintext,
@@ -139,7 +138,7 @@ class MediaLocalCache {
     if (expected == null || expected <= 0) return false;
     try {
       final len = await (await _bytesFile(messageId)).length();
-      return len < expected * 0.9;
+      return len < expected * _fullImageRatio;
     } catch (_) {
       return true;
     }
@@ -158,7 +157,7 @@ class MediaLocalCache {
       final expected = expectedAttachmentBytes(plaintext);
       if (expected != null &&
           expected > 0 &&
-          local.bytes.length < expected * 0.9) {
+          local.bytes.length < expected * _fullImageRatio) {
         return null;
       }
       return local;
@@ -307,31 +306,12 @@ class MediaLocalCache {
     return MediaPayload.tryParse(plaintext) != null;
   }
 
-  /// 聊天列表/气泡用预览图：优先消息内 preview，不拉取服务端原图。
   static MediaPayload? resolvePreviewSync(String? plaintext) {
     if (plaintext == null || plaintext.isEmpty) return null;
     final fromInline = _imageFromPlaintextMap(plaintext);
     if (fromInline != null) return fromInline;
     final att = AttachmentPayload.fromPlaintext(plaintext);
-    if (att != null && att.kind == 'image') {
-      if (att.previewBytes != null && att.previewBytes!.isNotEmpty) {
-        return MediaPayload(
-          kind: 'image',
-          mime: att.mime,
-          name: att.name,
-          bytes: att.previewBytes!,
-        );
-      }
-      if (att.thumbBytes != null && att.thumbBytes!.isNotEmpty) {
-        return MediaPayload(
-          kind: 'image',
-          mime: att.mime,
-          name: att.name,
-          bytes: att.thumbBytes!,
-        );
-      }
-    }
-    return null;
+    return att != null ? _imagePreviewFromAttachment(att) : null;
   }
 
   static Future<MediaPayload?> resolvePreview(
@@ -357,29 +337,19 @@ class MediaLocalCache {
       if (local != null && local.kind == 'image') return local;
     }
 
-    final fromInline = _imageFromPlaintextMap(plaintext);
-    if (fromInline != null) return fromInline;
+    return resolvePreviewSync(plaintext);
+  }
 
-    final att = AttachmentPayload.fromPlaintext(plaintext);
-    if (att != null && att.kind == 'image') {
-      if (att.previewBytes != null && att.previewBytes!.isNotEmpty) {
-        return MediaPayload(
-          kind: 'image',
-          mime: att.mime,
-          name: att.name,
-          bytes: att.previewBytes!,
-        );
-      }
-      if (att.thumbBytes != null && att.thumbBytes!.isNotEmpty) {
-        return MediaPayload(
-          kind: 'image',
-          mime: att.mime,
-          name: att.name,
-          bytes: att.thumbBytes!,
-        );
-      }
-    }
-    return null;
+  static MediaPayload? _imagePreviewFromAttachment(AttachmentPayload att) {
+    if (att.kind != 'image') return null;
+    final bytes = att.previewBytes ?? att.thumbBytes;
+    if (bytes == null || bytes.isEmpty) return null;
+    return MediaPayload(
+      kind: 'image',
+      mime: att.mime,
+      name: att.name,
+      bytes: bytes,
+    );
   }
 
   static MediaPayload? _imageFromPlaintextMap(String plaintext) {
@@ -445,25 +415,7 @@ class MediaLocalCache {
     if (att != null) {
       final local = await load(messageId);
       if (local != null) return local;
-      if (att.kind == 'image') {
-        if (att.previewBytes != null && att.previewBytes!.isNotEmpty) {
-          return MediaPayload(
-            kind: 'image',
-            mime: att.mime,
-            name: att.name,
-            bytes: att.previewBytes!,
-          );
-        }
-        if (att.thumbBytes != null && att.thumbBytes!.isNotEmpty) {
-          return MediaPayload(
-            kind: 'image',
-            mime: att.mime,
-            name: att.name,
-            bytes: att.thumbBytes!,
-          );
-        }
-      }
-      return null;
+      return _imagePreviewFromAttachment(att);
     }
     if (await hasPayloadFile(messageId)) {
       return load(messageId);

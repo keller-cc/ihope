@@ -55,19 +55,23 @@ class _MediaMessageBodyState extends State<MediaMessageBody> {
   MediaPayload? _media;
   _MediaLoadState _loadState = _MediaLoadState.loading;
 
-  @override
-  void initState() {
-    super.initState();
+  void _seedSyncImagePreview() {
     if (widget.initialMedia != null) {
       _media = widget.initialMedia;
       _loadState = _MediaLoadState.ready;
-    } else if (widget.msg.type == 'image') {
-      final sync = MediaLocalCache.resolvePreviewSync(widget.msg.plaintext);
-      if (sync != null) {
-        _media = sync;
-        _loadState = _MediaLoadState.ready;
-      }
+      return;
     }
+    if (widget.msg.type != 'image') return;
+    final sync = MediaLocalCache.resolvePreviewSync(widget.msg.plaintext);
+    if (sync == null) return;
+    _media = sync;
+    _loadState = _MediaLoadState.ready;
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _seedSyncImagePreview();
     unawaited(_loadMedia());
     unawaited(_restoreExportState());
     unawaited(_prefetchFullImageIfNeeded());
@@ -82,6 +86,7 @@ class _MediaMessageBodyState extends State<MediaMessageBody> {
       _media = widget.initialMedia;
       _loadState =
           _media != null ? _MediaLoadState.ready : _MediaLoadState.loading;
+      if (_media == null) _seedSyncImagePreview();
       unawaited(_loadMedia());
       unawaited(_prefetchFullImageIfNeeded());
     }

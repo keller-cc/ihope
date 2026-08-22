@@ -2,14 +2,14 @@ import 'dart:typed_data';
 
 import 'package:image/image.dart' as img;
 
-/// 聊天图片内联预览与缩略图（内联于 E2EE 消息）。
+/// 消息内 inline 图片预览（E2EE 附件缩略图）。
 class ImageThumbnail {
   ImageThumbnail._();
 
-  /// 列表气泡用预览图（较清晰，非极小缩略图）。
+  /// 气泡预览（约 720px JPEG）。
   static const previewMaxEdge = 720;
 
-  /// 兼容旧消息的极小缩略图。
+  /// 旧消息极小缩略图。
   static const thumbMaxEdge = 200;
 
   static Future<Uint8List> generatePreview(List<int> imageBytes) async {

@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-// QuoteEntry 一条金句：正文可多行；Author 来自「来自@昵称」行。
+// QuoteEntry 金句正文与可选署名。
 type QuoteEntry struct {
 	Body   string
 	Author string
@@ -17,11 +17,7 @@ type QuoteEntry struct {
 
 var attributionLineRe = regexp.MustCompile(`^\s*(?:来自|来.{0,3})@(.+?)\s*$`)
 
-// ReadQuoteEntries 读取金句文件。
-//
-// 支持两种格式（自动识别）：
-//  1. 新格式：条目之间单独一行 --- 分隔；正文可多行；可选末尾「来自@昵称」
-//  2. 旧格式：连续正文 + 「来自@昵称」作为条目结尾（兼容历史文件）
+// ReadQuoteEntries 读取金句文件（--- 分隔块，或旧版「来自@」结尾格式）。
 func ReadQuoteEntries(path string) ([]QuoteEntry, error) {
 	path = strings.TrimSpace(path)
 	if path == "" {
@@ -101,7 +97,6 @@ func entryFromBlock(block string) (QuoteEntry, bool) {
 	return QuoteEntry{Body: body, Author: author}, true
 }
 
-// collapseBodySoftBreaks 合并源文件中因排版产生的软换行，保留空行分段。
 func collapseBodySoftBreaks(body string) string {
 	body = strings.TrimSpace(body)
 	if body == "" {
@@ -165,7 +160,6 @@ func parseLegacyAttributionQuotes(text string) ([]QuoteEntry, error) {
 	return out, nil
 }
 
-// quoteDayNumber 日历日在当前时区下的序号（用于按日轮换，避免随机重复）。
 func quoteDayNumber(day time.Time) int {
 	y, m, d := day.Date()
 	loc := day.Location()
@@ -173,8 +167,7 @@ func quoteDayNumber(day time.Time) int {
 	return int(midnight.Unix() / 86400)
 }
 
-// PickDailyQuoteEntry 按日历日轮换选取：文件顺序逐条推进，走完一轮后才重复。
-// 同一天内（QQ 手动「金句」、每日推送、App 今日金句）均为同一条。
+// PickDailyQuoteEntry 按日历日顺序轮换，同一天各处展示同一条。
 func PickDailyQuoteEntry(path string, day time.Time) (QuoteEntry, error) {
 	entries, err := ReadQuoteEntries(path)
 	if err != nil {
@@ -184,12 +177,7 @@ func PickDailyQuoteEntry(path string, day time.Time) (QuoteEntry, error) {
 	return entries[idx], nil
 }
 
-// PickRandomQuoteEntry 返回当日金句（与 PickDailyQuoteEntry 相同，已取消随机）。
-func PickRandomQuoteEntry(path string) (QuoteEntry, error) {
-	return PickDailyQuoteEntry(path, time.Now())
-}
-
-// FormatQuoteBlocks 将条目格式化为 --- 分隔的标准文件内容。
+// FormatQuoteBlocks 格式化为 --- 分隔的标准文件内容。
 func FormatQuoteBlocks(entries []QuoteEntry) string {
 	var b strings.Builder
 	b.WriteString("# IHope 金句库\n")
@@ -208,7 +196,7 @@ func FormatQuoteBlocks(entries []QuoteEntry) string {
 	return b.String()
 }
 
-// ReformatQuotesFile 将文件转为 --- 分隔格式（原地覆盖）。
+// ReformatQuotesFile 原地重写为标准格式。
 func ReformatQuotesFile(path string) (int, error) {
 	entries, err := ReadQuoteEntries(path)
 	if err != nil {
@@ -221,7 +209,7 @@ func ReformatQuotesFile(path string) (int, error) {
 	return len(entries), nil
 }
 
-// RenderQuoteCard 将金句渲染为 PNG 图卡。
+// RenderQuoteCard 渲染金句横排 PNG。
 func RenderQuoteCard(entry QuoteEntry, fontPath string) ([]byte, error) {
 	body := strings.TrimSpace(entry.Body)
 	if body == "" {
@@ -231,29 +219,7 @@ func RenderQuoteCard(entry QuoteEntry, fontPath string) ([]byte, error) {
 	if a := strings.TrimSpace(entry.Author); a != "" {
 		sub = "—— 来自@" + a
 	}
-	return renderLiteraryCard(body, sub, "", fontPath)
-}
-
-// PickRandomQuote 兼容旧调用：仅返回正文。
-func PickRandomQuote(path string) (string, error) {
-	e, err := PickRandomQuoteEntry(path)
-	if err != nil {
-		return "", err
-	}
-	return e.Body, nil
-}
-
-// ReadQuoteLines 已废弃：返回各条正文（不含署名）。
-func ReadQuoteLines(path string) ([]string, error) {
-	entries, err := ReadQuoteEntries(path)
-	if err != nil {
-		return nil, err
-	}
-	lines := make([]string, len(entries))
-	for i, e := range entries {
-		lines[i] = e.Body
-	}
-	return lines, nil
+	return renderLiteraryCard(body, sub, fontPath)
 }
 
 // CountQuoteEntries 统计有效条目数。
@@ -265,7 +231,7 @@ func CountQuoteEntries(path string) (int, error) {
 	return len(entries), nil
 }
 
-// PreviewQuoteFile 读取文件前几行用于日志。
+// PreviewQuoteFile 返回文件前几行（日志用）。
 func PreviewQuoteFile(path string) string {
 	path = strings.TrimSpace(path)
 	if path == "" {
