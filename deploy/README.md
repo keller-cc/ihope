@@ -200,11 +200,22 @@ curl http://localhost/api/health
 
 | 服务 | 说明 |
 |------|------|
-| `postgres` | 数据卷 `postgres_data`，不暴露到公网 |
-| `backend` | 镜像自 `backend/Dockerfile`；上传目录卷 `uploads_data` |
+| `postgres` | 数据目录 `deploy/data/postgres`（bind mount），不暴露到公网 |
+| `backend` | 镜像自 `backend/Dockerfile`；上传目录 `deploy/data/uploads` |
 | `nginx` | 反代 REST + `/ws`；`client_max_body_size 320m` |
 
-**CentOS / RHEL / SELinux：** 若 Postgres 日志出现 `Operation not permitted` 写 `pg_wal`，compose 已为 postgres/backend 加 `security_opt: label=disable` 与卷 `:Z`。仍失败时临时 `sudo setenforce 0` 验证，然后 `docker compose down -v && docker compose up -d`。
+**CentOS / RHEL / SELinux：** Postgres 使用 **宿主机目录** `deploy/data/postgres`（非 Docker 命名卷），并设 `PGDATA=.../pgdata`。若日志仍出现 `Operation not permitted` 写 `pg_wal`：
+
+```bash
+sudo setenforce 0
+cd deploy
+docker compose down
+rm -rf data/postgres data/uploads
+mkdir -p data/postgres data/uploads
+docker compose up -d
+```
+
+compose 已为 postgres/backend 加 `security_opt: label=disable` 与卷 `:Z`。`setenforce 0` 仅用于确认是否为 SELinux；长期可保持 Enforcing + 上述 bind mount 方案。
 
 **生产 `.env` 注意：**
 

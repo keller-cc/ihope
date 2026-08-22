@@ -3,10 +3,11 @@
 # =============================================================================
 # 用法（在 deploy 目录）：
 #   cp ..\.env.example .env    # 首次；填 DB_PASSWORD、JWT_SECRET、APP_PUBLIC_URL 等
+#   mkdir -p data/postgres data/uploads
 #   docker compose up -d --build
 #   curl http://localhost/api/health
 #
-# 生产请将 APP_PUBLIC_URL 设为 https://你的域名，并用 certbot 配置 HTTPS。
+# CentOS/RHEL + SELinux：见 deploy/README.md
 # =============================================================================
 
 services:
@@ -17,8 +18,10 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-ihope}
       POSTGRES_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
       POSTGRES_DB: ${POSTGRES_DB:-ihope}
+      # 数据写在子目录，避免卷根目录权限/SELinux 边界问题
+      PGDATA: /var/lib/postgresql/data/pgdata
     volumes:
-      - postgres_data:/var/lib/postgresql/data:Z
+      - ./data/postgres:/var/lib/postgresql/data:Z
     security_opt:
       - label=disable
     healthcheck:
@@ -44,7 +47,7 @@ services:
       ADMIN_WEB_DIR: /app/admin
       FCM_CREDENTIALS_FILE: /run/secrets/fcm-service-account.json
     volumes:
-      - uploads_data:/data/uploads:Z
+      - ./data/uploads:/data/uploads:Z
       - ${FCM_CREDENTIALS_HOST_FILE:-./fcm-placeholder.json}:/run/secrets/fcm-service-account.json:ro
     security_opt:
       - label=disable
@@ -65,10 +68,6 @@ services:
       - backend
     restart: unless-stopped
     networks: [ihope_net]
-
-volumes:
-  postgres_data:
-  uploads_data:
 
 networks:
   ihope_net:
