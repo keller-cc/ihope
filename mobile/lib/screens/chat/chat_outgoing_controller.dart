@@ -154,6 +154,7 @@ class ChatOutgoingController {
     try {
       final fresh = await auth.prepareOutgoingSend(conversation());
       var fileId = msg.fileId;
+      var sendMsg = msg;
       if (fileId == null || fileId.isEmpty) {
         final encrypted = await FileAttachmentCrypto.encrypt(
           FileAttachmentCrypto.keyFromB64(att.fileKeyB64),
@@ -163,14 +164,13 @@ class ChatOutgoingController {
           conversationId: fresh.id,
           encryptedBytes: encrypted,
         );
-        onPending(
-          msg.copyWith(
-            sendStatus: MessageSendStatus.sending,
-            fileId: fileId,
-          ),
+        sendMsg = msg.copyWith(
+          sendStatus: MessageSendStatus.sending,
+          fileId: fileId,
         );
+        onPending(sendMsg);
       }
-      final plaintext = await _plaintextForSend(msg);
+      final plaintext = await _plaintextForSend(sendMsg);
       if (plaintext == null) {
         onError('无法重发：消息内容已丢失');
         return;
@@ -362,12 +362,15 @@ class ChatOutgoingController {
 
   Future<void> pickImage({ImageSource source = ImageSource.gallery}) async {
     try {
-      final file = await ImagePicker().pickImage(
-        source: source,
-        maxWidth: 1920,
-        maxHeight: 1920,
-        imageQuality: 85,
-      );
+      final picker = ImagePicker();
+      final file = source == ImageSource.gallery
+          ? await picker.pickImage(source: source)
+          : await picker.pickImage(
+              source: source,
+              maxWidth: 1920,
+              maxHeight: 1920,
+              imageQuality: 85,
+            );
       if (file == null) return;
       final name = file.name.isNotEmpty
           ? file.name
@@ -378,7 +381,7 @@ class ChatOutgoingController {
         type: 'image',
         media: MediaPayload(
           kind: 'image',
-          mime: 'image/jpeg',
+          mime: _imageMimeFromName(name),
           name: name,
           bytes: await file.readAsBytes(),
         ),
@@ -389,6 +392,21 @@ class ChatOutgoingController {
             ? '无法打开相机，请检查权限设置'
             : '无法选择图片',
       );
+    }
+  }
+
+  String _imageMimeFromName(String name) {
+    switch (p.extension(name).toLowerCase()) {
+      case '.png':
+        return 'image/png';
+      case '.webp':
+        return 'image/webp';
+      case '.gif':
+        return 'image/gif';
+      case '.heic':
+        return 'image/heic';
+      default:
+        return 'image/jpeg';
     }
   }
 

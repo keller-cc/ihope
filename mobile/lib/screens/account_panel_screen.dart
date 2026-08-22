@@ -103,7 +103,6 @@ class AccountPanelScreen extends StatelessWidget {
                       ListTile(
                         leading: const Icon(Icons.format_quote_outlined),
                         title: const Text('今日金句'),
-                        subtitle: const Text('与首页左侧面板「今日金句」同源'),
                         trailing: const Icon(Icons.chevron_right),
                         onTap: onDailyQuote,
                       ),

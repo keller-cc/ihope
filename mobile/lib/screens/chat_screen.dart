@@ -324,10 +324,14 @@ class _ChatScreenState extends State<ChatScreen> {
       if (_isStale(epoch)) return;
 
       if (cached.isNotEmpty && _messages.isEmpty) {
-        final quick =
-            widget.auth.messagesForQuickDisplay(_conversation, cached);
-        if (quick.isNotEmpty) {
-          await _presentMessages(quick, readAt: readAt);
+        final fullyCached =
+            await widget.auth.cachedMessagesFullyAvailable(cached);
+        if (!fullyCached) {
+          final quick =
+              widget.auth.messagesForQuickDisplay(_conversation, cached);
+          if (quick.isNotEmpty) {
+            await _presentMessages(quick, readAt: readAt);
+          }
         }
       }
 

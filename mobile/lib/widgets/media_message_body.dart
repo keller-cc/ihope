@@ -62,7 +62,10 @@ class _MediaMessageBodyState extends State<MediaMessageBody> {
       return;
     }
     if (widget.msg.type != 'image') return;
-    final sync = MediaLocalCache.resolvePreviewSync(widget.msg.plaintext);
+    final sync = MediaLocalCache.resolvePreviewSync(
+      widget.msg.plaintext,
+      messageId: widget.msg.id,
+    );
     if (sync == null) return;
     _media = sync;
     _loadState = _MediaLoadState.ready;
@@ -87,6 +90,9 @@ class _MediaMessageBodyState extends State<MediaMessageBody> {
       _loadState =
           _media != null ? _MediaLoadState.ready : _MediaLoadState.loading;
       if (_media == null) _seedSyncImagePreview();
+      if (_media != null) {
+        _loadState = _MediaLoadState.ready;
+      }
       unawaited(_loadMedia());
       unawaited(_prefetchFullImageIfNeeded());
     }
@@ -116,7 +122,7 @@ class _MediaMessageBodyState extends State<MediaMessageBody> {
 
   Future<void> _loadMedia() async {
     if (!mounted) return;
-    if (_media == null) {
+    if (_media == null && _loadState != _MediaLoadState.ready) {
       setState(() => _loadState = _MediaLoadState.loading);
     }
 

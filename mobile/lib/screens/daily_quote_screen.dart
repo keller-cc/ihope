@@ -97,13 +97,6 @@ class _DailyQuoteScreenState extends State<DailyQuoteScreen> {
                             ),
                       ),
                     ],
-                    const SizedBox(height: 28),
-                    Text(
-                      '与 QQ 机器人同源文案库，按日轮换。',
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color: scheme.onSurfaceVariant,
-                          ),
-                    ),
                   ],
                 ),
     );

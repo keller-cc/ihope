@@ -82,6 +82,7 @@ class _ChatHistoryMediaTabState extends State<ChatHistoryMediaTab> {
           bytesFuture: () => _loadFullImageBytes(msg),
           name: displayName,
           messageId: msg.id,
+          expectedPlaintext: msg.plaintext,
         ),
       ),
     );

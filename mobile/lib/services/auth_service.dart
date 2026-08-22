@@ -1395,8 +1395,36 @@ class AuthService {
     if (me == null) return [];
     await _ensureMessageCacheMigrated(me.id);
     final list = await messageCache.load(me.id, conversationId);
-    _messagesMem[conversationId] = list;
-    return list;
+    final enriched = await enrichCachedImagePlaintexts(conversationId, list);
+    _messagesMem[conversationId] = enriched;
+    return enriched;
+  }
+
+  /// 旧缓存缺 preview_b64 时，从本地原图补全以便再次进入聊天不转圈。
+  Future<List<ChatMessage>> enrichCachedImagePlaintexts(
+    String conversationId,
+    List<ChatMessage> messages,
+  ) async {
+    if (messages.isEmpty) return messages;
+    final out = <ChatMessage>[];
+    for (final m in messages) {
+      if (m.type != 'image' || m.plaintext == null) {
+        out.add(m);
+        continue;
+      }
+      final enriched = await MediaLocalCache.enrichLocalRefWithPreview(
+        m.id,
+        m.plaintext,
+      );
+      if (enriched != null && enriched != m.plaintext) {
+        final updated = m.copyWith(plaintext: enriched);
+        unawaited(upsertCachedMessage(conversationId, updated));
+        out.add(updated);
+      } else {
+        out.add(m);
+      }
+    }
+    return out;
   }
 
   /// 清除本地缓存（消息、媒体、表情最近使用等），不退出登录。
@@ -1431,7 +1459,16 @@ class AuthService {
     if (ChatMessage.isDecryptPlaceholder(pt)) return msg.forCacheWithoutPlaintext;
     if (ChatMessage.isDecryptFailure(pt)) return msg.forCacheWithoutPlaintext;
     if (msg.type == 'image' || msg.type == 'audio') {
-      if (MediaLocalCache.isLocalRef(pt)) return msg;
+      if (MediaLocalCache.isLocalRef(pt)) {
+        if (msg.type == 'image' && !MediaLocalCache.hasInlineImagePreview(pt)) {
+          final enriched =
+              await MediaLocalCache.enrichLocalRefWithPreview(msg.id, pt);
+          if (enriched != null && enriched != pt) {
+            return msg.copyWith(plaintext: enriched);
+          }
+        }
+        return msg;
+      }
       if (msg.type == 'image' && AttachmentPayload.tryParse(pt) != null) {
         final compact = await MediaLocalCache.persistPlaintext(msg.id, pt);
         if (compact != null) return msg.copyWith(plaintext: compact);
@@ -1561,7 +1598,8 @@ class AuthService {
     if (MediaLocalCache.isLocalRef(pt)) {
       if (type == 'audio') return true;
       if (type == 'image') {
-        return MediaLocalCache.hasInlineImagePreview(pt);
+        return MediaLocalCache.hasInlineImagePreview(pt) ||
+            MediaLocalCache.isAttachmentRef(pt);
       }
       return false;
     }

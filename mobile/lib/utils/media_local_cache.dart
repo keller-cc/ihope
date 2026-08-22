@@ -12,6 +12,8 @@ class MediaLocalCache {
 
   static const _fullImageRatio = 0.9;
 
+  static final Map<String, MediaPayload> _imagePreviewMem = {};
+
   static Future<void> clearAll() async {
     try {
       final dir = await _dir();
@@ -66,6 +68,24 @@ class MediaLocalCache {
     final media = MediaPayload.tryParse(plaintext);
     if (media != null) {
       await persistPayload(messageId, media);
+      if (media.kind == 'image') {
+        try {
+          final preview = await ImageThumbnail.generatePreview(media.bytes);
+          _rememberImagePreview(
+            messageId,
+            media.mime,
+            media.name,
+            preview,
+          );
+          return jsonEncode({
+            'media': media.kind,
+            'local': true,
+            'mime': media.mime,
+            'name': media.name,
+            'preview_b64': base64Encode(preview),
+          });
+        } catch (_) {}
+      }
       return jsonEncode({
         'media': media.kind,
         'local': true,
@@ -123,8 +143,18 @@ class MediaLocalCache {
 
   static bool hasFullImageBytes(int byteLen, String? plaintext) {
     final expected = expectedAttachmentBytes(plaintext);
-    if (expected == null || expected <= 0) return true;
-    return byteLen >= expected * _fullImageRatio;
+    if (expected != null && expected > 0) {
+      return byteLen >= expected * _fullImageRatio;
+    }
+    if (expected == 0) return false;
+    final att = AttachmentPayload.tryParse(plaintext);
+    if (att != null && att.kind == 'image') {
+      final preview = att.previewBytes ?? att.thumbBytes;
+      if (preview != null && preview.isNotEmpty) {
+        return byteLen > preview.length * 1.2;
+      }
+    }
+    return true;
   }
 
   static Future<bool> needsFullImageDownload({
@@ -191,6 +221,11 @@ class MediaLocalCache {
     final media = await load(messageId);
     if (media == null) return null;
     final att = AttachmentPayload.fromPlaintext(existingPlaintext);
+    List<int>? previewBytes = att?.previewBytes ?? att?.thumbBytes;
+    if (media.kind == 'image' &&
+        (previewBytes == null || previewBytes.isEmpty)) {
+      previewBytes = await _previewBytesForImage(messageId, media.bytes);
+    }
     return jsonEncode({
       'media': media.kind,
       'local': true,
@@ -199,11 +234,9 @@ class MediaLocalCache {
       if (att != null) ...{
         'size': att.size,
         'file_key_b64': att.fileKeyB64,
-        if (att.thumbBytes != null)
-          'thumb_b64': base64Encode(att.thumbBytes!),
-        if (att.previewBytes != null)
-          'preview_b64': base64Encode(att.previewBytes!),
       },
+      if (previewBytes != null && previewBytes.isNotEmpty)
+        'preview_b64': base64Encode(previewBytes),
     });
   }
 
@@ -224,6 +257,12 @@ class MediaLocalCache {
       }),
       flush: true,
     );
+    if (media.kind == 'image') {
+      try {
+        final preview = await ImageThumbnail.generatePreview(media.bytes);
+        _rememberImagePreview(messageId, media.mime, media.name, preview);
+      } catch (_) {}
+    }
   }
 
   static Future<MediaPayload?> load(String messageId) async {
@@ -262,6 +301,16 @@ class MediaLocalCache {
   static Future<String?> localRefFromDisk(String messageId) async {
     final media = await load(messageId);
     if (media == null) return null;
+    if (media.kind == 'image') {
+      final preview = await _previewBytesForImage(messageId, media.bytes);
+      return jsonEncode({
+        'media': media.kind,
+        'local': true,
+        'mime': media.mime,
+        'name': media.name,
+        if (preview != null) 'preview_b64': base64Encode(preview),
+      });
+    }
     return jsonEncode({
       'media': media.kind,
       'local': true,
@@ -269,6 +318,28 @@ class MediaLocalCache {
       'name': media.name,
       if (media.durationMs != null) 'duration_ms': media.durationMs,
     });
+  }
+
+  /// 本地引用缺 preview 时，从磁盘原图生成并写回 plaintext。
+  static Future<String?> enrichLocalRefWithPreview(
+    String messageId,
+    String? plaintext,
+  ) async {
+    if (plaintext == null || plaintext.isEmpty) return null;
+    if (!isLocalRef(plaintext)) return plaintext;
+    if (hasInlineImagePreview(plaintext)) return plaintext;
+    try {
+      final map = jsonDecode(plaintext) as Map<String, dynamic>;
+      if (map['media'] != 'image') return plaintext;
+      final media = await load(messageId);
+      if (media == null || media.kind != 'image') return plaintext;
+      final preview = await _previewBytesForImage(messageId, media.bytes);
+      if (preview == null) return plaintext;
+      map['preview_b64'] = base64Encode(preview);
+      return jsonEncode(map);
+    } catch (_) {
+      return plaintext;
+    }
   }
 
   /// 带正确扩展名的临时路径，供系统应用打开文件（仍在应用私有目录）。
@@ -306,7 +377,14 @@ class MediaLocalCache {
     return MediaPayload.tryParse(plaintext) != null;
   }
 
-  static MediaPayload? resolvePreviewSync(String? plaintext) {
+  static MediaPayload? resolvePreviewSync(
+    String? plaintext, {
+    String? messageId,
+  }) {
+    if (messageId != null) {
+      final mem = _imagePreviewMem[messageId];
+      if (mem != null) return mem;
+    }
     if (plaintext == null || plaintext.isEmpty) return null;
     final fromInline = _imageFromPlaintextMap(plaintext);
     if (fromInline != null) return fromInline;
@@ -321,23 +399,25 @@ class MediaLocalCache {
   }) async {
     if (plaintext == null || plaintext.isEmpty) return null;
 
-    final remoteImage = isRemoteImage(plaintext, fileId);
-    if (remoteImage) {
-      final needsFull = await needsFullImageDownload(
-        messageId: messageId,
-        plaintext: plaintext,
-        fileId: fileId,
-      );
-      if (!needsFull && await hasPayloadFile(messageId)) {
-        final local = await load(messageId);
-        if (local != null && local.kind == 'image') return local;
-      }
-    } else if (await hasPayloadFile(messageId)) {
+    final sync = resolvePreviewSync(plaintext, messageId: messageId);
+    if (sync != null) return sync;
+
+    if (await hasPayloadFile(messageId)) {
       final local = await load(messageId);
-      if (local != null && local.kind == 'image') return local;
+      if (local != null && local.kind == 'image') {
+        final preview = await _previewBytesForImage(messageId, local.bytes);
+        if (preview != null) {
+          return MediaPayload(
+            kind: 'image',
+            mime: local.mime,
+            name: local.name,
+            bytes: preview,
+          );
+        }
+      }
     }
 
-    return resolvePreviewSync(plaintext);
+    return null;
   }
 
   static MediaPayload? _imagePreviewFromAttachment(AttachmentPayload att) {
@@ -432,6 +512,41 @@ class MediaLocalCache {
       return map['file_key_b64'] is String;
     } catch (_) {
       return false;
+    }
+  }
+
+  static void _rememberImagePreview(
+    String messageId,
+    String mime,
+    String name,
+    List<int> previewBytes,
+  ) {
+    if (previewBytes.isEmpty) return;
+    _imagePreviewMem[messageId] = MediaPayload(
+      kind: 'image',
+      mime: mime,
+      name: name,
+      bytes: previewBytes,
+    );
+  }
+
+  static Future<List<int>?> _previewBytesForImage(
+    String messageId,
+    List<int> imageBytes,
+  ) async {
+    final mem = _imagePreviewMem[messageId];
+    if (mem != null && mem.bytes.isNotEmpty) return mem.bytes;
+    try {
+      final preview = await ImageThumbnail.generatePreview(imageBytes);
+      _rememberImagePreview(
+        messageId,
+        'image/jpeg',
+        'image.jpg',
+        preview,
+      );
+      return preview;
+    } catch (_) {
+      return null;
     }
   }
 }

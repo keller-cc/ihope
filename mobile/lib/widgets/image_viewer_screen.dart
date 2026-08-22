@@ -164,7 +164,14 @@ class _ImageViewerScreenState extends State<ImageViewerScreen> {
     }
     final loader = widget._bytesFuture ?? widget.onRetryLoad;
     if (loader == null) {
-      if (current != null && current.isNotEmpty) return current;
+      if (current != null &&
+          current.isNotEmpty &&
+          MediaLocalCache.hasFullImageBytes(
+            current.length,
+            widget.expectedPlaintext,
+          )) {
+        return current;
+      }
       throw StateError('无法加载原图');
     }
     final bytes = await loader();

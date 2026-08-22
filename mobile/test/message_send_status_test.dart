@@ -38,7 +38,7 @@ void main() {
       expect(msg.isCacheable, isTrue);
     });
 
-    test('failed local messages stay pending and not cacheable', () {
+    test('failed local messages stay pending and are cacheable for resend', () {
       final msg = ChatMessage(
         id: ChatMessage.newLocalId(),
         conversationId: 'c1',
@@ -50,7 +50,7 @@ void main() {
         sendStatus: MessageSendStatus.failed,
       );
       expect(msg.isPendingOutgoing, isTrue);
-      expect(msg.isCacheable, isFalse);
+      expect(msg.isCacheable, isTrue);
     });
   });
 

@@ -85,11 +85,15 @@ class ChatBubble extends StatelessWidget {
 
   Widget _bubbleChild(TextStyle textStyle) {
     final inline = MediaPayload.tryParse(msg.plaintext);
+    final preview = MediaLocalCache.resolvePreviewSync(
+      msg.plaintext,
+      messageId: msg.id,
+    );
     if (_isMedia) {
       return MediaMessageBody(
         msg: msg,
         mine: mine,
-        initialMedia: inline,
+        initialMedia: preview ?? inline,
         onMediaRetry: onMediaRetry,
       );
     }

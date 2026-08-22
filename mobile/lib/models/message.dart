@@ -51,8 +51,13 @@ class ChatMessage {
   bool get isPendingOutgoing =>
       isLocalOutgoing && sendStatus != MessageSendStatus.sent;
 
-  /// 可写入消息缓存（已送达的服务端消息）。
-  bool get isCacheable => !isLocalOutgoing && sendStatus == MessageSendStatus.sent;
+  /// 可写入消息缓存（已送达的服务端消息，或失败待重发的本机消息）。
+  bool get isCacheable {
+    if (isLocalOutgoing) {
+      return sendStatus == MessageSendStatus.failed;
+    }
+    return sendStatus == MessageSendStatus.sent;
+  }
 
   String get displayText => plaintext ?? ciphertext;
 
