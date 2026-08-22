@@ -81,7 +81,7 @@ class ChatThreadLoader {
 
   Future<void> prepareGroup(List<ChatMessage> msgs) async {
     if (!isGroup || msgs.isEmpty) return;
-    unawaited(auth.ensureGroupKeysForMessages(conversation, msgs));
+    await auth.ensureGroupKeysForMessages(conversation, msgs);
   }
 
   Future<List<ChatMessage>> resolve({
@@ -122,7 +122,13 @@ class ChatThreadLoader {
           ChatMessage.isDecryptFailure(pt)) {
         pt = await auth.cachedPlaintextForMessage(conversation.id, msg.id);
       }
-      return msg.copyWith(plaintext: pt ?? ChatMessage.decryptPlaceholder);
+      if (pt != null &&
+          pt.isNotEmpty &&
+          !ChatMessage.isDecryptPlaceholder(pt) &&
+          !ChatMessage.isDecryptFailure(pt)) {
+        return msg.copyWith(plaintext: pt);
+      }
+      return auth.decryptMessage(conversation, msg);
     }
     return auth.decryptMessage(conversation, msg);
   }

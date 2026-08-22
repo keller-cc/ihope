@@ -15,6 +15,8 @@ import '../widgets/home_connection_status.dart';
 import '../widgets/offline_banner.dart';
 import '../widgets/conversation_action_bubbles.dart';
 import '../widgets/swipe_action_tile.dart';
+import '../navigation/app_route_observer.dart';
+import '../widgets/message_in_app_banner_host.dart';
 import '../widgets/user_avatar.dart';
 import '../widgets/app_page_route.dart';
 import '../widgets/slide_from_left_route.dart';
@@ -46,7 +48,7 @@ class ConversationsScreen extends StatefulWidget {
 }
 
 class _ConversationsScreenState extends State<ConversationsScreen>
-    with WidgetsBindingObserver {
+    with WidgetsBindingObserver, RouteAware {
   List<ConversationItem> _items = [];
   List<String> _pinnedIds = [];
   final Map<String, String> _previews = {};
@@ -80,6 +82,7 @@ class _ConversationsScreenState extends State<ConversationsScreen>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    widget.auth.setMessageListHomeVisible(true);
     _load();
     widget.pendingPushConversation?.addListener(_onPendingPushConversation);
     unawaited(widget.auth.ensureRealtimeConnected());
@@ -125,6 +128,38 @@ class _ConversationsScreenState extends State<ConversationsScreen>
     setState(() => _previews[item.id] = preview);
   }
 
+  /// 从本地缓存同步末条消息（发送后 WebSocket 未回显时）。
+  Future<void> _syncLastMessageFromCache(String conversationId) async {
+    if (!mounted) return;
+    final messages = _messageCache[conversationId] ??
+        await widget.auth.loadCachedMessages(conversationId);
+    if (messages.isEmpty) return;
+    final latest = messages.reduce(
+      (a, b) => a.createdAt.compareTo(b.createdAt) >= 0 ? a : b,
+    );
+    final index = _items.indexWhere((c) => c.id == conversationId);
+    if (index < 0) return;
+    final item = _items[index];
+    final me = widget.auth.currentUser;
+    if (me == null) return;
+
+    final conv = item.copyWith(lastMessage: latest);
+    final quick = widget.auth.previewIfCached(latest);
+    final preview = quick ??
+        await widget.auth.decryptPreview(
+          conv,
+          latest,
+          cachedThread: messages,
+        );
+    if (!mounted) return;
+    setState(() {
+      _messageCache[conversationId] = messages;
+      _previews[conversationId] = preview;
+      _items[index] = conv;
+      _items = sortConversationsByPin(_items, _pinnedIds);
+    });
+  }
+
   void _onConversationUpdated(ConversationUpdatedFrame frame) {
     if (!mounted) return;
     try {
@@ -139,6 +174,7 @@ class _ConversationsScreenState extends State<ConversationsScreen>
     final idx = _items.indexWhere((c) => c.id == conv.id);
     if (idx < 0) return;
     final wasArchived = _items[idx].isArchived;
+    final prevLastId = _items[idx].lastMessage?.id;
     setState(() {
       _items[idx] = widget.auth.mergeConversationUpdate(_items[idx], conv);
       _items = sortConversationsByPin(_items, _pinnedIds);
@@ -146,10 +182,35 @@ class _ConversationsScreenState extends State<ConversationsScreen>
     if (wasArchived) {
       unawaited(widget.auth.reactivateConversation(_items[idx]));
     }
+    final newLast = _items[idx].lastMessage;
+    if (newLast != null && newLast.id != prevLastId) {
+      unawaited(_refreshPreviewFor(conv.id));
+    }
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final route = ModalRoute.of(context);
+    if (route is PageRoute) {
+      appRouteObserver.subscribe(this, route);
+    }
+  }
+
+  @override
+  void didPushNext() {
+    widget.auth.setMessageListHomeVisible(false);
+  }
+
+  @override
+  void didPopNext() {
+    widget.auth.setMessageListHomeVisible(true);
   }
 
   @override
   void dispose() {
+    appRouteObserver.unsubscribe(this);
+    widget.auth.setMessageListHomeVisible(false);
     WidgetsBinding.instance.removeObserver(this);
     widget.pendingPushConversation?.removeListener(_onPendingPushConversation);
     _msgSub?.cancel();
@@ -330,7 +391,7 @@ class _ConversationsScreenState extends State<ConversationsScreen>
       return;
     }
 
-    if (msg.senderId == me.id && conv.type != 'group') {
+    if (msg.senderId == me.id) {
       unawaited(_applyOwnMessagePreview(conv, msg));
       return;
     }
@@ -961,7 +1022,7 @@ class _ConversationsScreenState extends State<ConversationsScreen>
       return;
     }
     await _reloadMessageCache(conv.id);
-    await _refreshPreviewFor(conv.id);
+    await _syncLastMessageFromCache(conv.id);
     await _refreshUnreadCounts();
     await _refreshPinOrder();
   }
@@ -1185,7 +1246,11 @@ class _ConversationsScreenState extends State<ConversationsScreen>
       );
     }
     final visible = _filteredItems(me.id);
-    return Scaffold(
+    return MessageInAppBannerHost(
+      stream: widget.notification.inAppBannerStream,
+      scopeListenable: widget.auth.messageListHomeListenable,
+      onTapConversation: (id) => unawaited(_openConversationById(id)),
+      child: Scaffold(
       appBar: AppBar(
         title: InkWell(
           onTap: () => unawaited(_showAccountMenu()),
@@ -1415,6 +1480,7 @@ class _ConversationsScreenState extends State<ConversationsScreen>
           ),
         ],
       ),
+    ),
     );
   }
 }

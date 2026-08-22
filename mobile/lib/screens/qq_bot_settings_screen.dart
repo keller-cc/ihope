@@ -5,7 +5,7 @@ import 'package:flutter/services.dart';
 
 import '../services/auth_service.dart';
 
-/// QQ 机器人门铃 / 金句图 / 60s 读世界绑定设置。
+/// QQ 机器人：离线消息提醒、每日诗词 / 金句 / 资讯图。
 class QqBotSettingsScreen extends StatefulWidget {
   const QqBotSettingsScreen({super.key, required this.auth});
 
@@ -23,6 +23,7 @@ class _QqBotSettingsScreenState extends State<QqBotSettingsScreen> {
   bool _bound = false;
   bool _doorbell = true;
   bool _poetry = true;
+  bool _quotes = true;
   bool _news = true;
   String? _bindCode;
   String? _hint;
@@ -47,6 +48,7 @@ class _QqBotSettingsScreenState extends State<QqBotSettingsScreen> {
         _bound = s.bound;
         _doorbell = s.doorbellEnabled;
         _poetry = s.poetryEnabled;
+        _quotes = s.quotesEnabled;
         _news = s.newsEnabled;
         _loading = false;
       });
@@ -82,12 +84,18 @@ class _QqBotSettingsScreenState extends State<QqBotSettingsScreen> {
     }
   }
 
-  Future<void> _patch({bool? doorbell, bool? poetry, bool? news}) async {
+  Future<void> _patch({
+    bool? doorbell,
+    bool? poetry,
+    bool? quotes,
+    bool? news,
+  }) async {
     setState(() => _busy = true);
     try {
       final s = await widget.auth.patchQqBot(
         doorbellEnabled: doorbell,
         poetryEnabled: poetry,
+        quotesEnabled: quotes,
         newsEnabled: news,
       );
       if (!mounted) return;
@@ -95,6 +103,7 @@ class _QqBotSettingsScreenState extends State<QqBotSettingsScreen> {
         _bound = s.bound;
         _doorbell = s.doorbellEnabled;
         _poetry = s.poetryEnabled;
+        _quotes = s.quotesEnabled;
         _news = s.newsEnabled;
         _busy = false;
       });
@@ -138,11 +147,14 @@ class _QqBotSettingsScreenState extends State<QqBotSettingsScreen> {
                 if (_error != null)
                   Padding(
                     padding: const EdgeInsets.only(bottom: 12),
-                    child: Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
+                    child: Text(
+                      _error!,
+                      style: TextStyle(color: Theme.of(context).colorScheme.error),
+                    ),
                   ),
                 if (!_botEnabled)
                   const Text(
-                    '服务端尚未启用 QQ 机器人（QQ_BOT_ENABLED）。启用并配置官方 AppID 后即可使用离线门铃与每日图卡。',
+                    '服务端尚未启用 QQ 机器人（QQ_BOT_ENABLED）。启用并配置官方 AppID 后，可使用离线消息提醒与每日图文推送。',
                   )
                 else ...[
                   Text(
@@ -152,8 +164,8 @@ class _QqBotSettingsScreenState extends State<QqBotSettingsScreen> {
                   const SizedBox(height: 8),
                   Text(
                     _hint ??
-                        '在 App 获取绑定码 → QQ 添加 IHope 机器人 → 将绑定码发给机器人。'
-                        '离线时门铃为文字；金句与「60s读世界」为图片。',
+                        '在 App 获取绑定码 → QQ 添加官方机器人 → 将绑定码发给机器人。'
+                        '离线时为文字提醒；诗词、金句与资讯为图片推送。',
                   ),
                   const SizedBox(height: 16),
                   if (!_bound) ...[
@@ -188,24 +200,32 @@ class _QqBotSettingsScreenState extends State<QqBotSettingsScreen> {
                     ],
                   ] else ...[
                     SwitchListTile(
-                      title: const Text('离线门铃'),
-                      subtitle: const Text('不在线时 QQ 提醒「有人发来一条消息」'),
+                      title: const Text('离线消息提醒'),
+                      subtitle: const Text('不在线时通过 QQ 通知你有新聊天消息'),
                       value: _doorbell,
                       onChanged: _busy
                           ? null
                           : (v) => unawaited(_patch(doorbell: v)),
                     ),
                     SwitchListTile(
-                      title: const Text('每日金句（图片）'),
-                      subtitle: const Text('诗词图卡，也可在 QQ 发送「金句」'),
+                      title: const Text('每日诗词（图片）'),
+                      subtitle: const Text('古典诗词图卡；QQ 可发送「诗词」立即获取'),
                       value: _poetry,
                       onChanged: _busy
                           ? null
                           : (v) => unawaited(_patch(poetry: v)),
                     ),
                     SwitchListTile(
-                      title: const Text('每日 60s 读世界（图片）'),
-                      subtitle: const Text('资讯原图，也可在 QQ 发送「新闻」'),
+                      title: const Text('每日金句（图片）'),
+                      subtitle: const Text('服务端文案库；设置里可阅「今日金句」'),
+                      value: _quotes,
+                      onChanged: _busy
+                          ? null
+                          : (v) => unawaited(_patch(quotes: v)),
+                    ),
+                    SwitchListTile(
+                      title: const Text('每日资讯（图片）'),
+                      subtitle: const Text('60s 读世界；QQ 可发送「新闻」'),
                       value: _news,
                       onChanged: _busy
                           ? null

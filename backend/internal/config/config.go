@@ -38,6 +38,7 @@ type Config struct {
 	ServerVersion         string
 	DrainSeconds          int
 	AppDownloadURL        string
+	GithubReleasesURL     string
 	PushDriver            string
 	FCMServerKey          string
 	FCMCredentialsFile    string
@@ -54,10 +55,13 @@ type Config struct {
 	QQPoetryAPIURL       string
 	QQNews60sAPIURL      string
 	QQPoetryFontPath     string
+	QQQuotesFilePath     string
 	QQDailyPoetryHHMM    string
+	QQDailyQuotesHHMM    string
 	QQDailyNewsHHMM      string
 	QQDoorbellCooldownSec int
 	QQBotAddHint         string
+	QQBotSyncMenuPanel   bool
 }
 
 // Load 读取 .env 与环境变量。
@@ -97,6 +101,7 @@ func Load() Config {
 		ServerVersion:         env("SERVER_VERSION", "2026-07-03 0.1.0 version"),
 		DrainSeconds:          envInt("DRAIN_SECONDS", 15),
 		AppDownloadURL:        env("APP_DOWNLOAD_URL", ""),
+		GithubReleasesURL:     env("APP_GITHUB_RELEASES_URL", "https://github.com/keller-cc/ihope/releases"),
 		PushDriver:        env("PUSH_DRIVER", "log"),
 		FCMServerKey:       env("FCM_SERVER_KEY", ""),
 		FCMCredentialsFile: env("FCM_CREDENTIALS_FILE", ""),
@@ -113,10 +118,13 @@ func Load() Config {
 		QQPoetryAPIURL:       env("QQ_POETRY_API_URL", "https://v1.hitokoto.cn/?c=i"),
 		QQNews60sAPIURL:      env("QQ_NEWS_60S_API_URL", "https://60s.viki.moe/v2/60s?encoding=image-proxy"),
 		QQPoetryFontPath:     env("QQ_POETRY_FONT_PATH", ""),
+		QQQuotesFilePath:     env("QQ_QUOTES_FILE_PATH", ""),
 		QQDailyPoetryHHMM:    env("QQ_DAILY_POETRY_HHMM", "08:00"),
+		QQDailyQuotesHHMM:    env("QQ_DAILY_QUOTES_HHMM", "08:02"),
 		QQDailyNewsHHMM:      env("QQ_DAILY_NEWS_HHMM", "08:05"),
 		QQDoorbellCooldownSec: envInt("QQ_DOORBELL_COOLDOWN_SEC", 600),
-		QQBotAddHint:         env("QQ_BOT_ADD_HINT", "请在 QQ 中添加 IHope 机器人，并将绑定码发送给它"),
+		QQBotAddHint:         env("QQ_BOT_ADD_HINT", "请在 QQ 中添加 IHope 官方机器人，并将绑定码发送给它"),
+		QQBotSyncMenuPanel:   envBool("QQ_BOT_SYNC_MENU_PANEL", true),
 	}
 }
 

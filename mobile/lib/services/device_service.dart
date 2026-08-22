@@ -11,6 +11,8 @@ class UserDeviceItem {
     required this.lastActiveAt,
     required this.hasSession,
     required this.isCurrent,
+    this.online = false,
+    this.sessionState = 'none',
   });
 
   final String deviceId;
@@ -19,6 +21,8 @@ class UserDeviceItem {
   final DateTime lastActiveAt;
   final bool hasSession;
   final bool isCurrent;
+  final bool online;
+  final String sessionState;
 
   factory UserDeviceItem.fromJson(Map<String, dynamic> json) {
     return UserDeviceItem(
@@ -29,6 +33,8 @@ class UserDeviceItem {
           DateTime.fromMillisecondsSinceEpoch(0),
       hasSession: json['has_session'] as bool? ?? false,
       isCurrent: json['is_current'] as bool? ?? false,
+      online: json['online'] as bool? ?? false,
+      sessionState: json['session_state'] as String? ?? 'none',
     );
   }
 
@@ -39,11 +45,27 @@ class UserDeviceItem {
     return deviceId;
   }
 
-  String subtitle() {
+  String statusLabel({bool currentDeviceWsConnected = false}) {
+    if (isCurrent && currentDeviceWsConnected) return '连接中';
+    switch (sessionState) {
+      case 'online':
+        return '连接中';
+      case 'logged_in':
+        return '已登录';
+      case 'idle':
+        return '闲置';
+      case 'none':
+        return '未登录';
+      default:
+        return hasSession ? '已登录' : '未登录';
+    }
+  }
+
+  String subtitle({bool currentDeviceWsConnected = false}) {
     final parts = <String>[];
     if (platform.isNotEmpty) parts.add(platform);
     parts.add(DateFormat('yyyy-MM-dd HH:mm').format(lastActiveAt.toLocal()));
-    if (hasSession) parts.add('已登录');
+    parts.add(statusLabel(currentDeviceWsConnected: currentDeviceWsConnected));
     if (isCurrent) parts.add('本机');
     return parts.join(' · ');
   }

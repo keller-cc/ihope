@@ -8,6 +8,7 @@ import '../services/auth_service.dart';
 import '../services/notification_service.dart';
 import '../widgets/app_page_route.dart';
 import 'change_password_screen.dart';
+import 'daily_quote_screen.dart';
 import 'device_link_screen.dart';
 import 'devices_screen.dart';
 import 'notification_settings_screen.dart';
@@ -66,14 +67,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ListTile(
             leading: const Icon(Icons.lock_outline),
             title: const Text('修改密码'),
-            subtitle: const Text('修改后需重新登录'),
             trailing: const Icon(Icons.chevron_right),
             onTap: () => unawaited(_openChangePassword()),
           ),
           ListTile(
             leading: const Icon(Icons.devices_outlined),
             title: const Text('已登录设备'),
-            subtitle: const Text('查看并踢下线其它设备'),
             trailing: const Icon(Icons.chevron_right),
             onTap: () async {
               final navigator = Navigator.of(context);
@@ -91,7 +90,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ListTile(
             leading: const Icon(Icons.qr_code_scanner_outlined),
             title: const Text('链接设备'),
-            subtitle: const Text('扫码同步加密密钥到其它设备'),
             trailing: const Icon(Icons.chevron_right),
             onTap: () {
               Navigator.of(context).push<void>(
@@ -106,7 +104,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ListTile(
             leading: const Icon(Icons.notifications_outlined),
             title: const Text('通知'),
-            subtitle: const Text('后台新消息系统横幅'),
             trailing: const Icon(Icons.chevron_right),
             onTap: () {
               Navigator.of(context).push<void>(
@@ -120,9 +117,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
             },
           ),
           ListTile(
+            leading: const Icon(Icons.format_quote_outlined),
+            title: const Text('今日金句'),
+            subtitle: const Text('服务端文案库，保留原文段落'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () {
+              Navigator.of(context).push<void>(
+                appPageRoute(
+                  builder: (_) => DailyQuoteScreen(auth: widget.auth),
+                ),
+              );
+            },
+          ),
+          ListTile(
             leading: const Icon(Icons.chat_outlined),
             title: const Text('QQ 提醒'),
-            subtitle: const Text('离线门铃 · 金句图 · 60s读世界'),
             trailing: const Icon(Icons.chevron_right),
             onTap: () {
               Navigator.of(context).push<void>(
@@ -158,7 +167,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ListTile(
             leading: const Icon(Icons.storage_outlined),
             title: const Text('存储与数据管理'),
-            subtitle: const Text('清除缓存、重置本地会话数据'),
             trailing: const Icon(Icons.chevron_right),
             onTap: () {
               Navigator.of(context).push<void>(

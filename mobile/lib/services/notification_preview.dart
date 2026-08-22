@@ -26,6 +26,20 @@ String senderDisplayName(ConversationItem conv, String senderId) {
   return '?';
 }
 
+String fastNotificationBody(
+  ConversationItem? conv,
+  ChatMessage msg, {
+  String? cachedPreview,
+}) {
+  if (cachedPreview != null && cachedPreview.isNotEmpty) {
+    if (conv != null && conv.type == 'group') {
+      return '${senderDisplayName(conv, msg.senderId)}: $cachedPreview';
+    }
+    return cachedPreview;
+  }
+  return notificationTypeFallback(msg.type);
+}
+
 /// 解密后生成通知正文；失败时返回类型占位，不含密文。
 Future<String> buildNotificationBody(
   AuthService auth,

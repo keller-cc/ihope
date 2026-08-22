@@ -59,7 +59,16 @@ class _SwipeActionTileState extends State<SwipeActionTile> {
   }
 
   void _onHorizontalDragEnd(DragEndDetails details) {
-    final open = _offset.abs() > _maxOffset * 0.35;
+    final vx = details.velocity.pixelsPerSecond.dx;
+    if (vx > 200) {
+      setState(() => _offset = 0);
+      return;
+    }
+    if (vx < -200) {
+      setState(() => _offset = -_maxOffset);
+      return;
+    }
+    final open = _offset.abs() > _maxOffset * 0.22;
     setState(() => _offset = open ? -_maxOffset : 0);
   }
 
@@ -102,6 +111,7 @@ class _SwipeActionTileState extends State<SwipeActionTile> {
   @override
   Widget build(BuildContext context) {
     final surface = Theme.of(context).colorScheme.surface;
+    final exposedWidth = _offset.abs();
 
     return ClipRect(
       child: Stack(
@@ -115,6 +125,18 @@ class _SwipeActionTileState extends State<SwipeActionTile> {
               children: widget.actions.map(_buildBubble).toList(),
             ),
           ),
+          if (_isOpen && exposedWidth > 0)
+            Positioned(
+              left: 0,
+              width: exposedWidth,
+              top: 0,
+              bottom: 0,
+              child: GestureDetector(
+                onTap: _close,
+                behavior: HitTestBehavior.opaque,
+                child: const SizedBox.expand(),
+              ),
+            ),
           Transform.translate(
             offset: Offset(_offset, 0),
             child: RawGestureDetector(
@@ -134,9 +156,12 @@ class _SwipeActionTileState extends State<SwipeActionTile> {
                 onHorizontalDragEnd: _onHorizontalDragEnd,
                 onTap: _isOpen ? _close : null,
                 behavior: HitTestBehavior.opaque,
-                child: Material(
-                  color: surface,
-                  child: widget.child,
+                child: AbsorbPointer(
+                  absorbing: _isOpen,
+                  child: Material(
+                    color: surface,
+                    child: widget.child,
+                  ),
                 ),
               ),
             ),

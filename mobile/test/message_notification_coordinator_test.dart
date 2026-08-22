@@ -4,9 +4,10 @@ import 'package:ihope/services/message_notification_coordinator.dart';
 
 void main() {
   group('shouldShowInAppMessageBanner', () {
-    test('shows on home screen when not viewing chat', () {
+    test('shows on message list when not viewing chat', () {
       expect(
         shouldShowInAppMessageBanner(
+          onMessageListHome: true,
           activelyViewingConversation: false,
           isFromPeer: true,
         ),
@@ -14,9 +15,21 @@ void main() {
       );
     });
 
+    test('suppresses when not on message list home', () {
+      expect(
+        shouldShowInAppMessageBanner(
+          onMessageListHome: false,
+          activelyViewingConversation: false,
+          isFromPeer: true,
+        ),
+        isFalse,
+      );
+    });
+
     test('suppresses when actively viewing conversation', () {
       expect(
         shouldShowInAppMessageBanner(
+          onMessageListHome: true,
           activelyViewingConversation: true,
           isFromPeer: true,
         ),

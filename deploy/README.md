@@ -114,8 +114,12 @@ docker logs ihope-postgres-dev --tail 30            # 日志
 | `EMAIL_VERIFY_TTL_MIN` | 注册验证链接有效期（分钟，默认 1440） |
 | `QQ_BOT_ENABLED` / `QQ_BOT_APP_ID` / `QQ_BOT_APP_SECRET` | QQ 官方机器人门铃与每日图卡 |
 | `QQ_WEBHOOK_PATH` | 默认 `/api/webhooks/qq`；开放平台回调填 `{APP_PUBLIC_URL}` + 该路径 |
-| `QQ_POETRY_FONT_PATH` | 金句 PNG 用中文字体（本机或容器内路径） |
+| `QQ_POETRY_FONT_PATH` | 金句 PNG 用中文字体（**容器内**路径，如 `/opt/ihope/fonts/MSYH.TTC`） |
+| `QQ_QUOTES_FILE_PATH` | 金句文案库（容器内路径，如 `/opt/ihope/quotes/quotes.txt`） |
+| `QQ_QUOTES_HOST_DIR` | 宿主机金句目录，挂载到 `/opt/ihope/quotes`（默认 `deploy/quotes`） |
+| `QQ_POETRY_FONT_HOST_DIR` | 宿主机字体目录，挂载到 `/opt/ihope/fonts`（默认 `deploy/fonts`） |
 | `QQ_DAILY_POETRY_HHMM` / `QQ_DAILY_NEWS_HHMM` | 每日推送时刻 |
+| `QQ_BOT_SYNC_MENU_PANEL` | 启动时同步单聊底部菜单与「/」指令面板（OpenAPI，默认 `true`） |
 | `FCM_CREDENTIALS_FILE` | 海外 FCM v1 服务账号 JSON（可选） |
 | `FCM_CREDENTIALS_HOST_FILE` | Docker 宿主机 JSON 挂载路径 |
 | `FCM_PROJECT_ID` | Firebase 项目 ID（可省略） |
@@ -123,6 +127,12 @@ docker logs ihope-postgres-dev --tail 30            # 日志
 | `JPUSH_*` | 极光（后端遗留可选；App 已不集成） |
 
 推送 / QQ 门铃见 [docs/推送配置指南.md](../docs/推送配置指南.md)。
+
+**金句文件格式**（`deploy/quotes/quotes.example.txt` 已整理为范例）：条目之间单独一行 `---`；正文可多段换行；可选末尾 `来自@昵称`。App **设置 → 今日金句** 与 QQ 推送共用该文件；接口 `GET /api/quotes/today`（需登录）。
+
+```bash
+cp deploy/quotes/quotes.example.txt deploy/quotes/quotes.txt
+```
 
 ### 客户端可见配置（env → `/api/health`）
 

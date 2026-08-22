@@ -121,6 +121,8 @@ class WsService {
       StreamController<ConversationRemovedFrame>.broadcast();
   final _conversationUpdatedController =
       StreamController<ConversationUpdatedFrame>.broadcast();
+  final _sessionRevokedController = StreamController<void>.broadcast();
+  final _devicesChangedController = StreamController<void>.broadcast();
   final _connectionController = StreamController<bool>.broadcast();
   bool _connected = false;
 
@@ -137,6 +139,8 @@ class WsService {
       _conversationRemovedController.stream;
   Stream<ConversationUpdatedFrame> get onConversationUpdated =>
       _conversationUpdatedController.stream;
+  Stream<void> get onSessionRevoked => _sessionRevokedController.stream;
+  Stream<void> get onDevicesChanged => _devicesChangedController.stream;
   Stream<bool> get onConnectionChanged => _connectionController.stream;
   bool get isConnected => _connected;
 
@@ -480,6 +484,18 @@ class WsService {
           _conversationUpdatedController,
           ConversationUpdatedFrame(conversation: conv),
         );
+      }
+      return;
+    }
+    if (event == 'session_revoked') {
+      if (!_sessionRevokedController.isClosed) {
+        _sessionRevokedController.add(null);
+      }
+      return;
+    }
+    if (event == 'devices_changed') {
+      if (!_devicesChangedController.isClosed) {
+        _devicesChangedController.add(null);
       }
     }
   }

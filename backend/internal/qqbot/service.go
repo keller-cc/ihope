@@ -16,7 +16,7 @@ type OnlineUserCheck interface {
 	IsUserOnline(userID string) bool
 }
 
-// Service QQ 门铃与增值推送。
+// Service QQ 机器人消息提醒与定时图文推送。
 type Service struct {
 	cfg    config.Config
 	store  *Store
@@ -35,7 +35,7 @@ func (s *Service) Enabled() bool {
 		strings.TrimSpace(s.cfg.QQBotAppSecret) != ""
 }
 
-// NotifyDoorbell 用户完全离线且已绑定门铃时发送占位文本。
+// NotifyDoorbell 用户离线且已开启消息提醒时发送短文通知。
 func (s *Service) NotifyDoorbell(ctx context.Context, userID, senderHint string) {
 	if !s.Enabled() {
 		return
@@ -55,9 +55,9 @@ func (s *Service) NotifyDoorbell(ctx context.Context, userID, senderHint string)
 	if senderHint == "" {
 		senderHint = "有人"
 	}
-	text := fmt.Sprintf("%s 发来一条消息，请打开 IHope 查看。", senderHint)
+	text := fmt.Sprintf("您有新的聊天消息（%s），请打开 IHope 查看。", senderHint)
 	if err := s.client.SendText(ctx, b.QQOpenID, text, "", 0); err != nil {
-		log.Printf("qqbot doorbell user=%s: %v", userID, err)
+		log.Printf("qqbot notify user=%s: %v", userID, err)
 		return
 	}
 	_ = s.store.TouchDoorbell(ctx, userID)
@@ -72,7 +72,6 @@ func (s *Service) HandleInboundText(ctx context.Context, openID, content, msgID 
 		return
 	}
 
-	// 绑定码：全数字 6～8 位
 	if isBindCode(content) {
 		userID, err := s.store.ConsumeBindCode(ctx, content, openID)
 		if err != nil {
@@ -80,7 +79,7 @@ func (s *Service) HandleInboundText(ctx context.Context, openID, content, msgID 
 			return
 		}
 		_ = s.client.SendText(ctx, openID,
-			"绑定成功。可用指令：帮助 / 金句 / 新闻 / 门铃开|关 / 金句开|关 / 新闻开|关 / 解绑",
+			"绑定成功。发送「帮助」查看指令：诗词、金句、新闻、消息提醒开|关、诗词开|关、金句开|关、新闻开|关、解绑。",
 			msgID, 1)
 		log.Printf("qqbot bound user=%s openid=%s…", userID, truncate(openID, 8))
 		return
@@ -96,34 +95,44 @@ func (s *Service) HandleInboundText(ctx context.Context, openID, content, msgID 
 	switch cmd {
 	case "帮助", "help":
 		_ = s.client.SendText(ctx, openID, helpText(), msgID, 1)
-	case "金句", "诗词":
+	case "诗词":
 		s.replyPoetry(ctx, b.QQOpenID, msgID)
+	case "金句":
+		s.replyQuote(ctx, b.QQOpenID, msgID)
 	case "新闻", "60s", "读世界":
 		s.replyNews(ctx, b.QQOpenID, msgID)
-	case "门铃开":
+	case "消息提醒开", "门铃开":
 		t := true
-		_ = s.store.UpdateFlags(ctx, b.UserID, &t, nil, nil)
-		_ = s.client.SendText(ctx, openID, "已开启离线门铃。", msgID, 1)
-	case "门铃关":
+		_ = s.store.UpdateFlags(ctx, b.UserID, &t, nil, nil, nil)
+		_ = s.client.SendText(ctx, openID, "已开启离线消息提醒。", msgID, 1)
+	case "消息提醒关", "门铃关":
 		f := false
-		_ = s.store.UpdateFlags(ctx, b.UserID, &f, nil, nil)
-		_ = s.client.SendText(ctx, openID, "已关闭离线门铃。", msgID, 1)
+		_ = s.store.UpdateFlags(ctx, b.UserID, &f, nil, nil, nil)
+		_ = s.client.SendText(ctx, openID, "已关闭离线消息提醒。", msgID, 1)
+	case "诗词开":
+		t := true
+		_ = s.store.UpdateFlags(ctx, b.UserID, nil, &t, nil, nil)
+		_ = s.client.SendText(ctx, openID, "已开启每日诗词推送。", msgID, 1)
+	case "诗词关":
+		f := false
+		_ = s.store.UpdateFlags(ctx, b.UserID, nil, &f, nil, nil)
+		_ = s.client.SendText(ctx, openID, "已关闭每日诗词推送。", msgID, 1)
 	case "金句开":
 		t := true
-		_ = s.store.UpdateFlags(ctx, b.UserID, nil, &t, nil)
-		_ = s.client.SendText(ctx, openID, "已开启每日金句图片。", msgID, 1)
+		_ = s.store.UpdateFlags(ctx, b.UserID, nil, nil, &t, nil)
+		_ = s.client.SendText(ctx, openID, "已开启每日金句推送。", msgID, 1)
 	case "金句关":
 		f := false
-		_ = s.store.UpdateFlags(ctx, b.UserID, nil, &f, nil)
-		_ = s.client.SendText(ctx, openID, "已关闭每日金句。", msgID, 1)
+		_ = s.store.UpdateFlags(ctx, b.UserID, nil, nil, &f, nil)
+		_ = s.client.SendText(ctx, openID, "已关闭每日金句推送。", msgID, 1)
 	case "新闻开":
 		t := true
-		_ = s.store.UpdateFlags(ctx, b.UserID, nil, nil, &t)
-		_ = s.client.SendText(ctx, openID, "已开启每日 60s 读世界图片。", msgID, 1)
+		_ = s.store.UpdateFlags(ctx, b.UserID, nil, nil, nil, &t)
+		_ = s.client.SendText(ctx, openID, "已开启每日资讯推送（60s 读世界）。", msgID, 1)
 	case "新闻关":
 		f := false
-		_ = s.store.UpdateFlags(ctx, b.UserID, nil, nil, &f)
-		_ = s.client.SendText(ctx, openID, "已关闭每日新闻。", msgID, 1)
+		_ = s.store.UpdateFlags(ctx, b.UserID, nil, nil, nil, &f)
+		_ = s.client.SendText(ctx, openID, "已关闭每日资讯推送。", msgID, 1)
 	case "解绑":
 		_ = s.store.Unbind(ctx, b.UserID)
 		_ = s.client.SendText(ctx, openID, "已解绑。如需再次使用请重新绑定。", msgID, 1)
@@ -135,23 +144,43 @@ func (s *Service) HandleInboundText(ctx context.Context, openID, content, msgID 
 func (s *Service) replyPoetry(ctx context.Context, openID, msgID string) {
 	q, err := FetchPoetry(ctx, s.cfg.QQPoetryAPIURL)
 	if err != nil {
-		_ = s.client.SendText(ctx, openID, "金句获取失败，请稍后再试。", msgID, 1)
+		_ = s.client.SendText(ctx, openID, "诗词获取失败，请稍后再试。", msgID, 1)
 		return
 	}
 	png, err := RenderPoetryCard(q, s.cfg.QQPoetryFontPath)
 	if err != nil {
-		_ = s.client.SendText(ctx, openID, "金句图片生成失败（请检查字体配置）。", msgID, 1)
+		_ = s.client.SendText(ctx, openID, "诗词图片生成失败（请检查字体配置）。", msgID, 1)
 		log.Printf("qqbot poetry render: %v", err)
 		return
 	}
+	s.sendImageCard(ctx, openID, msgID, png, "诗词")
+}
+
+func (s *Service) replyQuote(ctx context.Context, openID, msgID string) {
+	entry, err := PickRandomQuoteEntry(s.cfg.QQQuotesFilePath)
+	if err != nil {
+		_ = s.client.SendText(ctx, openID, "金句读取失败（请检查 QQ_QUOTES_FILE_PATH 与文件内容）。", msgID, 1)
+		log.Printf("qqbot quote pick: %v", err)
+		return
+	}
+	png, err := RenderQuoteCard(entry, s.cfg.QQPoetryFontPath)
+	if err != nil {
+		_ = s.client.SendText(ctx, openID, "金句图片生成失败（请检查字体配置）。", msgID, 1)
+		log.Printf("qqbot quote render: %v", err)
+		return
+	}
+	s.sendImageCard(ctx, openID, msgID, png, "金句")
+}
+
+func (s *Service) sendImageCard(ctx context.Context, openID, msgID string, png []byte, kind string) {
 	url, err := s.media.Put(png, time.Hour)
 	if err != nil {
-		_ = s.client.SendText(ctx, openID, "金句图片暂存失败。", msgID, 1)
+		_ = s.client.SendText(ctx, openID, kind+"图片暂存失败。", msgID, 1)
 		return
 	}
 	if err := s.client.SendImagePNG(ctx, openID, png, url, msgID, 1); err != nil {
-		log.Printf("qqbot poetry send: %v", err)
-		_ = s.client.SendText(ctx, openID, "金句图片发送失败。", msgID, 1)
+		log.Printf("qqbot %s send: %v", kind, err)
+		_ = s.client.SendText(ctx, openID, kind+"图片发送失败。", msgID, 1)
 	}
 }
 
@@ -159,18 +188,10 @@ func (s *Service) replyNews(ctx context.Context, openID, msgID string) {
 	png, err := Fetch60sImage(ctx, s.cfg.QQNews60sAPIURL)
 	if err != nil {
 		log.Printf("qqbot 60s fetch: %v", err)
-		_ = s.client.SendText(ctx, openID, "60s 读世界获取失败，请稍后再试。", msgID, 1)
+		_ = s.client.SendText(ctx, openID, "资讯图片获取失败，请稍后再试。", msgID, 1)
 		return
 	}
-	url, err := s.media.Put(png, time.Hour)
-	if err != nil {
-		_ = s.client.SendText(ctx, openID, "新闻图片暂存失败。", msgID, 1)
-		return
-	}
-	if err := s.client.SendImagePNG(ctx, openID, png, url, msgID, 1); err != nil {
-		log.Printf("qqbot 60s send: %v", err)
-		_ = s.client.SendText(ctx, openID, "新闻图片发送失败。", msgID, 1)
-	}
+	s.sendImageCard(ctx, openID, msgID, png, "资讯")
 }
 
 func (s *Service) BroadcastPoetry(ctx context.Context) {
@@ -200,6 +221,38 @@ func (s *Service) BroadcastPoetry(ctx context.Context) {
 	for _, b := range list {
 		if err := s.client.SendImagePNG(ctx, b.QQOpenID, png, url, "", 0); err != nil {
 			log.Printf("qqbot daily poetry to %s: %v", truncate(b.QQOpenID, 8), err)
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+}
+
+func (s *Service) BroadcastQuotes(ctx context.Context) {
+	if !s.Enabled() {
+		return
+	}
+	text, err := PickRandomQuoteEntry(s.cfg.QQQuotesFilePath)
+	if err != nil {
+		log.Printf("qqbot daily quote pick: %v", err)
+		return
+	}
+	png, err := RenderQuoteCard(text, s.cfg.QQPoetryFontPath)
+	if err != nil {
+		log.Printf("qqbot daily quote render: %v", err)
+		return
+	}
+	url, err := s.media.Put(png, 2*time.Hour)
+	if err != nil {
+		log.Printf("qqbot daily quote media: %v", err)
+		return
+	}
+	list, err := s.store.ListQuoteSubscribers(ctx)
+	if err != nil {
+		log.Printf("qqbot daily quote list: %v", err)
+		return
+	}
+	for _, b := range list {
+		if err := s.client.SendImagePNG(ctx, b.QQOpenID, png, url, "", 0); err != nil {
+			log.Printf("qqbot daily quote to %s: %v", truncate(b.QQOpenID, 8), err)
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
@@ -235,10 +288,11 @@ func (s *Service) BroadcastNews(ctx context.Context) {
 func helpText() string {
 	return strings.TrimSpace(`
 IHope QQ 助手
-· 离线门铃：有人发消息时提醒你打开 App
-· 金句 / 诗词：立即发送诗词图卡
-· 新闻 / 60s / 读世界：每天60秒读懂世界图片
-· 门铃开|关　金句开|关　新闻开|关
+· 消息提醒：离线时通知你有新聊天消息
+· 诗词：发送古典诗词图卡（网络摘录）
+· 金句：发送自定义金句图卡（服务端文案库，保留段落格式）
+· 新闻 / 60s / 读世界：每日资讯图片
+· 消息提醒开|关　诗词开|关　金句开|关　新闻开|关
 · 解绑
 `)
 }

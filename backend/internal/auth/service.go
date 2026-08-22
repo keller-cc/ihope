@@ -24,14 +24,19 @@ var (
 
 // Service 账号业务逻辑，依赖 user.Repository 持久化、JWTManager 签发令牌、mail.Sender 发信。
 type Service struct {
-	cfg    config.Config
-	users  *user.Repository
-	jwt    *jwt.Manager
-	mailer mail.Sender
+	cfg           config.Config
+	users         *user.Repository
+	jwt           *jwt.Manager
+	mailer        mail.Sender
+	sessionRevoker user.SessionRevoker
 }
 
 func NewService(cfg config.Config, users *user.Repository, jwtMgr *jwt.Manager, mailer mail.Sender) *Service {
 	return &Service{cfg: cfg, users: users, jwt: jwtMgr, mailer: mailer}
+}
+
+func (s *Service) SetSessionRevoker(revoker user.SessionRevoker) {
+	s.sessionRevoker = revoker
 }
 
 type RegisterResult struct {
@@ -282,7 +287,13 @@ func (s *Service) Logout(ctx context.Context, userID, deviceID string) error {
 	if err == user.ErrNotFound {
 		return nil
 	}
-	return err
+	if err != nil {
+		return err
+	}
+	if s.sessionRevoker != nil {
+		s.sessionRevoker.RevokeDeviceSession(userID, deviceID)
+	}
+	return nil
 }
 
 func (s *Service) ChangePassword(ctx context.Context, userID, currentPassword, newPassword string) error {

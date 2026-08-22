@@ -87,10 +87,11 @@ func NewTestServer(t *testing.T) *server.Server {
 	msgRepo := message.NewRepository(pool)
 
 	jwtMgr := jwt.NewManager(cfg.JWTSecret, cfg.JWTAccessTTL)
+	hub := ws.NewHub()
 	authSvc := auth.NewService(cfg, userRepo, jwtMgr, mail.New(cfg))
+	authSvc.SetSessionRevoker(hub)
 	convSvc := conversation.NewService(convRepo, userRepo)
 
-	hub := ws.NewHub()
 	fileRepo := filestore.NewRepository(pool)
 	fileSvc := filestore.NewService(fileRepo, convRepo, cfg.UploadDir, cfg.MaxEncryptedFileBytes)
 	msgSvc := message.NewService(msgRepo, convRepo, fileSvc)
@@ -109,7 +110,7 @@ func NewTestServer(t *testing.T) *server.Server {
 	return server.New(
 		cfg,
 		auth.NewHandler(authSvc),
-		user.NewHandler(userRepo, cfg),
+		user.NewHandler(userRepo, cfg, hub, hub),
 		userRepo,
 		jwtMgr,
 		conversation.NewHandler(convSvc, convNotify, convSys, cfg),

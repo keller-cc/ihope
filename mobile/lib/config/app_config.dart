@@ -1,4 +1,5 @@
 import '../services/api_client.dart';
+import 'app_release_config.dart';
 
 /// 从 `GET /api/health` 同步客户端可见配置（env 驱动，改 env 后重启后端生效）。
 class AppConfig {
@@ -36,6 +37,10 @@ class AppConfig {
       if (dl is String) {
         appDownloadUrl = dl;
       }
+      final gh = client['github_releases_url'];
+      if (gh is String && gh.isNotEmpty) {
+        AppReleaseConfig.githubReleasesUrl = gh;
+      }
     } catch (_) {
       // 保留上次或默认值
     }
@@ -46,5 +51,7 @@ class AppConfig {
     cloudDriveUrl = _defaultCloudDriveUrl;
     serverVersion = '';
     appDownloadUrl = '';
+    AppReleaseConfig.githubReleasesUrl =
+        AppReleaseConfig.defaultGithubReleasesUrl;
   }
 }

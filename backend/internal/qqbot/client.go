@@ -16,7 +16,7 @@ import (
 
 const (
 	tokenURL   = "https://bots.qq.com/app/getAppAccessToken"
-	apiBaseURL = "https://api.sgroup.qq.com"
+	apiBaseURL = "https://api.bot.qq.com"
 )
 
 // Client 官方 QQ 机器人 OpenAPI。
@@ -216,4 +216,40 @@ func (c *Client) uploadImage(ctx context.Context, openID string, png []byte, pub
 		return "", fmt.Errorf("qq upload: empty file_info")
 	}
 	return parsed.FileInfo, nil
+}
+
+func (c *Client) UpdateMenu(ctx context.Context, menu Menu) error {
+	_, err := c.doJSON(ctx, http.MethodPut, "/v2/menu", map[string]any{"menu": menu})
+	return err
+}
+
+func (c *Client) ListPanels(ctx context.Context, scope string) ([]PanelRecord, error) {
+	path := "/v2/panels?scope=" + scope + "&limit=50"
+	raw, err := c.doJSON(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	return decodePanelList(raw)
+}
+
+func (c *Client) CreatePanel(ctx context.Context, payload createPanelPayload) (string, error) {
+	raw, err := c.doJSON(ctx, http.MethodPost, "/v2/panels", payload)
+	if err != nil {
+		return "", err
+	}
+	var parsed struct {
+		PanelID string `json:"panel_id"`
+	}
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		return "", err
+	}
+	if parsed.PanelID == "" {
+		return "", fmt.Errorf("qq create panel: empty panel_id")
+	}
+	return parsed.PanelID, nil
+}
+
+func (c *Client) UpdatePanel(ctx context.Context, panelID string, panel Panel) error {
+	_, err := c.doJSON(ctx, http.MethodPut, "/v2/panels/"+panelID, map[string]any{"panel": panel})
+	return err
 }

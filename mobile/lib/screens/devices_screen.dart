@@ -19,11 +19,21 @@ class _DevicesScreenState extends State<DevicesScreen> {
   List<UserDeviceItem> _devices = [];
   bool _loading = true;
   String? _error;
+  StreamSubscription<void>? _devicesChangedSub;
 
   @override
   void initState() {
     super.initState();
+    _devicesChangedSub = widget.auth.ws.onDevicesChanged.listen((_) {
+      unawaited(_load());
+    });
     unawaited(_load());
+  }
+
+  @override
+  void dispose() {
+    _devicesChangedSub?.cancel();
+    super.dispose();
   }
 
   Future<void> _load() async {
@@ -86,8 +96,19 @@ class _DevicesScreenState extends State<DevicesScreen> {
     }
   }
 
+  Color _statusColor(UserDeviceItem d, ColorScheme scheme) {
+    final label = d.statusLabel(
+      currentDeviceWsConnected: d.isCurrent && widget.auth.ws.isConnected,
+    );
+    if (label == '连接中') return Colors.green;
+    if (label == '已登录') return scheme.primary;
+    if (label == '闲置') return scheme.outline;
+    return scheme.outlineVariant;
+  }
+
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
     return Scaffold(
       appBar: AppBar(
         title: const Text('已登录设备'),
@@ -102,8 +123,12 @@ class _DevicesScreenState extends State<DevicesScreen> {
               child: ListView(
                 padding: const EdgeInsets.all(16),
                 children: [
-                  const Text(
-                    '踢下线仅清除该设备的登录会话，不会删除已同步的加密密钥。',
+                  Text(
+                    '连接中：应用在前台且 WebSocket 在线，可实时收消息。'
+                    '已登录：仅有登录会话（可能应用在后台或未联网）。',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: scheme.onSurfaceVariant,
+                        ),
                   ),
                   const SizedBox(height: 16),
                   if (_error != null) ...[
@@ -118,8 +143,17 @@ class _DevicesScreenState extends State<DevicesScreen> {
                   for (final d in _devices)
                     Card(
                       child: ListTile(
+                        leading: Icon(
+                          d.isCurrent ? Icons.smartphone : Icons.devices_other_outlined,
+                          color: _statusColor(d, scheme),
+                        ),
                         title: Text(d.displayName(widget.auth.storage)),
-                        subtitle: Text(d.subtitle()),
+                        subtitle: Text(
+                          d.subtitle(
+                            currentDeviceWsConnected:
+                                d.isCurrent && widget.auth.ws.isConnected,
+                          ),
+                        ),
                         trailing: d.isCurrent
                             ? TextButton(
                                 onPressed: () => _kick(d),

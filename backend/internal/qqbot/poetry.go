@@ -17,6 +17,7 @@ import (
 
 	"golang.org/x/image/font"
 	"golang.org/x/image/font/opentype"
+	"golang.org/x/image/font/sfnt"
 	"golang.org/x/image/math/fixed"
 )
 
@@ -53,30 +54,6 @@ func FetchPoetry(ctx context.Context, apiURL string) (PoetryQuote, error) {
 
 // RenderPoetryCard 将诗词渲染为 PNG 图卡。
 func RenderPoetryCard(quote PoetryQuote, fontPath string) ([]byte, error) {
-	face, err := loadFace(fontPath, 36)
-	if err != nil {
-		return nil, err
-	}
-	small, err := loadFace(fontPath, 22)
-	if err != nil {
-		return nil, err
-	}
-
-	const W, H = 720, 960
-	img := image.NewRGBA(image.Rect(0, 0, W, H))
-	bg := color.RGBA{R: 245, G: 240, B: 230, A: 255}
-	draw.Draw(img, img.Bounds(), &image.Uniform{C: bg}, image.Point{}, draw.Src)
-
-	accent := color.RGBA{R: 60, G: 48, B: 36, A: 255}
-	muted := color.RGBA{R: 110, G: 95, B: 80, A: 255}
-
-	lines := wrapRunes(quote.Hitokoto, 12)
-	y := 280
-	for _, line := range lines {
-		drawString(img, face, line, (W-measure(face, line))/2, y, accent)
-		y += 56
-	}
-
 	from := strings.TrimSpace(quote.From)
 	if who := strings.TrimSpace(quote.FromWho); who != "" {
 		if from != "" {
@@ -85,18 +62,98 @@ func RenderPoetryCard(quote PoetryQuote, fontPath string) ([]byte, error) {
 			from = who
 		}
 	}
+	sub := ""
 	if from != "" {
-		label := "—— " + from
-		drawString(img, small, label, (W-measure(small, label))/2, H-160, muted)
+		sub = "—— " + from
 	}
-	footer := "IHope · 每日金句"
-	drawString(img, small, footer, (W-measure(small, footer))/2, H-80, muted)
+	return renderLiteraryCard(quote.Hitokoto, sub, "IHope · 每日诗词", fontPath)
+}
+
+func renderLiteraryCard(mainText, subLine, footer, fontPath string) ([]byte, error) {
+	mainText = strings.TrimSpace(mainText)
+	if mainText == "" {
+		return nil, fmt.Errorf("正文为空")
+	}
+	face, err := loadFace(fontPath, 28)
+	if err != nil {
+		return nil, err
+	}
+	small, err := loadFace(fontPath, 20)
+	if err != nil {
+		return nil, err
+	}
+
+	const W = 720
+	const padX = 48
+	maxChars := 18
+	lines := layoutLiteraryLines(mainText, maxChars)
+	const maxBodyLines = 18
+	if len(lines) > maxBodyLines {
+		lines = lines[:maxBodyLines]
+		last := lines[maxBodyLines-1]
+		if len(last) > 3 {
+			lines[maxBodyLines-1] = last[:len(last)-1] + "…"
+		}
+	}
+
+	lineHeight := 40
+	bodyHeight := len(lines) * lineHeight
+	H := 320 + bodyHeight + 140
+	if H < 720 {
+		H = 720
+	}
+	if H > 1440 {
+		H = 1440
+	}
+
+	img := image.NewRGBA(image.Rect(0, 0, W, H))
+	bg := color.RGBA{R: 245, G: 240, B: 230, A: 255}
+	draw.Draw(img, img.Bounds(), &image.Uniform{C: bg}, image.Point{}, draw.Src)
+
+	accent := color.RGBA{R: 60, G: 48, B: 36, A: 255}
+	muted := color.RGBA{R: 110, G: 95, B: 80, A: 255}
+
+	y := 120
+	for _, line := range lines {
+		if line == "" {
+			y += lineHeight / 2
+			continue
+		}
+		drawString(img, face, line, padX, y, accent)
+		y += lineHeight
+	}
+
+	if sub := strings.TrimSpace(subLine); sub != "" {
+		drawString(img, small, sub, padX, H-120, muted)
+	}
+	if foot := strings.TrimSpace(footer); foot != "" {
+		drawString(img, small, foot, padX, H-56, muted)
+	}
 
 	var buf bytes.Buffer
 	if err := png.Encode(&buf, img); err != nil {
 		return nil, err
 	}
 	return buf.Bytes(), nil
+}
+
+func layoutLiteraryLines(text string, maxPerLine int) []string {
+	parts := strings.Split(text, "\n")
+	var out []string
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			if len(out) > 0 {
+				out = append(out, "")
+			}
+			continue
+		}
+		out = append(out, wrapRunes(part, maxPerLine)...)
+	}
+	if len(out) == 0 {
+		return []string{text}
+	}
+	return out
 }
 
 func loadFace(path string, size float64) (font.Face, error) {
@@ -108,15 +165,31 @@ func loadFace(path string, size float64) (font.Face, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read font: %w", err)
 	}
+	face, err := faceFromFontBytes(raw, size)
+	if err != nil {
+		return nil, fmt.Errorf("parse font %s: %w", path, err)
+	}
+	return face, nil
+}
+
+func faceFromFontBytes(raw []byte, size float64) (font.Face, error) {
+	opts := &opentype.FaceOptions{
+		Size:    size,
+		DPI:     72,
+		Hinting: font.HintingFull,
+	}
+	if coll, err := sfnt.ParseCollection(raw); err == nil && coll.NumFonts() > 0 {
+		f, err := coll.Font(0)
+		if err != nil {
+			return nil, err
+		}
+		return opentype.NewFace(f, opts)
+	}
 	ft, err := opentype.Parse(raw)
 	if err != nil {
 		return nil, err
 	}
-	return opentype.NewFace(ft, &opentype.FaceOptions{
-		Size:    size,
-		DPI:     72,
-		Hinting: font.HintingFull,
-	})
+	return opentype.NewFace(ft, opts)
 }
 
 func wrapRunes(s string, maxPerLine int) []string {

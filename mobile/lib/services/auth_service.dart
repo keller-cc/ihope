@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 
 import '../crypto/chat_crypto.dart';
@@ -84,6 +85,8 @@ class AuthService {
   final Set<String> _messageCacheMigrated = {};
   String? _openConversationId;
   bool _appInForeground = true;
+  bool _messageListHomeVisible = false;
+  final ValueNotifier<bool> _messageListHomeNotifier = ValueNotifier(false);
   bool _backgroundKeepAliveActive = false;
   final Map<String, int> _unreadCounts = {};
   final Map<String, DateTime> _conversationReadAtCache = {};
@@ -96,6 +99,7 @@ class AuthService {
   Future<bool>? _sessionRestoreInFlight;
   Future<void>? _cryptoInitInFlight;
 
+  StreamSubscription<void>? _sessionRevokedSub;
   StreamSubscription<List<ConnectivityResult>>? _connectivitySub;
   Timer? _connectivityDebounce;
   bool _networkOnline = true;
@@ -417,11 +421,13 @@ class AuthService {
   Future<QqBotStatus> patchQqBot({
     bool? doorbellEnabled,
     bool? poetryEnabled,
+    bool? quotesEnabled,
     bool? newsEnabled,
   }) async {
     final body = <String, dynamic>{};
     if (doorbellEnabled != null) body['doorbell_enabled'] = doorbellEnabled;
     if (poetryEnabled != null) body['poetry_enabled'] = poetryEnabled;
+    if (quotesEnabled != null) body['quotes_enabled'] = quotesEnabled;
     if (newsEnabled != null) body['news_enabled'] = newsEnabled;
     final data = await api.patchJson('/api/users/me/qq-bot', body: body);
     return QqBotStatus.fromJson(data);
@@ -429,6 +435,11 @@ class AuthService {
 
   Future<void> unbindQqBot() async {
     await api.deleteJson('/api/users/me/qq-bot');
+  }
+
+  Future<DailyQuote> fetchTodayQuote() async {
+    final data = await api.getJson('/api/quotes/today');
+    return DailyQuote.fromJson(data);
   }
 
   ConversationItem? getCachedConversation(String id) => _conversationCache[id];
@@ -664,6 +675,18 @@ class AuthService {
       ids.remove(conversationId);
     }
     await storage.writePinnedConversations(user.id, ids);
+  }
+
+  /// 是否处于会话列表首页（无聊天/设置等子页压栈）；QQ 式横幅仅在此展示。
+  bool get isMessageListHomeVisible => _messageListHomeVisible;
+
+  ValueListenable<bool> get messageListHomeListenable =>
+      _messageListHomeNotifier;
+
+  void setMessageListHomeVisible(bool visible) {
+    if (_messageListHomeVisible == visible) return;
+    _messageListHomeVisible = visible;
+    _messageListHomeNotifier.value = visible;
   }
 
   void setOpenConversation(String? conversationId) {
@@ -995,7 +1018,20 @@ class AuthService {
       }
     }
     await upsertCachedMessage(fresh.id, sent);
+    await notifyConversationLastMessage(fresh, sent);
     return sent;
+  }
+
+  /// 发送成功后刷新会话列表末条（不依赖 WebSocket 回显）。
+  Future<void> notifyConversationLastMessage(
+    ConversationItem conversation,
+    ChatMessage msg,
+  ) async {
+    final merged = conversation.copyWith(lastMessage: msg);
+    _cacheConversation(merged);
+    if (!_conversationPatchedController.isClosed) {
+      _conversationPatchedController.add(merged);
+    }
   }
 
   Future<ConversationItem> createGroupChat({
@@ -1394,8 +1430,16 @@ class AuthService {
     if (ChatMessage.isDecryptFailure(pt)) return msg.forCacheWithoutPlaintext;
     if (msg.type == 'image' || msg.type == 'audio') {
       if (MediaLocalCache.isLocalRef(pt)) return msg;
-      final compact = await MediaLocalCache.persistPlaintext(msg.id, pt);
-      if (compact != null) return msg.copyWith(plaintext: compact);
+      if (msg.type == 'image' && AttachmentPayload.tryParse(pt) != null) {
+        final compact = await MediaLocalCache.persistPlaintext(msg.id, pt);
+        if (compact != null) return msg.copyWith(plaintext: compact);
+      } else if (msg.type == 'image' && MediaPayload.tryParse(pt) != null) {
+        final compact = await MediaLocalCache.compactImagePreviewOnly(pt);
+        if (compact != null) return msg.copyWith(plaintext: compact);
+      } else {
+        final compact = await MediaLocalCache.persistPlaintext(msg.id, pt);
+        if (compact != null) return msg.copyWith(plaintext: compact);
+      }
       return msg.forCacheWithoutPlaintext;
     }
     if (msg.type == 'file') {
@@ -1481,6 +1525,9 @@ class AuthService {
         if (MediaLocalCache.isAttachmentRef(pt)) return false;
         return true;
       }
+      if (await MediaLocalCache.isPlaintextAvailable(msg.id, pt)) {
+        return false;
+      }
       return !await MediaLocalCache.hasPayloadFile(msg.id);
     }
     final pt = msg.plaintext;
@@ -1509,8 +1556,13 @@ class AuthService {
     if (MediaPayload.tryParse(pt) != null) return true;
     if (AttachmentPayload.tryParse(pt) != null) return true;
     if (MediaLocalCache.isAttachmentRef(pt)) return true;
-    // 语音 local 引用可无 file_key；图片/文件远程附件须含 file_key。
-    if (MediaLocalCache.isLocalRef(pt)) return type == 'audio';
+    if (MediaLocalCache.isLocalRef(pt)) {
+      if (type == 'audio') return true;
+      if (type == 'image') {
+        return MediaLocalCache.hasInlineImagePreview(pt);
+      }
+      return false;
+    }
     return false;
   }
 
@@ -1535,6 +1587,14 @@ class AuthService {
     if (dec.type == 'image' ||
         dec.type == 'audio' ||
         (dec.type == 'file' && persistFile)) {
+      if (dec.type == 'image' && MediaPayload.tryParse(pt) != null) {
+        final compact = await MediaLocalCache.compactImagePreviewOnly(pt);
+        if (compact != null) {
+          final cached = dec.copyWith(plaintext: compact);
+          unawaited(upsertCachedMessage(conversationId, cached));
+          return cached;
+        }
+      }
       final compact = await MediaLocalCache.persistPlaintext(dec.id, pt);
       if (compact != null) {
         final cached = dec.copyWith(plaintext: compact);
@@ -1694,7 +1754,13 @@ class AuthService {
     final fileId = message.fileId;
     if (fileId == null || fileId.isEmpty) return null;
 
-    if (await MediaLocalCache.hasPayloadFile(message.id)) {
+    if (await MediaLocalCache.needsFullImageDownload(
+      messageId: message.id,
+      plaintext: message.plaintext,
+      fileId: fileId,
+    )) {
+      // 继续下载原图（可能仅有缩略图或残缺文件）
+    } else if (await MediaLocalCache.hasPayloadFile(message.id)) {
       return MediaLocalCache.load(message.id);
     }
 
@@ -1739,7 +1805,13 @@ class AuthService {
     if (message.type == 'system') return message;
     if (message.fileId != null &&
         (message.type == 'file' || message.type == 'image')) {
-      if (await MediaLocalCache.hasPayloadFile(message.id)) {
+      final needsFull = message.type == 'image' &&
+          await MediaLocalCache.needsFullImageDownload(
+            messageId: message.id,
+            plaintext: message.plaintext,
+            fileId: message.fileId,
+          );
+      if (!needsFull && await MediaLocalCache.hasPayloadFile(message.id)) {
         final ref = await MediaLocalCache.attachmentLocalRef(
           message.id,
           message.plaintext,
@@ -2177,6 +2249,16 @@ class AuthService {
           ? ChatMessage.decryptPlaceholder
           : MediaPayload.previewLabel('', hydrated.type);
     }
+    if (me != null && hydrated.senderId == me.id && conv.type == 'group') {
+      final stored = await _resolvePlaintext(
+        conversation.id,
+        hydrated.id,
+        thread: cachedThread,
+      );
+      if (stored != null && _isUsableMediaPlaintext(hydrated.type, stored)) {
+        return _previewBody(hydrated, stored);
+      }
+    }
     final stored = await _resolvePlaintext(
       conversation.id,
       hydrated.id,
@@ -2401,6 +2483,9 @@ class AuthService {
     final token = await ensureValidAccessToken();
     if (token == null || token.isEmpty) return;
     await ws.connect(token);
+    _sessionRevokedSub ??= ws.onSessionRevoked.listen((_) {
+      unawaited(logout());
+    });
     startRealtimeNetworkWatch();
     groupKeys.attachWsHandlers();
     try {
@@ -2413,6 +2498,8 @@ class AuthService {
   }
 
   Future<void> _disconnectRealtime() async {
+    await _sessionRevokedSub?.cancel();
+    _sessionRevokedSub = null;
     stopRealtimeNetworkWatch();
     groupKeys.detachWsHandlers();
     await ws.disconnect();
@@ -2525,6 +2612,7 @@ class QqBotStatus {
     required this.bound,
     required this.doorbellEnabled,
     required this.poetryEnabled,
+    required this.quotesEnabled,
     required this.newsEnabled,
   });
 
@@ -2532,6 +2620,7 @@ class QqBotStatus {
   final bool bound;
   final bool doorbellEnabled;
   final bool poetryEnabled;
+  final bool quotesEnabled;
   final bool newsEnabled;
 
   factory QqBotStatus.fromJson(Map<String, dynamic> json) {
@@ -2540,7 +2629,28 @@ class QqBotStatus {
       bound: json['bound'] == true,
       doorbellEnabled: json['doorbell_enabled'] != false,
       poetryEnabled: json['poetry_enabled'] != false,
+      quotesEnabled: json['quotes_enabled'] != false,
       newsEnabled: json['news_enabled'] != false,
+    );
+  }
+}
+
+class DailyQuote {
+  const DailyQuote({
+    required this.body,
+    this.author,
+    this.date,
+  });
+
+  final String body;
+  final String? author;
+  final String? date;
+
+  factory DailyQuote.fromJson(Map<String, dynamic> json) {
+    return DailyQuote(
+      body: (json['body'] as String?)?.trim() ?? '',
+      author: json['author'] as String?,
+      date: json['date'] as String?,
     );
   }
 }

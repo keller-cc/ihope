@@ -110,6 +110,9 @@ func (s *Server) Router() http.Handler {
 		mux.Handle("GET /api/users/me/qq-bot", authRequired(http.HandlerFunc(s.qqbot.Status)))
 		mux.Handle("PATCH /api/users/me/qq-bot", authRequired(http.HandlerFunc(s.qqbot.Patch)))
 		mux.Handle("DELETE /api/users/me/qq-bot", authRequired(http.HandlerFunc(s.qqbot.Unbind)))
+		if strings.TrimSpace(s.cfg.QQQuotesFilePath) != "" {
+			mux.Handle("GET /api/quotes/today", authRequired(http.HandlerFunc(s.qqbot.TodayQuote)))
+		}
 	}
 	if s.qqbotSvc != nil {
 		path := s.cfg.QQWebhookPath

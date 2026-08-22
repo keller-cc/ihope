@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:path_provider/path_provider.dart';
 
 import 'media_payload.dart';
+import 'image_thumbnail.dart';
 
 /// 应用内私有媒体缓存（用户无感）：聊天内展示/播放用。
 /// 导出到相册或 Download/IHope 由 [MediaSave] / [MediaDownloadIndex] 在用户主动操作时完成。
@@ -280,12 +281,19 @@ class MediaLocalCache {
     return path;
   }
 
+  /// 消息 plaintext 是否含可展示的 inline 图片预览（无需原图落盘）。
+  static bool hasInlineImagePreview(String? plaintext) {
+    if (plaintext == null || plaintext.isEmpty) return false;
+    return _imageFromPlaintextMap(plaintext) != null;
+  }
+
   /// 本地 plaintext 是否真能读出媒体（inline b64 或已落盘文件）。
   static Future<bool> isPlaintextAvailable(
     String messageId,
     String? plaintext,
   ) async {
     if (plaintext == null || plaintext.isEmpty) return false;
+    if (hasInlineImagePreview(plaintext)) return true;
     if (isLocalRef(plaintext)) {
       return hasPayloadFile(messageId);
     }
@@ -295,11 +303,23 @@ class MediaLocalCache {
   /// 聊天列表/气泡用预览图：优先消息内 preview，不拉取服务端原图。
   static Future<MediaPayload?> resolvePreview(
     String messageId,
-    String? plaintext,
-  ) async {
+    String? plaintext, {
+    String? fileId,
+  }) async {
     if (plaintext == null || plaintext.isEmpty) return null;
 
-    if (await hasPayloadFile(messageId)) {
+    final remoteImage = isRemoteImage(plaintext, fileId);
+    if (remoteImage) {
+      final needsFull = await needsFullImageDownload(
+        messageId: messageId,
+        plaintext: plaintext,
+        fileId: fileId,
+      );
+      if (!needsFull && await hasPayloadFile(messageId)) {
+        final local = await load(messageId);
+        if (local != null && local.kind == 'image') return local;
+      }
+    } else if (await hasPayloadFile(messageId)) {
       final local = await load(messageId);
       if (local != null && local.kind == 'image') return local;
     }
@@ -356,7 +376,23 @@ class MediaLocalCache {
     return null;
   }
 
-  /// 从 plaintext 解析媒体：优先读应用内落盘；否则解析 inline b64（内存）。
+  /// 仅将 inline 图片压缩为 preview 写入 plaintext，不落盘原图。
+  static Future<String?> compactImagePreviewOnly(String plaintext) async {
+    final media = MediaPayload.tryParse(plaintext);
+    if (media == null || media.kind != 'image') return null;
+    try {
+      final preview = await ImageThumbnail.generatePreview(media.bytes);
+      return jsonEncode({
+        'media': 'image',
+        'local': true,
+        'mime': media.mime,
+        'name': media.name,
+        'preview_b64': base64Encode(preview),
+      });
+    } catch (_) {
+      return null;
+    }
+  }
   static Future<MediaPayload?> resolve(
     String messageId,
     String? plaintext,

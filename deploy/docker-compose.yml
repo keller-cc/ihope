@@ -44,6 +44,8 @@ services:
     volumes:
       - uploads_data:/data/uploads
       - ${FCM_CREDENTIALS_HOST_FILE:-./fcm-placeholder.json}:/run/secrets/fcm-service-account.json:ro
+      - ${QQ_POETRY_FONT_HOST_DIR:-./fonts}:/opt/ihope/fonts:ro
+      - ${QQ_QUOTES_HOST_DIR:-./quotes}:/opt/ihope/quotes:ro
     depends_on:
       postgres:
         condition: service_healthy

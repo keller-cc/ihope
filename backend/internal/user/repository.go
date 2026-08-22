@@ -52,6 +52,8 @@ type UserDevice struct {
 	LastActiveAt time.Time `json:"last_active_at"`
 	HasSession   bool      `json:"has_session"`
 	IsCurrent    bool      `json:"is_current"`
+	Online       bool      `json:"online"`        // WebSocket 实时连接
+	SessionState string    `json:"session_state"` // online / logged_in / idle / none
 }
 
 // AdminDevice 管理后台设备项。

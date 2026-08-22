@@ -108,6 +108,7 @@ class _MediaMessageBodyState extends State<MediaMessageBody> {
       resolved = await MediaLocalCache.resolvePreview(
         widget.msg.id,
         widget.msg.plaintext,
+        fileId: widget.msg.fileId,
       );
     } else {
       resolved = await MediaLocalCache.resolve(
@@ -287,6 +288,7 @@ class _MediaMessageBodyState extends State<MediaMessageBody> {
     await Navigator.of(context).push<void>(
       appPageRoute(
         builder: (_) => ImageViewerScreen(
+          bytes: _bytes.isNotEmpty ? _bytes : null,
           bytesFuture: () => _loadFullImageBytes(),
           onRetryLoad: () => _loadFullImageBytes(),
           name: name,

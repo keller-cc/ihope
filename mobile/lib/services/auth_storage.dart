@@ -59,10 +59,10 @@ class AuthStorage {
     return json is Map<String, dynamic> ? json : null;
   }
 
-  /// 后台系统消息通知（FCM），默认关闭，用户在设置中开启。
+  /// 后台系统消息通知，默认开启。
   Future<bool> readPushNotificationEnabled() async {
     final raw = await _storage.read(key: _kPushNotifications);
-    if (raw == null) return false;
+    if (raw == null) return true;
     return raw == '1';
   }
 

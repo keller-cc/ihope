@@ -46,10 +46,12 @@ func (h *Hub) Register(userID, deviceID string, ws *websocket.Conn) *Conn {
 	h.conns[userID][c] = struct{}{}
 	h.mu.Unlock()
 	go c.writePump()
+	go h.NotifyDevicesChanged(userID)
 	return c
 }
 
 func (c *Conn) Close() {
+	userID := c.userID
 	c.hub.mu.Lock()
 	if set, ok := c.hub.conns[c.userID]; ok {
 		delete(set, c)
@@ -59,6 +61,7 @@ func (c *Conn) Close() {
 	}
 	c.hub.mu.Unlock()
 	_ = c.ws.Close()
+	c.hub.NotifyDevicesChanged(userID)
 }
 
 // CloseAll 关停时主动断开全部 WebSocket，避免 http.Server.Shutdown 长时间阻塞。
@@ -100,6 +103,54 @@ func (h *Hub) IsUserOnline(userID string) bool {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	return len(h.conns[userID]) > 0
+}
+
+// RevokeDeviceSession 通知设备会话失效并断开其 WebSocket，并广播设备列表变更。
+func (h *Hub) RevokeDeviceSession(userID, deviceID string) {
+	payload, err := json.Marshal(map[string]any{
+		"event":     "session_revoked",
+		"device_id": deviceID,
+	})
+	if err != nil {
+		return
+	}
+
+	h.mu.Lock()
+	var targets []*Conn
+	if set, ok := h.conns[userID]; ok {
+		for c := range set {
+			if c.deviceID == deviceID {
+				targets = append(targets, c)
+			}
+		}
+	}
+	h.mu.Unlock()
+
+	for _, c := range targets {
+		select {
+		case c.send <- payload:
+		default:
+		}
+		c.Close()
+	}
+	h.NotifyDevicesChanged(userID)
+}
+
+// NotifyDevicesChanged 通知用户全部在线设备刷新设备列表。
+func (h *Hub) NotifyDevicesChanged(userID string) {
+	payload, err := json.Marshal(map[string]string{"event": "devices_changed"})
+	if err != nil {
+		return
+	}
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	for c := range h.conns[userID] {
+		select {
+		case c.send <- payload:
+		default:
+			log.Printf("ws: drop devices_changed to user=%s device=%s (slow consumer)", c.userID, c.deviceID)
+		}
+	}
 }
 
 func (h *Hub) NotifyMessage(memberUserIDs []string, msg *message.Message) {

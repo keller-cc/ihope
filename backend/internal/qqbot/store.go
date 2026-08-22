@@ -24,6 +24,7 @@ type Binding struct {
 	QQOpenID         string
 	DoorbellEnabled  bool
 	PoetryEnabled    bool
+	QuotesEnabled    bool
 	NewsEnabled      bool
 	LastDoorbellAt   *time.Time
 	BoundAt          time.Time
@@ -96,8 +97,8 @@ func (s *Store) ConsumeBindCode(ctx context.Context, code, openID string) (strin
 		return "", err
 	}
 	_, err = tx.Exec(ctx, `
-		INSERT INTO user_qq_bindings (user_id, qq_openid, doorbell_enabled, poetry_enabled, news_enabled, bound_at, updated_at)
-		VALUES ($1, $2, TRUE, TRUE, TRUE, now(), now())
+		INSERT INTO user_qq_bindings (user_id, qq_openid, doorbell_enabled, poetry_enabled, quotes_enabled, news_enabled, bound_at, updated_at)
+		VALUES ($1, $2, TRUE, TRUE, TRUE, TRUE, now(), now())
 		ON CONFLICT (user_id) DO UPDATE
 		SET qq_openid = EXCLUDED.qq_openid, updated_at = now(), bound_at = now()`,
 		userID, openID)
@@ -113,7 +114,7 @@ func (s *Store) ConsumeBindCode(ctx context.Context, code, openID string) (strin
 
 func (s *Store) GetByUserID(ctx context.Context, userID string) (*Binding, error) {
 	b, err := s.scanBinding(ctx, `
-		SELECT user_id, qq_openid, doorbell_enabled, poetry_enabled, news_enabled, last_doorbell_at, bound_at
+		SELECT user_id, qq_openid, doorbell_enabled, poetry_enabled, quotes_enabled, news_enabled, last_doorbell_at, bound_at
 		FROM user_qq_bindings WHERE user_id = $1`, userID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotBound
@@ -123,7 +124,7 @@ func (s *Store) GetByUserID(ctx context.Context, userID string) (*Binding, error
 
 func (s *Store) GetByOpenID(ctx context.Context, openID string) (*Binding, error) {
 	b, err := s.scanBinding(ctx, `
-		SELECT user_id, qq_openid, doorbell_enabled, poetry_enabled, news_enabled, last_doorbell_at, bound_at
+		SELECT user_id, qq_openid, doorbell_enabled, poetry_enabled, quotes_enabled, news_enabled, last_doorbell_at, bound_at
 		FROM user_qq_bindings WHERE qq_openid = $1`, openID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotBound
@@ -134,14 +135,14 @@ func (s *Store) GetByOpenID(ctx context.Context, openID string) (*Binding, error
 func (s *Store) scanBinding(ctx context.Context, q string, arg any) (*Binding, error) {
 	var b Binding
 	err := s.pool.QueryRow(ctx, q, arg).Scan(
-		&b.UserID, &b.QQOpenID, &b.DoorbellEnabled, &b.PoetryEnabled, &b.NewsEnabled, &b.LastDoorbellAt, &b.BoundAt)
+		&b.UserID, &b.QQOpenID, &b.DoorbellEnabled, &b.PoetryEnabled, &b.QuotesEnabled, &b.NewsEnabled, &b.LastDoorbellAt, &b.BoundAt)
 	if err != nil {
 		return nil, err
 	}
 	return &b, nil
 }
 
-func (s *Store) UpdateFlags(ctx context.Context, userID string, doorbell, poetry, news *bool) error {
+func (s *Store) UpdateFlags(ctx context.Context, userID string, doorbell, poetry, quotes, news *bool) error {
 	b, err := s.GetByUserID(ctx, userID)
 	if err != nil {
 		return err
@@ -152,14 +153,17 @@ func (s *Store) UpdateFlags(ctx context.Context, userID string, doorbell, poetry
 	if poetry != nil {
 		b.PoetryEnabled = *poetry
 	}
+	if quotes != nil {
+		b.QuotesEnabled = *quotes
+	}
 	if news != nil {
 		b.NewsEnabled = *news
 	}
 	_, err = s.pool.Exec(ctx, `
 		UPDATE user_qq_bindings
-		SET doorbell_enabled = $2, poetry_enabled = $3, news_enabled = $4, updated_at = now()
+		SET doorbell_enabled = $2, poetry_enabled = $3, quotes_enabled = $4, news_enabled = $5, updated_at = now()
 		WHERE user_id = $1`,
-		userID, b.DoorbellEnabled, b.PoetryEnabled, b.NewsEnabled)
+		userID, b.DoorbellEnabled, b.PoetryEnabled, b.QuotesEnabled, b.NewsEnabled)
 	return err
 }
 
@@ -184,14 +188,17 @@ func (s *Store) ListPoetrySubscribers(ctx context.Context) ([]Binding, error) {
 	return s.listByFlag(ctx, `poetry_enabled`)
 }
 
+func (s *Store) ListQuoteSubscribers(ctx context.Context) ([]Binding, error) {
+	return s.listByFlag(ctx, `quotes_enabled`)
+}
+
 func (s *Store) ListNewsSubscribers(ctx context.Context) ([]Binding, error) {
 	return s.listByFlag(ctx, `news_enabled`)
 }
 
 func (s *Store) listByFlag(ctx context.Context, col string) ([]Binding, error) {
-	// col is fixed literal from callers
 	q := fmt.Sprintf(`
-		SELECT user_id, qq_openid, doorbell_enabled, poetry_enabled, news_enabled, last_doorbell_at, bound_at
+		SELECT user_id, qq_openid, doorbell_enabled, poetry_enabled, quotes_enabled, news_enabled, last_doorbell_at, bound_at
 		FROM user_qq_bindings WHERE %s = TRUE`, col)
 	rows, err := s.pool.Query(ctx, q)
 	if err != nil {
@@ -201,7 +208,7 @@ func (s *Store) listByFlag(ctx context.Context, col string) ([]Binding, error) {
 	var out []Binding
 	for rows.Next() {
 		var b Binding
-		if err := rows.Scan(&b.UserID, &b.QQOpenID, &b.DoorbellEnabled, &b.PoetryEnabled, &b.NewsEnabled, &b.LastDoorbellAt, &b.BoundAt); err != nil {
+		if err := rows.Scan(&b.UserID, &b.QQOpenID, &b.DoorbellEnabled, &b.PoetryEnabled, &b.QuotesEnabled, &b.NewsEnabled, &b.LastDoorbellAt, &b.BoundAt); err != nil {
 			return nil, err
 		}
 		out = append(out, b)

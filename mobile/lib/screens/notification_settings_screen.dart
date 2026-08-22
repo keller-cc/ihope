@@ -5,7 +5,7 @@ import 'package:flutter/material.dart';
 import '../services/auth_service.dart';
 import '../services/notification_service.dart';
 
-/// 后台消息通知开关（WebSocket 本地横幅；离线可用 QQ 门铃 / 海外 FCM）。
+/// 后台消息通知开关。
 class NotificationSettingsScreen extends StatefulWidget {
   const NotificationSettingsScreen({
     super.key,
@@ -40,10 +40,6 @@ class _NotificationSettingsScreenState
       _enabled = enabled;
       if (!widget.notification.isLocalAvailable) {
         _hint = '当前平台不支持系统通知';
-      } else if (!widget.notification.isRemotePushAvailable) {
-        _hint =
-            '离线提醒（App 被杀掉后）可在「设置 → QQ 提醒」绑定机器人门铃；'
-            '海外包可配置 FCM。见 docs/推送配置指南.md';
       }
     });
   }
@@ -74,12 +70,6 @@ class _NotificationSettingsScreenState
           return;
         }
         setState(() => _enabled = true);
-        if (!widget.notification.isRemotePushAvailable) {
-          setState(() {
-            _hint =
-                '已开启后台本地通知。App 被完全杀掉后请绑定 QQ 门铃，或使用海外 FCM。';
-          });
-        }
       } else {
         await widget.notification.disableNotifications();
         if (!mounted) return;
@@ -96,22 +86,15 @@ class _NotificationSettingsScreenState
   @override
   Widget build(BuildContext context) {
     final enabled = _enabled;
-    final remote = widget.notification.isRemotePushAvailable
-        ? widget.notification.remoteChannelLabel
-        : '未配置（仅本地长连接）';
 
     return Scaffold(
       appBar: AppBar(title: const Text('通知')),
       body: ListView(
         children: [
           SwitchListTile(
-            title: const Text('后台新消息通知'),
-            subtitle: Text(
-              'App 不在前台时在系统栏显示横幅\n'
-              '长连接：WebSocket + 本地通知\n'
-              '离线兜底：$remote',
-            ),
-            value: enabled ?? false,
+            title: const Text('新消息通知'),
+            subtitle: const Text('前台应用内横幅；后台系统通知栏'),
+            value: enabled ?? true,
             onChanged: enabled == null || _busy ? null : _onChanged,
           ),
           if (_hint != null)
@@ -128,18 +111,6 @@ class _NotificationSettingsScreenState
                 ),
               ),
             ),
-          const Padding(
-            padding: EdgeInsets.fromLTRB(16, 16, 16, 0),
-            child: Text(
-              '说明：\n'
-              '• 前台聊天仍走 WebSocket，当前会话内不弹横幅\n'
-              '• 切到后台后 Android 会显示「正在接收新消息」并保持连接\n'
-              '• 若仍收不到，请在系统设置中将 IHope 设为「不受电池优化」\n'
-              '• App 被系统杀掉后，可用 QQ 门铃（设置 → QQ 提醒）或海外 FCM\n'
-              '• 通知不含消息明文',
-              style: TextStyle(fontSize: 13, height: 1.4),
-            ),
-          ),
         ],
       ),
     );

@@ -47,10 +47,11 @@ func main() {
 	msgRepo := message.NewRepository(pool)
 
 	jwtMgr := jwt.NewManager(cfg.JWTSecret, cfg.JWTAccessTTL)
+	hub := ws.NewHub()
 	authSvc := auth.NewService(cfg, userRepo, jwtMgr, mail.New(cfg))
+	authSvc.SetSessionRevoker(hub)
 	convSvc := conversation.NewService(convRepo, userRepo)
 
-	hub := ws.NewHub()
 	fileRepo := filestore.NewRepository(pool)
 	fileSvc := filestore.NewService(fileRepo, convRepo, cfg.UploadDir, cfg.MaxEncryptedFileBytes)
 	msgSvc := message.NewService(msgRepo, convRepo, fileSvc)
@@ -67,12 +68,18 @@ func main() {
 		qqSvc = qqbot.NewService(cfg, qqStore, qqClient, qqMedia, hub)
 		qqHTTP = qqbot.NewHTTPHandler(qqSvc, qqMedia)
 		pushDispatch.SetQQDoorbell(qqSvc, hub)
-		qqSched = qqbot.NewScheduler(qqSvc, cfg.QQDailyPoetryHHMM, cfg.QQDailyNewsHHMM)
+		qqSched = qqbot.NewScheduler(qqSvc, cfg.QQDailyPoetryHHMM, cfg.QQDailyQuotesHHMM, cfg.QQDailyNewsHHMM)
 		qqSched.Start()
 		log.Printf("qqbot: enabled webhook=%s app_id=%s public=%s", cfg.QQWebhookPath, cfg.QQBotAppID, cfg.AppPublicURL)
 		probeCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
 		if err := qqClient.ProbeCredentials(probeCtx); err != nil {
 			log.Printf("qqbot: token probe failed: %v", err)
+		} else if cfg.QQBotSyncMenuPanel {
+			syncCtx, syncCancel := context.WithTimeout(ctx, 30*time.Second)
+			if err := qqSvc.SyncMenusAndPanels(syncCtx); err != nil {
+				log.Printf("qqbot: sync menu/panel failed: %v", err)
+			}
+			syncCancel()
 		}
 		cancel()
 	}
@@ -89,7 +96,7 @@ func main() {
 	srv := server.New(
 		cfg,
 		auth.NewHandler(authSvc),
-		user.NewHandler(userRepo, cfg),
+		user.NewHandler(userRepo, cfg, hub, hub),
 		userRepo,
 		jwtMgr,
 		conversation.NewHandler(convSvc, convNotify, convSys, cfg),

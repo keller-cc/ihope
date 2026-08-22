@@ -6,7 +6,7 @@ import 'services/auth_service.dart';
 import 'services/notification_service.dart';
 import 'screens/conversations_screen.dart';
 import 'screens/login_screen.dart';
-import 'widgets/message_in_app_banner_host.dart';
+import 'navigation/app_route_observer.dart';
 
 class IHopeApp extends StatefulWidget {
   const IHopeApp({
@@ -111,17 +111,11 @@ class _IHopeAppState extends State<IHopeApp> with WidgetsBindingObserver {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'IHope',
+      navigatorObservers: [appRouteObserver],
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.indigo),
         useMaterial3: true,
       ),
-      builder: (context, child) {
-        return MessageInAppBannerHost(
-          stream: widget.notification.inAppBannerStream,
-          onTapConversation: _onPushOpenConversation,
-          child: child ?? const SizedBox.shrink(),
-        );
-      },
       home: switch (_loggedIn) {
         null =>
           const Scaffold(body: Center(child: CircularProgressIndicator())),

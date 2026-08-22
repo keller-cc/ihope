@@ -30,14 +30,20 @@ type Handler struct {
 	publicURL     string
 	uploadDir     string
 	maxAvatarSize int64
+	hub           OnlineLookup
+	sessionRevoke SessionRevoker
+	refreshTTL    time.Duration
 }
 
-func NewHandler(repo *Repository, cfg config.Config) *Handler {
+func NewHandler(repo *Repository, cfg config.Config, hub OnlineLookup, sessionRevoke SessionRevoker) *Handler {
 	return &Handler{
 		repo:          repo,
 		publicURL:     strings.TrimRight(cfg.AppPublicURL, "/"),
 		uploadDir:     cfg.UploadDir,
 		maxAvatarSize: cfg.MaxAvatarBytes,
+		hub:           hub,
+		sessionRevoke: sessionRevoke,
+		refreshTTL:    cfg.RefreshTokenTTL,
 	}
 }
 
@@ -261,6 +267,15 @@ func (h *Handler) ListDevices(w http.ResponseWriter, r *http.Request) {
 	}
 	for i := range devices {
 		devices[i].IsCurrent = devices[i].DeviceID == currentDeviceID
+		if h.hub != nil {
+			devices[i].Online = h.hub.IsDeviceOnline(userID, devices[i].DeviceID)
+		}
+		devices[i].SessionState = DeviceSessionState(
+			devices[i].Online,
+			devices[i].HasSession,
+			devices[i].LastActiveAt,
+			h.refreshTTL,
+		)
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"devices": devices})
 }
@@ -280,6 +295,9 @@ func (h *Handler) KickDevice(w http.ResponseWriter, r *http.Request) {
 		}
 		httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "could not kick device")
 		return
+	}
+	if h.sessionRevoke != nil {
+		h.sessionRevoke.RevokeDeviceSession(userID, deviceID)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

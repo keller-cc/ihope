@@ -31,6 +31,7 @@ class ImageViewerScreen extends StatefulWidget {
 class _ImageViewerScreenState extends State<ImageViewerScreen> {
   Uint8List? _bytes;
   bool _loading = false;
+  bool _loadingFull = false;
   String? _loadError;
   bool _saving = false;
   double _progress = 0;
@@ -41,18 +42,33 @@ class _ImageViewerScreenState extends State<ImageViewerScreen> {
     super.initState();
     if (widget._bytes != null) {
       _bytes = widget._bytes;
-    } else {
-      _loading = true;
+    }
+    final hasLoader =
+        widget._bytesFuture != null || widget.onRetryLoad != null;
+    if (hasLoader) {
+      if (widget._bytes == null) {
+        _loading = true;
+      } else {
+        _loadingFull = true;
+      }
       unawaited(_loadBytes());
     }
     unawaited(_restoreSavedState());
   }
 
   Future<void> _loadBytes() async {
-    setState(() {
-      _loading = true;
-      _loadError = null;
-    });
+    final hasPreview = widget._bytes != null;
+    if (!hasPreview) {
+      setState(() {
+        _loading = true;
+        _loadError = null;
+      });
+    } else {
+      setState(() {
+        _loadingFull = true;
+        _loadError = null;
+      });
+    }
     try {
       final loader = widget._bytesFuture ?? widget.onRetryLoad;
       if (loader == null) throw StateError('无法加载原图');
@@ -61,12 +77,16 @@ class _ImageViewerScreenState extends State<ImageViewerScreen> {
       setState(() {
         _bytes = bytes;
         _loading = false;
+        _loadingFull = false;
       });
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        _loadError = e.toString();
-        _loading = false;
+        if (!hasPreview) {
+          _loadError = e.toString();
+          _loading = false;
+        }
+        _loadingFull = false;
       });
     }
   }
@@ -81,7 +101,7 @@ class _ImageViewerScreenState extends State<ImageViewerScreen> {
 
   Future<void> _save() async {
     final bytes = _bytes;
-    if (bytes == null || _saving || _savedLabel != null) return;
+    if (bytes == null || _saving || _savedLabel != null || _loadingFull) return;
     final id = widget.messageId;
     setState(() {
       _saving = true;
@@ -191,6 +211,18 @@ class _ImageViewerScreenState extends State<ImageViewerScreen> {
                 child: Image.memory(bytes, fit: BoxFit.contain),
               ),
             ),
+          if (_loadingFull && bytes != null)
+            const Positioned(
+              top: 72,
+              left: 0,
+              right: 0,
+              child: Center(
+                child: Text(
+                  '正在加载原图…',
+                  style: TextStyle(color: Colors.white70, fontSize: 13),
+                ),
+              ),
+            ),
           if (_saving)
             Positioned(
               left: 24,
@@ -225,7 +257,7 @@ class _ImageViewerScreenState extends State<ImageViewerScreen> {
                 elevation: 4,
                 borderRadius: BorderRadius.circular(28),
                 child: InkWell(
-                  onTap: _saving || saved ? null : _save,
+                  onTap: _saving || saved || _loadingFull ? null : _save,
                   borderRadius: BorderRadius.circular(28),
                   child: Padding(
                     padding: const EdgeInsets.symmetric(

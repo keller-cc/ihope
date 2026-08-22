@@ -3,6 +3,7 @@ package qqbot
 import (
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/ihope/ihope/internal/httpx"
@@ -60,6 +61,7 @@ func (h *HTTPHandler) Status(w http.ResponseWriter, r *http.Request) {
 	out["bound"] = true
 	out["doorbell_enabled"] = b.DoorbellEnabled
 	out["poetry_enabled"] = b.PoetryEnabled
+	out["quotes_enabled"] = b.QuotesEnabled
 	out["news_enabled"] = b.NewsEnabled
 	out["bound_at"] = b.BoundAt.UTC().Format(time.RFC3339)
 	httpx.WriteJSON(w, http.StatusOK, out)
@@ -68,6 +70,7 @@ func (h *HTTPHandler) Status(w http.ResponseWriter, r *http.Request) {
 type patchBody struct {
 	DoorbellEnabled *bool `json:"doorbell_enabled"`
 	PoetryEnabled   *bool `json:"poetry_enabled"`
+	QuotesEnabled   *bool `json:"quotes_enabled"`
 	NewsEnabled     *bool `json:"news_enabled"`
 }
 
@@ -82,7 +85,7 @@ func (h *HTTPHandler) Patch(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid_json", "invalid request body")
 		return
 	}
-	if err := h.svc.store.UpdateFlags(r.Context(), userID, body.DoorbellEnabled, body.PoetryEnabled, body.NewsEnabled); err != nil {
+	if err := h.svc.store.UpdateFlags(r.Context(), userID, body.DoorbellEnabled, body.PoetryEnabled, body.QuotesEnabled, body.NewsEnabled); err != nil {
 		if errors.Is(err, ErrNotBound) {
 			httpx.WriteError(w, http.StatusBadRequest, "not_bound", "尚未绑定 QQ")
 			return
@@ -91,6 +94,27 @@ func (h *HTTPHandler) Patch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.Status(w, r)
+}
+
+func (h *HTTPHandler) TodayQuote(w http.ResponseWriter, r *http.Request) {
+	path := ""
+	if h.svc != nil {
+		path = h.svc.cfg.QQQuotesFilePath
+	}
+	if strings.TrimSpace(path) == "" {
+		httpx.WriteError(w, http.StatusNotFound, "quotes_disabled", "金句未配置")
+		return
+	}
+	entry, err := PickDailyQuoteEntry(path, time.Now())
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "quotes_error", "无法读取金句")
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"body":   entry.Body,
+		"author": entry.Author,
+		"date":   time.Now().Format("2006-01-02"),
+	})
 }
 
 func (h *HTTPHandler) Unbind(w http.ResponseWriter, r *http.Request) {

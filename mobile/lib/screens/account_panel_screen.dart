@@ -95,14 +95,12 @@ class AccountPanelScreen extends StatelessWidget {
                       ListTile(
                         leading: const Icon(Icons.person_outline),
                         title: const Text('个人资料'),
-                        subtitle: const Text('头像、用户名'),
                         trailing: const Icon(Icons.chevron_right),
                         onTap: onProfile,
                       ),
                       ListTile(
                         leading: const Icon(Icons.settings_outlined),
                         title: const Text('设置'),
-                        subtitle: const Text('账号、通知、存储与服务器'),
                         trailing: const Icon(Icons.chevron_right),
                         onTap: onSettings,
                       ),

@@ -8,22 +8,25 @@ import (
 	"time"
 )
 
-// Scheduler 每日定点推送诗词图与 60s 图。
+// Scheduler 每日定点推送诗词、金句与资讯图。
 type Scheduler struct {
-	svc           *Service
+	svc                *Service
 	poetryHH, poetryMM int
+	quotesHH, quotesMM int
 	newsHH, newsMM     int
 	stop               chan struct{}
 }
 
-func NewScheduler(svc *Service, poetryHHMM, newsHHMM string) *Scheduler {
+func NewScheduler(svc *Service, poetryHHMM, quotesHHMM, newsHHMM string) *Scheduler {
 	ph, pm := parseHHMM(poetryHHMM, 8, 0)
+	qh, qm := parseHHMM(quotesHHMM, 8, 2)
 	nh, nm := parseHHMM(newsHHMM, 8, 5)
 	return &Scheduler{
 		svc:      svc,
 		poetryHH: ph, poetryMM: pm,
-		newsHH: nh, newsMM: nm,
-		stop: make(chan struct{}),
+		quotesHH: qh, quotesMM: qm,
+		newsHH:   nh, newsMM:   nm,
+		stop:     make(chan struct{}),
 	}
 }
 
@@ -32,7 +35,8 @@ func (s *Scheduler) Start() {
 		return
 	}
 	go s.loop()
-	log.Printf("qqbot scheduler: poetry=%02d:%02d news=%02d:%02d", s.poetryHH, s.poetryMM, s.newsHH, s.newsMM)
+	log.Printf("qqbot scheduler: poetry=%02d:%02d quotes=%02d:%02d news=%02d:%02d",
+		s.poetryHH, s.poetryMM, s.quotesHH, s.quotesMM, s.newsHH, s.newsMM)
 }
 
 func (s *Scheduler) Stop() {
@@ -47,7 +51,7 @@ func (s *Scheduler) Stop() {
 }
 
 func (s *Scheduler) loop() {
-	var lastPoetryDay, lastNewsDay string
+	var lastPoetryDay, lastQuotesDay, lastNewsDay string
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 	for {
@@ -60,6 +64,10 @@ func (s *Scheduler) loop() {
 			if now.Hour() == s.poetryHH && now.Minute() == s.poetryMM && lastPoetryDay != day {
 				lastPoetryDay = day
 				go s.svc.BroadcastPoetry(context.Background())
+			}
+			if now.Hour() == s.quotesHH && now.Minute() == s.quotesMM && lastQuotesDay != day {
+				lastQuotesDay = day
+				go s.svc.BroadcastQuotes(context.Background())
 			}
 			if now.Hour() == s.newsHH && now.Minute() == s.newsMM && lastNewsDay != day {
 				lastNewsDay = day

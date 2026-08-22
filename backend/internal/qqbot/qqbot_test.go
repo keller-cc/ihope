@@ -2,6 +2,7 @@ package qqbot
 
 import (
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 )
@@ -22,6 +23,22 @@ func TestWrapRunes(t *testing.T) {
 	}
 	if lines[0] != "床前明月光" || lines[1] != "疑是地上霜" {
 		t.Fatalf("unexpected %v", lines)
+	}
+}
+
+func TestReadQuoteLines(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/quotes.txt"
+	content := "第一句金句\n来自@甲\n\n第二句金句\n来自@乙"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	lines, err := ReadQuoteLines(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(lines) != 2 || lines[0] != "第一句金句" || lines[1] != "第二句金句" {
+		t.Fatalf("lines=%v", lines)
 	}
 }
 
@@ -66,6 +83,28 @@ func TestValidationBodyEventTsString(t *testing.T) {
 	}
 	if v.EventTs != "1725442341" || v.PlainToken != "abc" {
 		t.Fatalf("%+v", v)
+	}
+}
+
+func TestDefaultC2CMenuAndPanel(t *testing.T) {
+	menu := DefaultC2CMenu()
+	if len(menu.Items) != 5 {
+		t.Fatalf("menu items=%d", len(menu.Items))
+	}
+	if menu.Items[4].Type != "menu" || len(menu.Items[4].SubMenuItems) != 5 {
+		t.Fatalf("settings submenu: %+v", menu.Items[4])
+	}
+	panel := DefaultC2CPanel()
+	if panel.Remark != panelRemarkIHope {
+		t.Fatal(panel.Remark)
+	}
+	if len(panel.Items) != 13 {
+		t.Fatalf("panel items=%d", len(panel.Items))
+	}
+	for _, it := range panel.Items {
+		if it.Type != "command" || it.Name == "" || it.Desc == "" {
+			t.Fatalf("bad item %+v", it)
+		}
 	}
 }
 

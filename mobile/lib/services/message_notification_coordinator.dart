@@ -2,18 +2,21 @@ import 'dart:async';
 
 import 'package:flutter/widgets.dart';
 
+import '../models/conversation.dart';
 import '../models/message.dart';
 import 'auth_service.dart';
 import 'background_keep_alive_service.dart';
 import 'local_notification_service.dart';
 import 'notification_preview.dart';
 
-/// 是否应展示应用内横幅（与系统推送开关无关）。
+/// 是否应展示应用内横幅（仅会话列表首页，参考 QQ 顶栏提示范围）。
 bool shouldShowInAppMessageBanner({
+  required bool onMessageListHome,
   required bool activelyViewingConversation,
   required bool isFromPeer,
 }) {
   if (!isFromPeer) return false;
+  if (!onMessageListHome) return false;
   if (activelyViewingConversation) return false;
   return true;
 }
@@ -26,6 +29,7 @@ bool shouldShowMessageNotification({
 }) {
   if (!notificationsEnabled) return false;
   return shouldShowInAppMessageBanner(
+    onMessageListHome: true,
     activelyViewingConversation: activelyViewingConversation,
     isFromPeer: isFromPeer,
   );
@@ -209,17 +213,29 @@ class MessageNotificationCoordinator {
     final activelyViewing =
         _auth.isActivelyViewingConversation(msg.conversationId);
     if (!shouldShowInAppMessageBanner(
+      onMessageListHome: _auth.isMessageListHomeVisible,
       activelyViewingConversation: activelyViewing,
       isFromPeer: true,
     )) {
       return;
     }
 
-    final conv = await _auth.conversationForId(msg.conversationId);
-    if (conv == null) return;
+    final cachedConv = _auth.getCachedConversation(msg.conversationId);
+    final convFuture = cachedConv != null
+        ? Future<ConversationItem?>.value(cachedConv)
+        : _auth.conversationForId(msg.conversationId);
 
-    final title = conv.displayTitle(me.id);
-    final body = await buildNotificationBody(_auth, conv, msg);
+    final hydrated = await _auth.hydrateIncomingMessage(
+      msg.conversationId,
+      msg,
+    );
+    final quickPreview = _auth.previewIfCached(hydrated);
+    final title = cachedConv?.displayTitle(me.id) ?? '新消息';
+    final fallbackBody = fastNotificationBody(
+      cachedConv,
+      hydrated,
+      cachedPreview: quickPreview,
+    );
     final surface = messageNotifySurface(_lifecycle);
 
     if (surface == MessageNotifySurface.system) {
@@ -230,11 +246,14 @@ class MessageNotificationCoordinator {
       )) {
         return;
       }
+      final conv = await convFuture;
+      if (conv == null) return;
+      final body = await buildNotificationBody(_auth, conv, msg);
       final convCount = _local.bumpConversationCount(msg.conversationId);
       final totalBadge = _auth.totalUnreadCount();
       await _local.showMessage(
         conversationId: msg.conversationId,
-        title: title,
+        title: conv.displayTitle(me.id),
         body: body,
         conversationMessageCount: convCount,
         totalBadge: totalBadge > 0 ? totalBadge : convCount,
@@ -249,10 +268,25 @@ class MessageNotificationCoordinator {
       InAppMessageBannerEvent(
         conversationId: msg.conversationId,
         title: title,
-        body: body,
+        body: fallbackBody,
         count: count,
       ),
     );
+
+    final conv = await convFuture;
+    if (conv == null) return;
+    final fullTitle = conv.displayTitle(me.id);
+    final body = await buildNotificationBody(_auth, conv, msg);
+    if (fullTitle != title || body != fallbackBody) {
+      _onInAppBanner?.call(
+        InAppMessageBannerEvent(
+          conversationId: msg.conversationId,
+          title: fullTitle,
+          body: body,
+          count: count,
+        ),
+      );
+    }
   }
 }
 
