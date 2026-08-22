@@ -20,9 +20,10 @@ deploy/
 │   ├── config.yml
 │   └── .cloudflared/         # 凭证 JSON（勿提交）
 ├── docker-compose.dev.yml    # 本地开发：只启动 PostgreSQL
-├── docker-compose.yml        # 生产：postgres + backend + nginx
-├── nginx.conf                # 生产 Nginx 反代（REST + WebSocket）
-├── nginx-ssl.conf.example    # HTTPS 模板（443 + certbot 路径 + HTTP 跳转）
+├── docker-compose.yml        # 生产：postgres + backend + nginx（80+443）
+├── nginx.conf                # 仅 HTTP 验收用（compose 默认挂 nginx-ssl.conf）
+├── nginx-ssl.conf.example    # HTTPS 模板（Cloudflare Origin 证书）
+├── nginx-ssl-certbot.conf.example  # HTTPS 模板（certbot）
 ├── upgrade-dev.ps1           # 开发无感升级脚本
 ├── .env                      # 本地密钥与端口（勿提交 Git）
 └── data/                     # dev compose 数据卷（勿提交 Git）
@@ -32,9 +33,10 @@ deploy/
 | 路径 | 是否提交 Git | 说明 |
 |------|--------------|------|
 | `docker-compose.dev.yml` | 是 | 开发用 PostgreSQL |
-| `docker-compose.yml` | 是 | 生产编排 |
-| `nginx.conf` | 是 | 生产反代配置（HTTP 80） |
-| `nginx-ssl.conf.example` | 是 | HTTPS 443 模板，复制后改域名与证书路径 |
+| `docker-compose.yml` | 是 | 生产编排（nginx 80+443，`nginx-ssl.conf`） |
+| `nginx.conf` | 是 | 仅 HTTP 反代（本地验收；生产用 nginx-ssl.conf） |
+| `nginx-ssl.conf.example` | 是 | HTTPS 443（Cloudflare Origin 证书路径） |
+| `nginx-ssl-certbot.conf.example` | 是 | HTTPS 443（certbot / Let's Encrypt） |
 | `cloudflared/` | 部分 | Tunnel 客户端与配置；`.cloudflared/*.json` 勿提交 |
 | `.env` | 否 | 从项目根 `.env.example` 复制 |
 | `data/postgres/` | 否 | dev 卷数据，删目录 = 重置库 |
@@ -205,14 +207,14 @@ copy ..\.env.example .env
 # 编辑 .env：DB_PASSWORD、JWT_SECRET、ADMIN_SECRET、APP_PUBLIC_URL=https://你的域名
 docker compose up -d --build
 docker compose ps
-curl http://localhost/api/health
+curl -sk https://localhost/api/health
 ```
 
 | 服务 | 说明 |
 |------|------|
 | `postgres` | 数据卷 `postgres_data`；镜像 `postgres:12-alpine`（CentOS 7 兼容） |
 | `backend` | 镜像自 `backend/Dockerfile`；上传目录卷 `uploads_data` |
-| `nginx` | 反代 REST + `/ws`；`client_max_body_size 320m` |
+| `nginx` | 反代 REST + `/ws`；挂载 `nginx-ssl.conf`；暴露 80+443；`client_max_body_size 320m` |
 
 **生产 `.env` 注意：**
 
@@ -222,31 +224,27 @@ curl http://localhost/api/health
 - APK 分发：把包放进卷 `uploads_data` 的 `releases/latest.apk`，或设 `APP_DOWNLOAD_URL`
 - 可选 `HTTP_PORT=8080` 若 80 已被占用
 
-**HTTPS（直连 VPS，不用 Cloudflare）：** 默认 compose 仅暴露 **80** 端口。在 VPS 上启用 TLS 的推荐步骤：
+**HTTPS（生产默认）：** `docker-compose.yml` 已暴露 **80+443**，挂载 `./nginx-ssl.conf` 与 `/etc/ssl/cloudflare`（Cloudflare Origin 证书）。首次部署：
 
-1. 域名 A 记录指向 VPS，`docker compose up -d` 先跑通 HTTP  
-2. 复制模板：`copy nginx-ssl.conf.example nginx-ssl.conf`，将 `im.example.com` 改为你的域名  
-3. 用 **certbot** 在宿主机申请证书（不必写进 compose）：
+```bash
+cp nginx-ssl.conf.example nginx-ssl.conf   # 改 server_name
+# 证书：控制台 Origin Server → 放到 /etc/ssl/cloudflare/origin.pem 与 origin-key.pem
+docker compose up -d --build
+curl -sk https://localhost/api/health
+```
+
+**HTTPS（certbot，不用 Cloudflare 橙云）：** 复制 `nginx-ssl-certbot.conf.example` 为 `nginx-ssl.conf`，并将 compose 中 nginx 证书卷改为 `/etc/letsencrypt:/etc/letsencrypt:ro`：
+
+1. 域名 A 记录指向 VPS  
+2. 用 **certbot** 在宿主机申请证书：
 
 ```bash
 sudo apt install certbot
 sudo certbot certonly --standalone -d im.example.com
-# 证书目录：/etc/letsencrypt/live/im.example.com/
 ```
 
-4. 修改 `docker-compose.yml` 中 nginx 服务（示例）：
-
-```yaml
-nginx:
-  ports:
-    - "80:80"
-    - "443:443"
-  volumes:
-    - ./nginx-ssl.conf:/etc/nginx/conf.d/default.conf:ro
-    - /etc/letsencrypt:/etc/letsencrypt:ro
-```
-
-5. `docker compose up -d nginx` 重载。续期：`certbot renew` + 重载 nginx。
+3. 修改 `docker-compose.yml` nginx 证书卷为 `/etc/letsencrypt:/etc/letsencrypt:ro`  
+4. `docker compose up -d nginx` 重载。续期：`certbot renew` + 重载 nginx。
 
 也可在**宿主机** Nginx/Caddy 终止 TLS 并反代到 `127.0.0.1:80`，则容器内仍用 `nginx.conf` 即可。
 

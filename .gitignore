@@ -57,6 +57,7 @@ deploy/data/
 deploy/uploads/
 deploy/firebase-adminsdk*.json
 deploy/*firebase*adminsdk*.json
+deploy/nginx-ssl.conf
 backend/uploads/
 uploads/
 *.log
