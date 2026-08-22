@@ -18,7 +18,7 @@ services:
       POSTGRES_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
       POSTGRES_DB: ${POSTGRES_DB:-ihope}
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql/data:z
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ihope} -d ${POSTGRES_DB:-ihope}"]
       interval: 5s
@@ -42,8 +42,8 @@ services:
       ADMIN_WEB_DIR: /app/admin
       FCM_CREDENTIALS_FILE: /run/secrets/fcm-service-account.json
     volumes:
-      - uploads_data:/data/uploads
-      - ${FCM_CREDENTIALS_HOST_FILE:-./ihope-606b3-firebase-adminsdk-fbsvc-1db7523612.json}:/run/secrets/fcm-service-account.json:ro
+      - uploads_data:/data/uploads:z
+      - ${FCM_CREDENTIALS_HOST_FILE:-./fcm-placeholder.json}:/run/secrets/fcm-service-account.json:ro
     depends_on:
       postgres:
         condition: service_healthy

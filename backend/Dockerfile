@@ -1,5 +1,5 @@
 # 构建上下文：仓库根目录（见 deploy/docker-compose.yml）
-FROM golang:1.22-alpine AS builder
+FROM golang:1.23-alpine AS builder
 RUN apk add --no-cache ca-certificates
 WORKDIR /src/backend
 COPY backend/go.mod backend/go.sum ./
