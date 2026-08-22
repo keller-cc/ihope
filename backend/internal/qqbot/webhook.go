@@ -93,8 +93,9 @@ func (s *Service) HandleWebhook(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "encode failed", http.StatusInternalServerError)
 			return
 		}
-		log.Printf("qqbot webhook: validation ok")
+		log.Printf("qqbot webhook: validation ok appid=%s ua=%s", r.Header.Get("X-Bot-Appid"), r.Header.Get("User-Agent"))
 		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write(rsp)
 		return
 	}

@@ -20,5 +20,8 @@ func drainGuard(next http.Handler) http.Handler {
 
 func isHealthPath(path string) bool {
 	path = strings.TrimSuffix(path, "/")
+	if strings.HasPrefix(path, "/api/webhooks/") {
+		return true
+	}
 	return path == "/api/health" || path == "/health" || path == "/api/app/download"
 }
