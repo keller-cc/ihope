@@ -74,7 +74,17 @@ class AuthService {
         },
       );
 
-  User? currentUser;
+  User? _currentUser;
+  User? get currentUser => _currentUser;
+
+  void _setCurrentUser(User? user) {
+    _currentUser = user;
+  }
+
+  final _sessionEndedController = StreamController<void>.broadcast();
+
+  /// 会话被服务端吊销或 refresh 失败时发出（含内部 logout）。
+  Stream<void> get onSessionEnded => _sessionEndedController.stream;
   ChatCrypto? _crypto;
   SignalDmService? _signalDm;
   GroupKeyService? _groupKeys;
@@ -190,11 +200,38 @@ class AuthService {
     if (token == null || token.isEmpty) return false;
     _syncAccessToken(token);
     _accessExpiresAt ??= _expiryFromJwt(token);
+    await _hydrateUserFromLocalProfile();
+    return true;
+  }
+
+  Future<void> _hydrateUserFromLocalProfile() async {
+    if (currentUser != null) return;
     final profile = await storage.readUserProfile();
     if (profile != null) {
-      currentUser = User.fromJson(profile);
+      _setCurrentUser(User.fromJson(profile));
     }
-    return true;
+  }
+
+  /// 有本地 token 时确保 [currentUser] 可用：先读快照，必要时 JWT refresh 并拉 profile。
+  Future<bool> ensureUserSnapshot() async {
+    await _hydrateUserFromLocalProfile();
+    if (currentUser != null) return true;
+    if (!await hasLocalSession()) return false;
+
+    await _ensureAccessExpiryLoaded();
+    if (_shouldRefreshProactively()) {
+      if (!await _tryRefreshTokens()) {
+        return currentUser != null;
+      }
+    }
+    if (currentUser != null) return true;
+
+    try {
+      await refreshCurrentUser();
+    } catch (_) {
+      // 网络抖动时保留本地快照
+    }
+    return currentUser != null;
   }
 
   /// 本地是否仍有 access token（不校验网络）。
@@ -215,12 +252,7 @@ class AuthService {
       _syncAccessToken(token);
       _accessExpiresAt ??= _expiryFromJwt(token);
       unawaited(AppConfig.refresh(api));
-      if (currentUser == null) {
-        final profile = await storage.readUserProfile();
-        if (profile != null) {
-          currentUser = User.fromJson(profile);
-        }
-      }
+      await _hydrateUserFromLocalProfile();
       try {
         await refreshCurrentUser();
       } catch (_) {
@@ -228,12 +260,12 @@ class AuthService {
           if (!await hasLocalSession()) {
             await _clearAuthSession();
           }
-          return false;
+          return currentUser != null;
         }
         try {
           await refreshCurrentUser();
         } catch (_) {
-          return false;
+          return currentUser != null;
         }
       }
       try {
@@ -261,7 +293,7 @@ class AuthService {
     api.setAccessToken(null);
     _crypto = null;
     _signalDm = null;
-    currentUser = null;
+    _setCurrentUser(null);
     _accessExpiresAt = null;
   }
 
@@ -294,7 +326,7 @@ class AuthService {
 
   Future<User> refreshCurrentUser() async {
     final data = await api.getJson('/api/users/me');
-    currentUser = User.fromJson(data);
+    _setCurrentUser(User.fromJson(data));
     await storage.saveUserProfile(currentUser!.toJson());
     return currentUser!;
   }
@@ -375,7 +407,7 @@ class AuthService {
     final data = await api.patchJson('/api/users/me', body: {
       'username': username.trim(),
     });
-    currentUser = User.fromJson(data);
+    _setCurrentUser(User.fromJson(data));
     return currentUser!;
   }
 
@@ -386,7 +418,7 @@ class AuthService {
       filename: filename,
       bytes: bytes,
     );
-    currentUser = User.fromJson(data);
+    _setCurrentUser(User.fromJson(data));
     await storage.saveUserProfile(currentUser!.toJson());
     return currentUser!;
   }
@@ -519,11 +551,15 @@ class AuthService {
     } catch (_) {
       // 本地仍清会话；网络失败时服务端 token 可能残留直至 TTL
     }
+    await _disconnectRealtime();
+    await clearLocalCache();
     await _clearAuthSession();
     _conversationCache.clear();
-    _messagesMem.clear();
     _memberDirectories.clear();
     _memberDirectorySynced.clear();
+    if (!_sessionEndedController.isClosed) {
+      _sessionEndedController.add(null);
+    }
   }
 
   /// 供 WS 重连与 API 401 拦截器使用：必要时 refresh 后返回有效 token。
@@ -539,6 +575,7 @@ class AuthService {
     }
     if (_activeAccessToken != null && _activeAccessToken!.isNotEmpty) {
       api.setAccessToken(_activeAccessToken);
+      await _hydrateUserFromLocalProfile();
       return _activeAccessToken;
     }
     final token = await storage.accessToken();
@@ -638,7 +675,7 @@ class AuthService {
     }
     await storage.saveTokens(accessToken: access, refreshToken: refresh);
     final priorUserId = currentUser?.id;
-    currentUser = User.fromJson(data['user'] as Map<String, dynamic>);
+    _setCurrentUser(User.fromJson(data['user'] as Map<String, dynamic>));
     await storage.saveUserProfile(currentUser!.toJson());
     // Token refresh 仅更新凭据；勿清空 E2EE（否则发送会报「加密模块尚未就绪」）。
     if (shouldResetCryptoOnTokenRefresh(
@@ -1298,6 +1335,13 @@ class AuthService {
     return null;
   }
 
+  /// 内存中的会话消息（同步、不读盘）；用于再次进入聊天页瞬时展示。
+  List<ChatMessage>? peekCachedMessages(String conversationId) {
+    final mem = _messagesMem[conversationId];
+    if (mem == null || mem.isEmpty) return null;
+    return List<ChatMessage>.from(mem);
+  }
+
   bool _isValidCachedPlaintext(String type, String? pt) {
     if (pt == null || pt.isEmpty) return false;
     if (ChatMessage.isDecryptPlaceholder(pt)) return false;
@@ -1789,8 +1833,9 @@ class AuthService {
   /// 从服务端下载加密 blob 并解密为完整媒体（图片原图 / 文件）。
   Future<MediaPayload?> fetchAttachmentMedia(
     ConversationItem conversation,
-    ChatMessage message,
-  ) async {
+    ChatMessage message, {
+    void Function(double progress)? onProgress,
+  }) async {
     final fileId = message.fileId;
     if (fileId == null || fileId.isEmpty) return null;
 
@@ -1817,6 +1862,7 @@ class AuthService {
     final encrypted = await fileUpload.downloadEncrypted(
       fileId,
       expectedBytes: att.size,
+      onProgress: onProgress,
     );
     final clear = await FileAttachmentCrypto.decrypt(
       FileAttachmentCrypto.keyFromB64(att.fileKeyB64),
@@ -1839,8 +1885,9 @@ class AuthService {
   /// 单条消息媒体修复（文件：用户点击接收；其它：缓存 local 引用失效时重新解密）。
   Future<ChatMessage?> repairMessageMedia(
     ConversationItem conversation,
-    ChatMessage message,
-  ) async {
+    ChatMessage message, {
+    void Function(double progress)? onProgress,
+  }) async {
     if (message.type == 'system') return message;
     if (message.fileId != null &&
         (message.type == 'file' || message.type == 'image')) {
@@ -1863,7 +1910,7 @@ class AuthService {
       }
       try {
         final media =
-            await fetchAttachmentMedia(conversation, message);
+            await fetchAttachmentMedia(conversation, message, onProgress: onProgress);
         if (media == null) return null;
         final ref = await MediaLocalCache.attachmentLocalRef(
           message.id,
@@ -2621,13 +2668,13 @@ class AuthService {
         profileKey != localPub;
 
     if (profileKey != localPub) {
-      currentUser = User(
+      _setCurrentUser(User(
         id: user.id,
         email: user.email,
         username: user.username,
         avatarUrl: user.avatarUrl,
         identityPublicKey: localPub,
-      );
+      ));
       await storage.saveUserProfile(currentUser!.toJson());
     }
 
@@ -2636,7 +2683,7 @@ class AuthService {
         final data = await api.patchJson('/api/users/me', body: {
           'identity_public_key': localPub,
         });
-        currentUser = User.fromJson(data);
+        _setCurrentUser(User.fromJson(data));
         await storage.saveUserProfile(currentUser!.toJson());
       } catch (_) {}
       return true;

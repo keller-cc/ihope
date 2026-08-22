@@ -22,8 +22,8 @@ import '../widgets/voice_hint_toast.dart';
 import 'announcement_detail_screen.dart';
 import 'group_announcements_screen.dart';
 import 'chat/chat_app_bar.dart';
+import 'chat/chat_floating_chips.dart';
 import 'chat/chat_message_list_view.dart';
-import 'chat/chat_message_tile.dart';
 import 'chat/chat_outgoing_controller.dart';
 import 'chat/chat_scroll_coordinator.dart';
 import 'chat/chat_thread_loader.dart';
@@ -96,22 +96,43 @@ class _ChatScreenState extends State<ChatScreen> {
     setState(() => _dismissedAnnouncementBannerIds.add(announcementId));
   }
 
+  /// 从内存缓存同步灌入列表，首帧即可展示（返回首页再进不转圈）。
+  void _hydrateFromMemoryCache() {
+    final quick = ChatThreadLoader.quickMessagesFromMemory(
+      widget.auth,
+      _conversation,
+    );
+    if (quick == null) return;
+    _messages = quick;
+    _loading = false;
+  }
+
+  void _bindScrollToHydratedMessages() {
+    if (_messages.isEmpty) return;
+    final me = widget.auth.currentUser;
+    if (me == null) return;
+    _scrollCoord.bindThread(_messages, me.id);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _messages.isEmpty) return;
+      _scrollCoord.stickToTailIfPinned();
+    });
+  }
+
   @override
   void initState() {
     super.initState();
     _conversation = widget.conversation;
     _pendingFocusMessageId = widget.initialFocusMessageId;
     _thread = ChatThreadLoader(auth: widget.auth, conversation: _conversation);
+    _hydrateFromMemoryCache();
 
     _scrollCoord = ChatScrollCoordinator(
       scrollController: _scroll,
-      onChanged: () {
-        if (mounted) setState(() {});
-      },
       isMounted: () => mounted,
       onReachedBottom: () => unawaited(_markReadToLast()),
     );
     _scrollCoord.attach();
+    _bindScrollToHydratedMessages();
 
     _outgoing = ChatOutgoingController(
       auth: widget.auth,
@@ -176,7 +197,7 @@ class _ChatScreenState extends State<ChatScreen> {
     for (final s in _subs) {
       unawaited(s.cancel());
     }
-    _scrollCoord.detach();
+    _scrollCoord.dispose();
     unawaited(_outgoing.dispose());
     widget.auth.setOpenConversation(null);
     _input.dispose();
@@ -244,6 +265,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _prefetchChatImages(List<ChatMessage> messages) async {
     if (_conversation.isArchived) return;
+    final pending = <ChatMessage>[];
     for (final m in messages) {
       if (m.type != 'image' || m.fileId == null || m.fileId!.isEmpty) continue;
       if (_prefetchingImages.contains(m.id)) continue;
@@ -254,12 +276,40 @@ class _ChatScreenState extends State<ChatScreen> {
       );
       if (!needs) continue;
       _prefetchingImages.add(m.id);
-      unawaited(
-        _repairMessageMedia(m.id).whenComplete(
-          () => _prefetchingImages.remove(m.id),
-        ),
-      );
+      pending.add(m);
     }
+    if (pending.isEmpty) return;
+
+    final repairs = <ChatMessage>[];
+    for (final m in pending) {
+      try {
+        final repaired = await _repairMessageMediaQuiet(m.id);
+        if (repaired != null) repairs.add(repaired);
+      } finally {
+        _prefetchingImages.remove(m.id);
+      }
+    }
+    if (repairs.isEmpty || !mounted) return;
+    setState(() {
+      for (final repaired in repairs) {
+        _messages = ChatThreadLoader.upsert(_messages, repaired);
+        _thread.cacheMessageIfReady(_messages, repaired);
+      }
+    });
+  }
+
+  Future<ChatMessage?> _repairMessageMediaQuiet(String messageId) async {
+    final i = _messages.indexWhere((m) => m.id == messageId);
+    if (i < 0) return null;
+    final prev = _messages[i];
+    final repaired = await widget.auth.repairMessageMedia(_conversation, prev);
+    if (repaired == null) return null;
+    if (repaired.plaintext == prev.plaintext &&
+        repaired.fileId == prev.fileId &&
+        repaired.sendStatus == prev.sendStatus) {
+      return null;
+    }
+    return repaired;
   }
 
   Future<void> _bootstrap() async {
@@ -307,6 +357,15 @@ class _ChatScreenState extends State<ChatScreen> {
     } catch (_) {}
   }
 
+  Future<void> _presentQuickFromCache(
+    List<ChatMessage> cached, {
+    DateTime? readAt,
+  }) async {
+    if (cached.isEmpty || _messages.isNotEmpty) return;
+    final quick = widget.auth.messagesForQuickDisplay(_conversation, cached);
+    if (quick.isNotEmpty) await _presentMessages(quick, readAt: readAt);
+  }
+
   Future<void> _loadHistory() async {
     final epoch = _historyEpoch;
     if (_messages.isEmpty) {
@@ -323,31 +382,24 @@ class _ChatScreenState extends State<ChatScreen> {
       final cached = await widget.auth.loadCachedMessages(_conversation.id);
       if (_isStale(epoch)) return;
 
-      if (cached.isNotEmpty && _messages.isEmpty) {
-        final fullyCached =
-            await widget.auth.cachedMessagesFullyAvailable(cached);
-        if (!fullyCached) {
-          final quick =
-              widget.auth.messagesForQuickDisplay(_conversation, cached);
-          if (quick.isNotEmpty) {
-            await _presentMessages(quick, readAt: readAt);
-          }
-        }
-      }
+      await _presentQuickFromCache(cached, readAt: readAt);
 
       final fullyLocal = cached.isNotEmpty &&
           await widget.auth.cachedMessagesFullyAvailable(cached);
 
+      if (fullyLocal) {
+        if (!_conversation.isArchived) {
+          unawaited(_syncRemoteInBackground(epoch));
+        }
+        return;
+      }
+
       final list = await _thread.resolve(
         cached: cached,
-        fetchRemote: !_conversation.isArchived && !fullyLocal,
+        fetchRemote: !_conversation.isArchived,
       );
       if (_isStale(epoch)) return;
       await _presentMessages(list, readAt: readAt);
-
-      if (fullyLocal && !_conversation.isArchived) {
-        unawaited(_syncRemoteInBackground(epoch));
-      }
     } catch (e) {
       if (_isStale(epoch)) return;
       if (_messages.isEmpty) {
@@ -393,9 +445,16 @@ class _ChatScreenState extends State<ChatScreen> {
     if (_messages.isEmpty || !mounted) return;
     final local = await widget.auth.decryptMessagesLocal(_conversation, _messages);
     if (!mounted) return;
-    setState(() => _messages = local);
-    unawaited(_thread.cacheIfReady(local));
-    if (_scrollCoord.tailPinned && !_loading) {
+    if (!_scrollCoord.tailPinned) {
+      _scrollCoord.beginScrollLockForTailInsert();
+    }
+    setState(() {
+      _messages = ChatThreadLoader.preserveLocalOutgoing(local, _messages);
+    });
+    unawaited(_thread.cacheIfReady(_messages));
+    if (!_scrollCoord.tailPinned) {
+      _scrollCoord.endScrollLockAfterTailInsert();
+    } else if (!_loading) {
       _scrollCoord.stickToTailIfPinned();
     }
   }
@@ -426,14 +485,46 @@ class _ChatScreenState extends State<ChatScreen> {
     setState(() {
       final i = _messages.indexWhere((m) => m.id == localId);
       if (i >= 0) {
+        final failed = _messages[i].copyWith(sendStatus: MessageSendStatus.failed);
         _messages = [
           ..._messages.sublist(0, i),
-          _messages[i].copyWith(sendStatus: MessageSendStatus.failed),
+          failed,
           ..._messages.sublist(i + 1),
         ];
+        _thread.cacheMessageIfReady(_messages, failed);
       }
     });
     _showSnack(_friendlySendError(error));
+  }
+
+  int? _outgoingEchoIndex(List<ChatMessage> list, ChatMessage echo, String meId) {
+    if (echo.senderId != meId) return null;
+    if (echo.fileId != null && echo.fileId!.isNotEmpty) {
+      final byFile = list.indexWhere(
+        (m) =>
+            m.isLocalOutgoing &&
+            m.sendStatus == MessageSendStatus.sending &&
+            m.fileId == echo.fileId,
+      );
+      if (byFile >= 0) return byFile;
+    }
+    if (echo.type == 'text' && echo.plaintext != null) {
+      final byText = list.indexWhere(
+        (m) =>
+            m.isLocalOutgoing &&
+            m.sendStatus == MessageSendStatus.sending &&
+            m.type == 'text' &&
+            m.plaintext == echo.plaintext,
+      );
+      if (byText >= 0) return byText;
+    }
+    final byType = list.indexWhere(
+      (m) =>
+          m.isLocalOutgoing &&
+          m.sendStatus == MessageSendStatus.sending &&
+          m.type == echo.type,
+    );
+    return byType >= 0 ? byType : null;
   }
 
   Future<void> _onSendRetry(ChatMessage msg) async {
@@ -499,14 +590,9 @@ class _ChatScreenState extends State<ChatScreen> {
 
     setState(() {
       var list = _messages;
-      if (me != null && materialized.senderId == me.id) {
-        final sendingIdx = list.indexWhere(
-          (m) =>
-              m.isLocalOutgoing &&
-              m.sendStatus == MessageSendStatus.sending &&
-              m.type == materialized.type,
-        );
-        if (sendingIdx >= 0) {
+      if (me != null) {
+        final sendingIdx = _outgoingEchoIndex(list, materialized, me.id);
+        if (sendingIdx != null) {
           list = [...list.sublist(0, sendingIdx), ...list.sublist(sendingIdx + 1)];
         }
       }
@@ -530,11 +616,23 @@ class _ChatScreenState extends State<ChatScreen> {
     unawaited(_prefetchChatImages([materialized]));
   }
 
-  Future<void> _repairMessageMedia(String messageId) async {
+  Future<void> _repairMessageMedia(
+    String messageId, {
+    void Function(double progress)? onProgress,
+  }) async {
     final i = _messages.indexWhere((m) => m.id == messageId);
-    if (i < 0) return;
-    final repaired = await widget.auth.repairMessageMedia(_conversation, _messages[i]);
+    if (i < 0 || !mounted) return;
+    final repaired = await widget.auth.repairMessageMedia(
+      _conversation,
+      _messages[i],
+      onProgress: onProgress,
+    );
     if (repaired == null || !mounted) return;
+    if (repaired.plaintext == _messages[i].plaintext &&
+        repaired.fileId == _messages[i].fileId &&
+        repaired.sendStatus == _messages[i].sendStatus) {
+      return;
+    }
     setState(() {
       _messages = ChatThreadLoader.upsert(_messages, repaired);
       _thread.cacheMessageIfReady(_messages, repaired);
@@ -757,12 +855,16 @@ class _ChatScreenState extends State<ChatScreen> {
   Widget build(BuildContext context) {
     final me = widget.auth.currentUser;
     if (me == null) {
-      return const Scaffold(body: Center(child: Text('未登录')));
+      return const Scaffold(
+        body: Center(child: CircularProgressIndicator()),
+      );
     }
+    return _buildChat(me);
+  }
 
+  Widget _buildChat(User me) {
     final isArchived = _conversation.isArchived;
     final peer = _peerMember(me);
-    _scrollCoord.bindThread(_messages, me.id);
 
     return PopScope(
       canPop: false,
@@ -848,16 +950,8 @@ class _ChatScreenState extends State<ChatScreen> {
                     onRefresh: _onPullRefresh,
                   ),
                   ChatFloatingChips(
-                    showJumpToUnread: _scrollCoord.showJumpToUnread,
-                    showJumpToBottom: _scrollCoord.showJumpToBottom,
-                    showScrollToLatestArrow: _scrollCoord.showScrollToLatestArrow,
-                    scrollToLatestArrowOpacity: _scrollCoord.scrollToLatestArrowOpacity,
-                    enterUnreadCount: _scrollCoord.enterUnreadCount,
-                    belowUnreadCount: _scrollCoord.belowUnreadCount,
-                    onJumpToUnread: () => _scrollCoord.onJumpToUnread(_messages),
-                    onJumpToNewMessages: () =>
-                        _scrollCoord.onJumpToNewMessages(_messages),
-                    onJumpToLatest: () => _scrollCoord.onJumpToLatest(_messages),
+                    scrollCoord: _scrollCoord,
+                    messages: _messages,
                   ),
                 ],
               ),

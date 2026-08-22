@@ -36,6 +36,7 @@ class FileUploadService {
   Future<List<int>> downloadEncrypted(
     String fileId, {
     int expectedBytes = 0,
+    void Function(double progress)? onProgress,
   }) async {
     final timeout = expectedBytes > 0
         ? transferTimeoutForBytes(expectedBytes)
@@ -44,6 +45,11 @@ class FileUploadService {
       return await _api.getBytes(
         '/api/files/$fileId',
         receiveTimeout: timeout,
+        onReceiveProgress: onProgress == null
+            ? null
+            : (received, total) {
+                if (total > 0) onProgress(received / total);
+              },
       );
     } catch (e) {
       throw StateError(friendlyTransferError(e));

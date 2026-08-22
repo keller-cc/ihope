@@ -166,4 +166,15 @@ class ChatThreadLoader {
     }
     return merged;
   }
+
+  /// 内存缓存快速展示列表；无缓存时返回 null。
+  static List<ChatMessage>? quickMessagesFromMemory(
+    AuthService auth,
+    ConversationItem conversation,
+  ) {
+    final cached = auth.peekCachedMessages(conversation.id);
+    if (cached == null || cached.isEmpty) return null;
+    final quick = auth.messagesForQuickDisplay(conversation, cached);
+    return quick.isEmpty ? null : quick;
+  }
 }

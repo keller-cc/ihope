@@ -17,6 +17,7 @@ import '../../utils/cloud_drive_launcher.dart';
 import '../../utils/image_thumbnail.dart';
 import '../../utils/media_local_cache.dart';
 import '../../utils/media_payload.dart';
+import '../../utils/media_save.dart';
 import 'large_file_send_choice.dart';
 
 /// 文本/图片/文件/语音发送（私聊/群聊共用）。
@@ -435,13 +436,16 @@ class ChatOutgoingController {
       }
     }
     final ext = p.extension(file.name);
+    final isImage = MediaSave.isImageName(file.name);
     await sendMedia(
-      type: 'file',
+      type: isImage ? 'image' : 'file',
       media: MediaPayload(
-        kind: 'file',
-        mime: ext.isNotEmpty
-            ? 'application/${ext.substring(1)}'
-            : 'application/octet-stream',
+        kind: isImage ? 'image' : 'file',
+        mime: isImage
+            ? _imageMimeFromName(file.name)
+            : ext.isNotEmpty
+                ? 'application/${ext.substring(1)}'
+                : 'application/octet-stream',
         name: file.name,
         bytes: bytes,
       ),

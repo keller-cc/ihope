@@ -222,6 +222,7 @@ class ApiClient {
   Future<List<int>> getBytes(
     String path, {
     Duration? receiveTimeout,
+    void Function(int received, int total)? onReceiveProgress,
   }) async {
     try {
       final res = await _dio.get<List<int>>(
@@ -230,6 +231,7 @@ class ApiClient {
           responseType: ResponseType.bytes,
           receiveTimeout: receiveTimeout,
         ),
+        onReceiveProgress: onReceiveProgress,
       );
       return res.data ?? [];
     } on DioException catch (e) {

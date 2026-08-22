@@ -1,10 +1,12 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:path_provider/path_provider.dart';
 
 import 'media_payload.dart';
 import 'image_thumbnail.dart';
+import 'media_retry_callback.dart';
 
 /// 聊天媒体私有缓存；导出相册见 [MediaSave] / [MediaDownloadIndex]。
 class MediaLocalCache {
@@ -71,6 +73,7 @@ class MediaLocalCache {
       if (media.kind == 'image') {
         try {
           final preview = await ImageThumbnail.generatePreview(media.bytes);
+          final size = ImageThumbnail.pixelSize(preview);
           _rememberImagePreview(
             messageId,
             media.mime,
@@ -83,6 +86,8 @@ class MediaLocalCache {
             'mime': media.mime,
             'name': media.name,
             'preview_b64': base64Encode(preview),
+            if (size != null) 'image_width': size.width,
+            if (size != null) 'image_height': size.height,
           });
         } catch (_) {}
       }
@@ -165,13 +170,60 @@ class MediaLocalCache {
     if (!isRemoteImage(plaintext, fileId)) return false;
     if (!await hasPayloadFile(messageId)) return true;
     final expected = expectedAttachmentBytes(plaintext);
-    if (expected == null || expected <= 0) return false;
     try {
       final len = await (await _bytesFile(messageId)).length();
-      return len < expected * _fullImageRatio;
+      if (expected != null && expected > 0) {
+        return len < expected * _fullImageRatio;
+      }
+      return !hasFullImageBytes(len, plaintext);
     } catch (_) {
       return true;
     }
+  }
+
+  /// 仅读本地已落盘原图；不触发网络。
+  static Future<Uint8List?> tryLoadFullImageBytes({
+    required String messageId,
+    required String? plaintext,
+    required String? fileId,
+  }) async {
+    final full = await loadFullImage(messageId, plaintext, fileId);
+    if (full == null || full.bytes.isEmpty) return null;
+    return Uint8List.fromList(full.bytes);
+  }
+
+  /// 优先本地原图；缺失且需要下载时调用 [downloadIfNeeded]，再读本地。
+  static Future<Uint8List> resolveFullImageBytes({
+    required String messageId,
+    required String? plaintext,
+    required String? fileId,
+    MediaDownloadCallback? downloadIfNeeded,
+  }) async {
+    final cached = await tryLoadFullImageBytes(
+      messageId: messageId,
+      plaintext: plaintext,
+      fileId: fileId,
+    );
+    if (cached != null) return cached;
+
+    if (await needsFullImageDownload(
+      messageId: messageId,
+      plaintext: plaintext,
+      fileId: fileId,
+    )) {
+      if (downloadIfNeeded == null) {
+        throw StateError('无法下载原图');
+      }
+      await downloadIfNeeded();
+    }
+
+    final after = await tryLoadFullImageBytes(
+      messageId: messageId,
+      plaintext: plaintext,
+      fileId: fileId,
+    );
+    if (after != null) return after;
+    throw StateError('原图不可用');
   }
 
   /// 读取已落盘的原图；不含缩略图回退。
@@ -184,12 +236,7 @@ class MediaLocalCache {
       if (!await hasPayloadFile(messageId)) return null;
       final local = await load(messageId);
       if (local == null) return null;
-      final expected = expectedAttachmentBytes(plaintext);
-      if (expected != null &&
-          expected > 0 &&
-          local.bytes.length < expected * _fullImageRatio) {
-        return null;
-      }
+      if (!hasFullImageBytes(local.bytes.length, plaintext)) return null;
       return local;
     }
     final local = await load(messageId);
@@ -210,6 +257,15 @@ class MediaLocalCache {
       await fromMeta.delete();
     }
     await fromBytes.delete();
+    _migratePreviewMemory(fromId, toId);
+  }
+
+  static void _migratePreviewMemory(String fromId, String toId) {
+    if (fromId == toId) return;
+    final preview = _imagePreviewMem.remove(fromId);
+    if (preview != null) {
+      _imagePreviewMem[toId] = preview;
+    }
   }
 
   /// 原图/文件已落盘后，生成保留 file_key 的 local 引用。

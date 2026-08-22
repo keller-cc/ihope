@@ -8,6 +8,8 @@ import '../../utils/message_time.dart';
 import '../../widgets/announcement_card.dart';
 import '../../widgets/chat_bubble.dart';
 import '../../widgets/chat_scroll_chip.dart';
+import '../../utils/media_retry_callback.dart';
+import 'chat_image_launcher.dart';
 
 class ChatMessageTile extends StatelessWidget {
   const ChatMessageTile({
@@ -40,7 +42,7 @@ class ChatMessageTile extends StatelessWidget {
   final String Function(String userId) nameFor;
   final String? Function(String userId) avatarUrlFor;
   final void Function(String userId) onPeerTap;
-  final Future<void> Function(String messageId) onMediaRetry;
+  final MediaRetryCallback onMediaRetry;
   final void Function(ChatMessage msg) onSendRetry;
   final Set<String> announcementReadIds;
   final void Function(ChatMessage msg)? onAnnouncementTap;
@@ -90,6 +92,7 @@ class ChatMessageTile extends StatelessWidget {
         avatarUrlFor: avatarUrlFor,
         onPeerTap: onPeerTap,
         onMediaRetry: onMediaRetry,
+        imageGallery: ChatImageLauncher.galleryFromMessages(allMessages),
         onSendRetry: msg.sendStatus == MessageSendStatus.failed &&
                 msg.isLocalOutgoing
             ? () => onSendRetry(msg)
@@ -202,116 +205,6 @@ class _MessageFocusShellState extends State<_MessageFocusShell>
         );
       },
       child: widget.child,
-    );
-  }
-}
-
-/// 右侧浮动条：上方「未读消息」，下方「新消息」；底部居中为快速下滑时的「回最新」箭头。
-class ChatFloatingChips extends StatelessWidget {
-  const ChatFloatingChips({
-    super.key,
-    required this.showJumpToUnread,
-    required this.showJumpToBottom,
-    required this.showScrollToLatestArrow,
-    required this.scrollToLatestArrowOpacity,
-    required this.enterUnreadCount,
-    required this.belowUnreadCount,
-    required this.onJumpToUnread,
-    required this.onJumpToNewMessages,
-    required this.onJumpToLatest,
-  });
-
-  final bool showJumpToUnread;
-  final bool showJumpToBottom;
-  final bool showScrollToLatestArrow;
-  final double scrollToLatestArrowOpacity;
-  final int enterUnreadCount;
-  final int belowUnreadCount;
-  final VoidCallback onJumpToUnread;
-  final VoidCallback onJumpToNewMessages;
-  final VoidCallback onJumpToLatest;
-
-  /// 未读气泡距聊天区顶部的比例（0~1）。
-  static const unreadChipTopFactor = 0.12;
-
-  /// 新消息气泡距聊天区底部的比例（0~1，在输入框上方）。
-  static const newMessageChipBottomFactor = 0.14;
-
-  /// 快速下滑箭头距底部的比例。
-  static const scrollArrowBottomFactor = 0.02;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final h = constraints.maxHeight;
-        final unreadTop = h * unreadChipTopFactor;
-        final newMessageBottom = h * newMessageChipBottomFactor;
-        final arrowBottom = h * scrollArrowBottomFactor;
-
-        return Stack(
-          clipBehavior: Clip.none,
-          children: [
-            if (showJumpToUnread)
-              Positioned(
-                right: 0,
-                top: unreadTop,
-                child: ChatScrollChip(
-                  label: enterUnreadCount > 0
-                      ? '$enterUnreadCount条未读消息'
-                      : '未读消息',
-                  icon: Icons.north_rounded,
-                  onTap: onJumpToUnread,
-                ),
-              ),
-            if (showJumpToBottom)
-              Positioned(
-                right: 0,
-                bottom: newMessageBottom,
-                child: ChatScrollChip(
-                  label: belowUnreadCount > 0
-                      ? '$belowUnreadCount条新消息'
-                      : '新消息',
-                  icon: Icons.south_rounded,
-                  onTap: onJumpToNewMessages,
-                ),
-              ),
-            if (showScrollToLatestArrow && scrollToLatestArrowOpacity > 0.01)
-              Positioned(
-                left: 0,
-                right: 0,
-                bottom: arrowBottom,
-                child: Center(
-                  child: AnimatedOpacity(
-                    opacity: scrollToLatestArrowOpacity.clamp(0.0, 1.0),
-                    duration: const Duration(milliseconds: 80),
-                    child: Material(
-                      color: scheme.surfaceContainerHighest.withValues(alpha: 0.95),
-                      elevation: 2,
-                      shadowColor: Colors.black26,
-                      shape: const CircleBorder(),
-                      clipBehavior: Clip.antiAlias,
-                      child: InkWell(
-                        onTap: onJumpToLatest,
-                        customBorder: const CircleBorder(),
-                        child: Padding(
-                          padding: const EdgeInsets.all(10),
-                          child: Icon(
-                            Icons.keyboard_arrow_down_rounded,
-                            color: scheme.primary,
-                            size: 28,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-          ],
-        );
-      },
     );
   }
 }

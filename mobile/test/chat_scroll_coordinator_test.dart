@@ -25,14 +25,13 @@ void main() {
       scroll = ScrollController();
       coord = ChatScrollCoordinator(
         scrollController: scroll,
-        onChanged: () {},
         isMounted: () => true,
         onReachedBottom: () {},
       );
     });
 
     tearDown(() {
-      coord.detach();
+      coord.dispose();
       scroll.dispose();
     });
 
@@ -283,13 +282,13 @@ void main() {
       var changed = 0;
       final coord = ChatScrollCoordinator(
         scrollController: scroll,
-        onChanged: () => changed++,
         isMounted: () => true,
         onReachedBottom: () {},
       );
+      coord.addListener(() => changed++);
       coord.attach();
       addTearDown(() {
-        coord.detach();
+        coord.dispose();
         scroll.dispose();
         messages.dispose();
       });

@@ -35,6 +35,10 @@ class _DailyQuoteScreenState extends State<DailyQuoteScreen> {
       setState(() {
         _quote = q;
         _loading = false;
+        if ((q.body).trim().isEmpty) {
+          _error = '暂无金句内容';
+          _quote = null;
+        }
       });
     } catch (e) {
       if (!mounted) return;
@@ -65,7 +69,18 @@ class _DailyQuoteScreenState extends State<DailyQuoteScreen> {
               ? Center(
                   child: Padding(
                     padding: const EdgeInsets.all(24),
-                    child: Text(_error!, textAlign: TextAlign.center),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(_error!, textAlign: TextAlign.center),
+                        const SizedBox(height: 16),
+                        FilledButton.icon(
+                          onPressed: _loading ? null : () => unawaited(_load()),
+                          icon: const Icon(Icons.refresh),
+                          label: const Text('重试'),
+                        ),
+                      ],
+                    ),
                   ),
                 )
               : ListView(

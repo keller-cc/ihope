@@ -1,114 +1,355 @@
 import 'dart:async';
-import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../utils/media_download_index.dart';
 import '../utils/media_local_cache.dart';
+import '../utils/media_retry_callback.dart';
 import '../utils/media_save.dart';
 
-class ImageViewerScreen extends StatefulWidget {
-  const ImageViewerScreen({
-    super.key,
-    Uint8List? bytes,
-    Future<Uint8List> Function()? bytesFuture,
-    this.onRetryLoad,
+/// 单张图片的查看参数。
+class ImageViewerPageData {
+  const ImageViewerPageData({
+    this.bytes,
+    this.onDownloadIfNeeded,
     required this.name,
     this.messageId,
     this.expectedPlaintext,
-  })  : assert(bytes != null || bytesFuture != null || onRetryLoad != null),
-        _bytes = bytes,
-        _bytesFuture = bytesFuture;
+    this.fileId,
+  });
 
-  final Uint8List? _bytes;
-  final Future<Uint8List> Function()? _bytesFuture;
-  final Future<Uint8List> Function()? onRetryLoad;
+  final Uint8List? bytes;
+  final MediaDownloadCallback? onDownloadIfNeeded;
   final String name;
   final String? messageId;
   final String? expectedPlaintext;
+  final String? fileId;
+}
+
+/// 全屏看图（QQ/微信风格）：黑底、顶部返回、底部保存、左右滑动多图。
+class ImageViewerScreen extends StatefulWidget {
+  const ImageViewerScreen({
+    super.key,
+    required this.pages,
+    this.initialIndex = 0,
+  }) : assert(pages.length > 0);
+
+  final List<ImageViewerPageData> pages;
+  final int initialIndex;
 
   @override
   State<ImageViewerScreen> createState() => _ImageViewerScreenState();
 }
 
 class _ImageViewerScreenState extends State<ImageViewerScreen> {
-  Uint8List? _bytes;
-  bool _loading = false;
-  bool _loadingFull = false;
-  String? _loadError;
-  bool _saving = false;
-  double _progress = 0;
-  String? _savedLabel;
+  late final PageController _pageController;
+  late int _index;
+  late final List<GlobalKey<_ImageViewerContentState>> _pageKeys;
 
   @override
   void initState() {
     super.initState();
-    if (widget._bytes != null) {
-      _bytes = widget._bytes;
+    _index = widget.initialIndex.clamp(0, widget.pages.length - 1);
+    _pageController = PageController(initialPage: _index);
+    _pageKeys = List.generate(
+      widget.pages.length,
+      (_) => GlobalKey<_ImageViewerContentState>(),
+    );
+    SystemChrome.setSystemUIOverlayStyle(
+      const SystemUiOverlayStyle(
+        statusBarColor: Colors.transparent,
+        statusBarIconBrightness: Brightness.light,
+        statusBarBrightness: Brightness.dark,
+      ),
+    );
+  }
+
+  @override
+  void dispose() {
+    _pageController.dispose();
+    SystemChrome.setSystemUIOverlayStyle(SystemUiOverlayStyle.dark);
+    super.dispose();
+  }
+
+  _ImageViewerContentState? get _currentPage => _pageKeys[_index].currentState;
+
+  @override
+  Widget build(BuildContext context) {
+    final page = _currentPage;
+
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          PageView.builder(
+            controller: _pageController,
+            itemCount: widget.pages.length,
+            onPageChanged: (i) => setState(() => _index = i),
+            itemBuilder: (context, i) {
+              return _ImageViewerContent(
+                key: _pageKeys[i],
+                data: widget.pages[i],
+                onChanged: () {
+                  if (mounted) setState(() {});
+                },
+              );
+            },
+          ),
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            child: SafeArea(
+              bottom: false,
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: IconButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  icon: const Icon(
+                    Icons.arrow_back_ios_new,
+                    color: Colors.white,
+                    size: 22,
+                  ),
+                ),
+              ),
+            ),
+          ),
+          if (page != null && page.hasImage)
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              child: SafeArea(
+                top: false,
+                child: _WeChatStyleBottomBar(
+                  saving: page.saving,
+                  saved: page.saved,
+                  onSave: page.saving || page.saved
+                      ? null
+                      : () => unawaited(page.save()),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 底部操作条（与微信「保存图片」一致：图标 + 文案）。
+class _WeChatStyleBottomBar extends StatelessWidget {
+  const _WeChatStyleBottomBar({
+    required this.saving,
+    required this.saved,
+    this.onSave,
+  });
+
+  final bool saving;
+  final bool saved;
+  final VoidCallback? onSave;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 12),
+      color: Colors.black,
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          InkWell(
+            onTap: onSave,
+            borderRadius: BorderRadius.circular(8),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (saving)
+                    const SizedBox(
+                      width: 28,
+                      height: 28,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white70,
+                      ),
+                    )
+                  else
+                    Icon(
+                      saved ? Icons.check_circle_outline : Icons.download_outlined,
+                      color: saved ? Colors.white54 : Colors.white,
+                      size: 28,
+                    ),
+                  const SizedBox(height: 4),
+                  Text(
+                    saved ? '已保存' : '保存图片',
+                    style: TextStyle(
+                      color: saved ? Colors.white54 : Colors.white,
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ImageViewerContent extends StatefulWidget {
+  const _ImageViewerContent({
+    super.key,
+    required this.data,
+    required this.onChanged,
+  });
+
+  final ImageViewerPageData data;
+  final VoidCallback onChanged;
+
+  @override
+  State<_ImageViewerContent> createState() => _ImageViewerContentState();
+}
+
+class _ImageViewerContentState extends State<_ImageViewerContent> {
+  Uint8List? _bytes;
+  bool _loadError = false;
+  bool _saving = false;
+  String? _savedLabel;
+
+  ImageViewerPageData get data => widget.data;
+
+  bool get hasImage => _bytes != null;
+  bool get saving => _saving;
+  bool get saved => _savedLabel != null;
+
+  bool _isFullBytes(Uint8List bytes) =>
+      MediaLocalCache.hasFullImageBytes(bytes.length, data.expectedPlaintext);
+
+  bool get _canRetry =>
+      data.onDownloadIfNeeded != null || data.messageId != null;
+
+  @override
+  void initState() {
+    super.initState();
+    final initial = data.bytes;
+    if (initial != null && initial.isNotEmpty) {
+      _bytes = initial;
     }
-    final hasLoader =
-        widget._bytesFuture != null || widget.onRetryLoad != null;
-    if (hasLoader) {
-      if (widget._bytes == null) {
-        _loading = true;
-      } else {
-        _loadingFull = true;
-      }
-      unawaited(_loadBytes());
+    if (_bytes != null && _isFullBytes(_bytes!)) {
+      unawaited(_restoreSavedState());
+      return;
+    }
+    unawaited(_resolveFullInBackground());
+  }
+
+  @override
+  void didUpdateWidget(covariant _ImageViewerContent oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.data.messageId != data.messageId) {
+      _bytes = data.bytes;
+      _loadError = false;
+      _savedLabel = null;
+      unawaited(_resolveFullInBackground());
+      unawaited(_restoreSavedState());
+    }
+  }
+
+  Future<void> _resolveFullInBackground() async {
+    final local = await _tryLoadLocalFull();
+    if (local != null) {
+      if (!mounted) return;
+      setState(() {
+        _bytes = local;
+        _loadError = false;
+      });
+      widget.onChanged();
+      unawaited(_restoreSavedState());
+      return;
+    }
+
+    if (data.onDownloadIfNeeded != null) {
+      await _upgradeToFullSilently();
     }
     unawaited(_restoreSavedState());
   }
 
-  Future<void> _loadBytes() async {
-    final hasPreview = widget._bytes != null;
-    if (!hasPreview) {
-      setState(() {
-        _loading = true;
-        _loadError = null;
-      });
-    } else {
-      setState(() {
-        _loadingFull = true;
-        _loadError = null;
-      });
+  Future<Uint8List?> _tryLoadLocalFull() async {
+    final id = data.messageId;
+    if (id == null) return null;
+    return MediaLocalCache.tryLoadFullImageBytes(
+      messageId: id,
+      plaintext: data.expectedPlaintext,
+      fileId: data.fileId,
+    );
+  }
+
+  Future<Uint8List> _resolveFullBytes() async {
+    final id = data.messageId;
+    if (id != null) {
+      return MediaLocalCache.resolveFullImageBytes(
+        messageId: id,
+        plaintext: data.expectedPlaintext,
+        fileId: data.fileId,
+        downloadIfNeeded: data.onDownloadIfNeeded,
+      );
     }
+    if (data.onDownloadIfNeeded == null) {
+      throw StateError('无法加载原图');
+    }
+    await data.onDownloadIfNeeded!();
+    final local = await _tryLoadLocalFull();
+    if (local != null) return local;
+    throw StateError('原图不可用');
+  }
+
+  Future<void> _upgradeToFullSilently() async {
+    final local = await _tryLoadLocalFull();
+    if (local != null) {
+      if (!mounted) return;
+      setState(() {
+        _bytes = local;
+        _loadError = false;
+      });
+      widget.onChanged();
+      return;
+    }
+
+    if (data.onDownloadIfNeeded == null && data.messageId == null) return;
+
     try {
-      final loader = widget._bytesFuture ?? widget.onRetryLoad;
-      if (loader == null) throw StateError('无法加载原图');
-      final bytes = await loader();
+      final bytes = await _resolveFullBytes();
       if (!mounted) return;
       setState(() {
         _bytes = bytes;
-        _loading = false;
-        _loadingFull = false;
+        _loadError = false;
       });
-    } catch (e) {
+      widget.onChanged();
+    } catch (_) {
       if (!mounted) return;
-      setState(() {
-        if (!hasPreview) {
-          _loadError = e.toString();
-          _loading = false;
-        }
-        _loadingFull = false;
-      });
+      if (_bytes == null || _bytes!.isEmpty) {
+        setState(() => _loadError = true);
+        widget.onChanged();
+      }
     }
   }
 
   Future<void> _restoreSavedState() async {
-    final id = widget.messageId;
+    final id = data.messageId;
     if (id == null) return;
     final record = await MediaDownloadIndex.lookup(id);
     if (!mounted || record == null) return;
     setState(() => _savedLabel = record.displayLabel);
+    widget.onChanged();
   }
 
-  Future<void> _save() async {
+  Future<void> save() async {
     if (_saving || _savedLabel != null) return;
-    final id = widget.messageId;
-    setState(() {
-      _saving = true;
-      _progress = 0;
-    });
+    final id = data.messageId;
+    setState(() => _saving = true);
+    widget.onChanged();
     try {
       final bytes = await _bytesForSave();
       if (!mounted) return;
@@ -117,35 +358,30 @@ class _ImageViewerScreenState extends State<ImageViewerScreen> {
           ? await MediaDownloadIndex.saveForMessage(
               messageId: id,
               bytes: bytes,
-              name: widget.name.isEmpty ? 'image.jpg' : widget.name,
+              name: data.name.isEmpty ? 'image.jpg' : data.name,
               forceGallery: true,
-              onProgress: (p) {
-                if (mounted) setState(() => _progress = p);
-              },
             )
           : await MediaSave.saveMedia(
               bytes: bytes,
-              name: widget.name.isEmpty ? 'image.jpg' : widget.name,
+              name: data.name.isEmpty ? 'image.jpg' : data.name,
               forceGallery: true,
-              onProgress: (p) {
-                if (mounted) setState(() => _progress = p);
-              },
             );
       if (!mounted) return;
       setState(() {
         _savedLabel = result.displayLabel;
         _saving = false;
-        _loadingFull = false;
       });
+      widget.onChanged();
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(MediaSave.snackBarFor(result)),
-          duration: const Duration(seconds: 4),
+          duration: const Duration(seconds: 3),
         ),
       );
     } catch (e) {
       if (!mounted) return;
       setState(() => _saving = false);
+      widget.onChanged();
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('保存失败：$e')),
       );
@@ -154,28 +390,13 @@ class _ImageViewerScreenState extends State<ImageViewerScreen> {
 
   Future<Uint8List> _bytesForSave() async {
     final current = _bytes;
-    if (current != null &&
-        current.isNotEmpty &&
-        MediaLocalCache.hasFullImageBytes(
-          current.length,
-          widget.expectedPlaintext,
-        )) {
+    if (current != null && current.isNotEmpty && _isFullBytes(current)) {
       return current;
     }
-    final loader = widget._bytesFuture ?? widget.onRetryLoad;
-    if (loader == null) {
-      if (current != null &&
-          current.isNotEmpty &&
-          MediaLocalCache.hasFullImageBytes(
-            current.length,
-            widget.expectedPlaintext,
-          )) {
-        return current;
-      }
-      throw StateError('无法加载原图');
-    }
-    final bytes = await loader();
-    if (!MediaLocalCache.hasFullImageBytes(bytes.length, widget.expectedPlaintext)) {
+    final local = await _tryLoadLocalFull();
+    if (local != null) return local;
+    final bytes = await _resolveFullBytes();
+    if (!_isFullBytes(bytes)) {
       throw StateError('原图尚未下载完成');
     }
     return bytes;
@@ -183,153 +404,50 @@ class _ImageViewerScreenState extends State<ImageViewerScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final saved = _savedLabel != null;
     final bytes = _bytes;
-    final canRetry = widget.onRetryLoad != null;
 
-    return Scaffold(
-      backgroundColor: Colors.black,
-      appBar: AppBar(
-        backgroundColor: Colors.black,
-        foregroundColor: Colors.white,
-        iconTheme: const IconThemeData(color: Colors.white),
-        title: const Text('原图', style: TextStyle(fontSize: 16)),
-      ),
-      body: Stack(
-        fit: StackFit.expand,
-        children: [
-          if (_loading)
-            const Center(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  CircularProgressIndicator(color: Colors.white),
-                  SizedBox(height: 16),
-                  Text('正在加载原图…', style: TextStyle(color: Colors.white70)),
-                ],
+    if (_loadError && bytes == null) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text(
+                '图片加载失败',
+                style: TextStyle(color: Colors.white70, fontSize: 16),
               ),
-            )
-          else if (_loadError != null)
-            Center(
-              child: Padding(
-                padding: const EdgeInsets.all(24),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Text(
-                      '原图加载失败',
-                      style: TextStyle(color: Colors.white, fontSize: 16),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      _loadError!,
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(color: Colors.white54, fontSize: 13),
-                    ),
-                    if (canRetry) ...[
-                      const SizedBox(height: 20),
-                      FilledButton.icon(
-                        onPressed: _loading ? null : () => unawaited(_loadBytes()),
-                        icon: const Icon(Icons.refresh),
-                        label: const Text('查看原图'),
-                      ),
-                    ],
-                  ],
+              if (_canRetry) ...[
+                const SizedBox(height: 20),
+                FilledButton.icon(
+                  onPressed: () => unawaited(_upgradeToFullSilently()),
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('重试'),
                 ),
-              ),
-            )
-          else if (bytes != null)
-            Center(
-              child: InteractiveViewer(
-                minScale: 0.5,
-                maxScale: 4,
-                child: Image.memory(bytes, fit: BoxFit.contain),
-              ),
-            ),
-          if (_loadingFull && bytes != null)
-            const Positioned(
-              top: 72,
-              left: 0,
-              right: 0,
-              child: Center(
-                child: Text(
-                  '正在加载原图…',
-                  style: TextStyle(color: Colors.white70, fontSize: 13),
-                ),
-              ),
-            ),
-          if (_saving)
-            Positioned(
-              left: 24,
-              right: 24,
-              bottom: 96,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  LinearProgressIndicator(
-                    value: _progress > 0 ? _progress : null,
-                    backgroundColor: Colors.white24,
-                    color: Colors.white,
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    '正在保存… ${(_progress * 100).round()}%',
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(color: Colors.white70, fontSize: 13),
-                  ),
-                ],
-              ),
-            ),
-          if (bytes != null)
-            Positioned(
-              right: 20,
-              bottom: 28,
-              child: Material(
-                color: saved
-                    ? Colors.green.shade600
-                    : Colors.white.withValues(alpha: 0.92),
-                elevation: 4,
-                borderRadius: BorderRadius.circular(28),
-                child: InkWell(
-                  onTap: _saving || saved ? null : () => unawaited(_save()),
-                  borderRadius: BorderRadius.circular(28),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 12,
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        if (_saving)
-                          const SizedBox(
-                            width: 22,
-                            height: 22,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        else
-                          Icon(
-                            saved ? Icons.check : Icons.download_rounded,
-                            color: saved ? Colors.white : Colors.black87,
-                            size: 22,
-                          ),
-                        const SizedBox(width: 8),
-                        Text(
-                          saved ? '已保存' : '保存原图',
-                          style: TextStyle(
-                            color: saved ? Colors.white : Colors.black87,
-                            fontWeight: FontWeight.w600,
-                            fontSize: 15,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            ),
-        ],
+              ],
+            ],
+          ),
+        ),
+      );
+    }
+
+    if (bytes == null) {
+      return const Center(
+        child: CircularProgressIndicator(color: Colors.white54),
+      );
+    }
+
+    return InteractiveViewer(
+      minScale: 0.5,
+      maxScale: 4,
+      child: Center(
+        child: Image.memory(
+          bytes,
+          fit: BoxFit.contain,
+          gaplessPlayback: true,
+          filterQuality: FilterQuality.high,
+          isAntiAlias: true,
+        ),
       ),
     );
   }

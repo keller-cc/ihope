@@ -1255,7 +1255,7 @@ class _ConversationsScreenState extends State<ConversationsScreen>
     final me = widget.auth.currentUser;
     if (me == null) {
       return const Scaffold(
-        body: Center(child: Text('未登录')),
+        body: Center(child: CircularProgressIndicator()),
       );
     }
     final visible = _filteredItems(me.id);

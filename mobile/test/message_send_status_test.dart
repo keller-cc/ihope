@@ -51,6 +51,8 @@ void main() {
       );
       expect(msg.isPendingOutgoing, isTrue);
       expect(msg.isCacheable, isTrue);
+      final restored = ChatMessage.fromJson(msg.toJson());
+      expect(restored.sendStatus, MessageSendStatus.failed);
     });
   });
 

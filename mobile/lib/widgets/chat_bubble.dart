@@ -6,6 +6,8 @@ import '../utils/media_local_cache.dart';
 import '../utils/media_payload.dart';
 import '../utils/message_time.dart';
 import '../widgets/member_title_badge.dart';
+import '../utils/media_retry_callback.dart';
+import '../utils/media_save.dart';
 import '../widgets/media_message_body.dart';
 import '../widgets/user_avatar.dart';
 
@@ -57,6 +59,7 @@ class ChatBubble extends StatelessWidget {
     this.onMediaRetry,
     this.onSendRetry,
     this.showUnreadMarker = false,
+    this.imageGallery = const [],
   });
 
   final ChatMessage msg;
@@ -67,9 +70,10 @@ class ChatBubble extends StatelessWidget {
   final String Function(String userId) nameFor;
   final String? Function(String userId) avatarUrlFor;
   final void Function(String userId)? onPeerTap;
-  final Future<void> Function(String messageId)? onMediaRetry;
+  final MediaRetryCallback? onMediaRetry;
   final VoidCallback? onSendRetry;
   final bool showUnreadMarker;
+  final List<ChatMessage> imageGallery;
 
   bool get _isMedia =>
       msg.type == 'image' ||
@@ -83,6 +87,17 @@ class ChatBubble extends StatelessWidget {
       msg.type == 'audio' ||
       MediaLocalCache.localKind(msg.plaintext) == 'audio';
 
+  bool get _isImage {
+    if (msg.type == 'image') return true;
+    if (MediaPayload.tryParse(msg.plaintext)?.kind == 'image') return true;
+    if (MediaLocalCache.localKind(msg.plaintext) == 'image') return true;
+    final att = AttachmentPayload.fromPlaintext(msg.plaintext);
+    if (att == null) return false;
+    if (att.kind == 'image') return true;
+    if (att.mime.startsWith('image/')) return true;
+    return MediaSave.isImageName(att.name);
+  }
+
   Widget _bubbleChild(TextStyle textStyle) {
     final inline = MediaPayload.tryParse(msg.plaintext);
     final preview = MediaLocalCache.resolvePreviewSync(
@@ -95,6 +110,7 @@ class ChatBubble extends StatelessWidget {
         mine: mine,
         initialMedia: preview ?? inline,
         onMediaRetry: onMediaRetry,
+        imageGallery: imageGallery,
       );
     }
     return SelectableText(msg.displayText, style: textStyle);
@@ -171,13 +187,19 @@ class ChatBubble extends StatelessWidget {
       fontSize: 15,
     );
     final bubble = Container(
-      padding: _isVoice
-          ? const EdgeInsets.symmetric(horizontal: 8, vertical: 4)
-          : const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: BoxDecoration(
-        color: mine ? scheme.primaryContainer : scheme.surfaceContainerHighest,
-        borderRadius: BorderRadius.circular(12),
-      ),
+      padding: _isImage
+          ? EdgeInsets.zero
+          : _isVoice
+              ? const EdgeInsets.symmetric(horizontal: 8, vertical: 4)
+              : const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: _isImage
+          ? null
+          : BoxDecoration(
+              color: mine
+                  ? scheme.primaryContainer
+                  : scheme.surfaceContainerHighest,
+              borderRadius: BorderRadius.circular(12),
+            ),
       child: DefaultTextStyle(
         style: textStyle,
         child: _bubbleChild(textStyle),

@@ -7,16 +7,14 @@ import 'package:flutter/rendering.dart';
 import '../../models/message.dart';
 
 /// 聊天列表滚动、未读气泡、定位（私聊/群聊共用）。
-class ChatScrollCoordinator {
+class ChatScrollCoordinator extends ChangeNotifier {
   ChatScrollCoordinator({
     required this.scrollController,
-    required this.onChanged,
     required this.isMounted,
     required this.onReachedBottom,
   });
 
   final ScrollController scrollController;
-  final VoidCallback onChanged;
   final bool Function() isMounted;
   final VoidCallback onReachedBottom;
 
@@ -50,6 +48,7 @@ class ChatScrollCoordinator {
   Timer? _focusTimer;
   Timer? _arrowFadeTimer;
   Timer? _arrowHoldTimer;
+  Timer? _changeNotifyTimer;
   bool _suppressScrollHandling = false;
   final _messageItemKeys = <String, GlobalKey>{};
 
@@ -69,7 +68,7 @@ class ChatScrollCoordinator {
   static const _estimatedItemExtent = 72.0;
   static const _fastScrollVelocity = 600.0;
   static const _arrowIdleHold = Duration(milliseconds: 1200);
-  static const _arrowFadeTick = Duration(milliseconds: 50);
+  static const _arrowFadeTick = Duration(milliseconds: 120);
   static const _arrowFadeStep = 0.025;
 
   void attach() {
@@ -83,8 +82,31 @@ class ChatScrollCoordinator {
     scrollController.removeListener(_onScroll);
     _focusTimer?.cancel();
     _cancelArrowTimers();
+    _changeNotifyTimer?.cancel();
+    _changeNotifyTimer = null;
     _clearScrollLock();
     _unreadSessionActive = false;
+  }
+
+  @override
+  void dispose() {
+    detach();
+    super.dispose();
+  }
+
+  void _notifyChanged({bool immediate = false}) {
+    if (!isMounted()) return;
+    if (immediate) {
+      _changeNotifyTimer?.cancel();
+      _changeNotifyTimer = null;
+      notifyListeners();
+      return;
+    }
+    _changeNotifyTimer?.cancel();
+    _changeNotifyTimer = Timer(const Duration(milliseconds: 80), () {
+      _changeNotifyTimer = null;
+      if (isMounted()) notifyListeners();
+    });
   }
 
   /// 每次进入聊天页只初始化一次，避免二次加载重置未读进度。
@@ -154,7 +176,7 @@ class ChatScrollCoordinator {
     if (prevEnter != enterUnreadCount ||
         prevShowEnter != showJumpToUnread ||
         _sessionSeenEnterUnreadIds.length != seenBefore) {
-      onChanged();
+      _notifyChanged();
     }
 
     if (enterUnreadCount == 0 && isNearBottom) {
@@ -170,7 +192,7 @@ class ChatScrollCoordinator {
     final first = _firstEnterUnreadId;
     if (first == null) return;
     _enterDividerMessageId = first;
-    onChanged();
+    _notifyChanged(immediate: true);
   }
 
   double get _stickThreshold {
@@ -297,7 +319,7 @@ class ChatScrollCoordinator {
     if (prevEnter != enterUnreadCount ||
         prevShowEnter != showJumpToUnread ||
         _sessionSeenEnterUnreadIds.length != seenBefore) {
-      onChanged();
+      _notifyChanged();
     }
   }
 
@@ -313,7 +335,7 @@ class ChatScrollCoordinator {
     if (prevCount != belowUnreadCount ||
         prevShow != showJumpToBottom ||
         _sessionSeenTailNewIds.length != seenBefore) {
-      onChanged();
+      _notifyChanged();
     }
   }
 
@@ -345,7 +367,7 @@ class ChatScrollCoordinator {
 
     if (prevOpacity != scrollToLatestArrowOpacity ||
         prevShow != showScrollToLatestArrow) {
-      onChanged();
+      _notifyChanged();
     }
   }
 
@@ -369,18 +391,18 @@ class ChatScrollCoordinator {
         _cancelArrowTimers();
         scrollToLatestArrowOpacity = 0;
         showScrollToLatestArrow = false;
-        onChanged();
+        _notifyChanged();
         return;
       }
       scrollToLatestArrowOpacity =
-          math.max(0, scrollToLatestArrowOpacity - _arrowFadeStep);
+          math.max(0, scrollToLatestArrowOpacity - _arrowFadeStep * 2);
       if (scrollToLatestArrowOpacity < 0.02) {
         scrollToLatestArrowOpacity = 0;
         showScrollToLatestArrow = false;
         timer.cancel();
         _arrowFadeTimer = null;
       }
-      onChanged();
+      _notifyChanged();
     });
   }
 
@@ -417,7 +439,7 @@ class ChatScrollCoordinator {
         _sessionSeenTailNewIds.clear();
         belowUnreadCount = 0;
         showJumpToBottom = false;
-        onChanged();
+        _notifyChanged();
       }
       _cancelArrowTimers();
       showScrollToLatestArrow = false;
@@ -433,7 +455,7 @@ class ChatScrollCoordinator {
     showJumpToUnread = false;
     _sessionSeenEnterUnreadIds.addAll(_enterUnreadIds);
     _sessionSeenTailNewIds.addAll(_tailNewMessageIds);
-    onChanged();
+    _notifyChanged(immediate: true);
   }
 
   void onJumpToNewMessages(List<ChatMessage> messages) {
@@ -442,7 +464,7 @@ class ChatScrollCoordinator {
     _sessionSeenTailNewIds.clear();
     belowUnreadCount = 0;
     showJumpToBottom = false;
-    onChanged();
+    _notifyChanged(immediate: true);
     if (id != null) {
       _jumpToMessageId(id, messages, highlight: true, viewportAlign: 0.38);
     }
@@ -463,7 +485,7 @@ class ChatScrollCoordinator {
     _cancelArrowTimers();
     showScrollToLatestArrow = false;
     scrollToLatestArrowOpacity = 0;
-    onChanged();
+    _notifyChanged(immediate: true);
     tailPinned = true;
     scrollToBottom(animated: true);
   }
@@ -490,11 +512,11 @@ class ChatScrollCoordinator {
   void focusMessage(String messageId) {
     _focusTimer?.cancel();
     focusedMessageId = messageId;
-    onChanged();
+    _notifyChanged(immediate: true);
     _focusTimer = Timer(const Duration(milliseconds: 1300), () {
       if (!isMounted()) return;
       focusedMessageId = null;
-      onChanged();
+      _notifyChanged();
     });
   }
 
@@ -522,7 +544,7 @@ class ChatScrollCoordinator {
   }) {
     if (atBottom) {
       tailPinned = true;
-      onChanged();
+      _notifyChanged();
       unawaited(markRead());
       return;
     }
@@ -530,7 +552,7 @@ class ChatScrollCoordinator {
       _tailNewMessageIds.add(messageId);
       belowUnreadCount = _countTailNewRemaining();
       showJumpToBottom = belowUnreadCount > 0;
-      onChanged();
+      _notifyChanged();
     }
   }
 

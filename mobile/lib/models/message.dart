@@ -72,7 +72,25 @@ class ChatMessage {
       epoch: json['epoch'] as int? ?? 0,
       plaintext: json['plaintext'] as String?,
       fileId: json['file_id'] as String?,
+      sendStatus: _sendStatusFromJson(json['send_status']),
     );
+  }
+
+  static MessageSendStatus _sendStatusFromJson(dynamic raw) {
+    if (raw == 'sending') return MessageSendStatus.sending;
+    if (raw == 'failed') return MessageSendStatus.failed;
+    return MessageSendStatus.sent;
+  }
+
+  static String _sendStatusToJson(MessageSendStatus status) {
+    switch (status) {
+      case MessageSendStatus.sending:
+        return 'sending';
+      case MessageSendStatus.failed:
+        return 'failed';
+      case MessageSendStatus.sent:
+        return 'sent';
+    }
   }
 
   Map<String, dynamic> toJson() => {
@@ -85,6 +103,8 @@ class ChatMessage {
         'epoch': epoch,
         if (plaintext != null) 'plaintext': plaintext,
         if (fileId != null) 'file_id': fileId,
+        if (isLocalOutgoing || sendStatus != MessageSendStatus.sent)
+          'send_status': _sendStatusToJson(sendStatus),
       };
 
   ChatMessage copyWith({
@@ -117,5 +137,6 @@ class ChatMessage {
         createdAt: createdAt,
         epoch: epoch,
         fileId: fileId,
+        sendStatus: sendStatus,
       );
 }

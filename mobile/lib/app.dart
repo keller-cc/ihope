@@ -26,6 +26,7 @@ class _IHopeAppState extends State<IHopeApp> with WidgetsBindingObserver {
   bool? _loggedIn;
   final ValueNotifier<String?> _pendingPushConversation =
       ValueNotifier<String?>(null);
+  StreamSubscription<void>? _sessionEndedSub;
 
   @override
   void initState() {
@@ -38,10 +39,16 @@ class _IHopeAppState extends State<IHopeApp> with WidgetsBindingObserver {
         onOpenConversation: _onPushOpenConversation,
       ),
     );
+    _sessionEndedSub = widget.auth.onSessionEnded.listen((_) {
+      if (!mounted) return;
+      unawaited(widget.notification.pauseForLogout());
+      setState(() => _loggedIn = false);
+    });
   }
 
   @override
   void dispose() {
+    _sessionEndedSub?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     _pendingPushConversation.dispose();
     super.dispose();
@@ -72,6 +79,14 @@ class _IHopeAppState extends State<IHopeApp> with WidgetsBindingObserver {
       setState(() => _loggedIn = false);
       return;
     }
+    final ready = await widget.auth.ensureUserSnapshot();
+    if (!mounted) return;
+    if (!ready) {
+      await widget.auth.logout();
+      if (!mounted) return;
+      setState(() => _loggedIn = false);
+      return;
+    }
     setState(() => _loggedIn = true);
     unawaited(_restoreSessionInBackground());
   }
@@ -82,11 +97,17 @@ class _IHopeAppState extends State<IHopeApp> with WidgetsBindingObserver {
     if (ok) {
       widget.auth.startRealtimeNetworkWatch();
       unawaited(widget.notification.resumeAfterLogin());
-    } else {
-      final hasLocal = await widget.auth.hasLocalSession();
-      if (!mounted) return;
-      setState(() => _loggedIn = hasLocal);
+      return;
     }
+    // 加密/网络暂时失败：保留本地会话，API 与 WS 仍靠 JWT 自动 refresh
+    if (widget.auth.currentUser != null &&
+        await widget.auth.hasLocalSession()) {
+      widget.auth.startRealtimeNetworkWatch();
+      return;
+    }
+    await widget.auth.logout();
+    if (!mounted) return;
+    setState(() => _loggedIn = false);
   }
 
   void _onPushOpenConversation(String conversationId) {

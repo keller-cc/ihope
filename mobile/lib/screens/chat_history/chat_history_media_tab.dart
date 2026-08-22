@@ -8,8 +8,7 @@ import '../../models/conversation.dart';
 import '../../models/message.dart';
 import '../../services/auth_service.dart';
 import '../../utils/media_local_cache.dart';
-import '../../widgets/app_page_route.dart';
-import '../../widgets/image_viewer_screen.dart';
+import '../../screens/chat/chat_image_launcher.dart';
 import 'chat_history_loader.dart';
 
 /// 图片/视频 Tab：按年月分组，每行 4 张。
@@ -43,48 +42,24 @@ class _ChatHistoryMediaTabState extends State<ChatHistoryMediaTab> {
       ..sort((a, b) => b.compareTo(a));
   }
 
-  Future<Uint8List> _loadFullImageBytes(ChatMessage msg) async {
-    var current = msg;
-    if (await MediaLocalCache.needsFullImageDownload(
-      messageId: current.id,
-      plaintext: current.plaintext,
-      fileId: current.fileId,
-    )) {
-      final repaired = await widget.auth.repairMessageMedia(
-        widget.conversation,
-        current,
-      );
-      if (repaired == null) {
-        throw StateError('无法下载原图');
-      }
-      current = repaired;
-    }
-    final full = await MediaLocalCache.loadFullImage(
-      current.id,
-      current.plaintext,
-      current.fileId,
-    );
-    if (full == null || full.bytes.isEmpty) {
-      throw StateError('原图不可用');
-    }
-    return Uint8List.fromList(full.bytes);
-  }
-
   Future<void> _openImage(ChatMessage msg) async {
-    final preview = await MediaLocalCache.resolve(msg.id, msg.plaintext);
-    final displayName =
-        preview?.name.isNotEmpty == true ? preview!.name : 'image.jpg';
-
     if (!mounted) return;
-    await Navigator.of(context).push<void>(
-      appPageRoute(
-        builder: (_) => ImageViewerScreen(
-          bytesFuture: () => _loadFullImageBytes(msg),
-          name: displayName,
-          messageId: msg.id,
-          expectedPlaintext: msg.plaintext,
-        ),
-      ),
+    await ChatImageLauncher.open(
+      context,
+      msg,
+      imageGallery: widget.messages,
+      onMediaRetry: (messageId, {onProgress}) async {
+        final target = widget.messages.firstWhere(
+          (m) => m.id == messageId,
+          orElse: () => msg,
+        );
+        final repaired = await widget.auth.repairMessageMedia(
+          widget.conversation,
+          target,
+          onProgress: onProgress,
+        );
+        if (repaired == null) throw StateError('无法下载原图');
+      },
     );
   }
 
@@ -143,33 +118,32 @@ class _MediaThumb extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return FutureBuilder(
-      future: MediaLocalCache.resolve(msg.id, msg.plaintext),
-      builder: (context, snapshot) {
-        final media = snapshot.data;
-        return GestureDetector(
-          onTap: onTap,
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-              color: Theme.of(context).colorScheme.surfaceContainerHighest,
-              borderRadius: BorderRadius.circular(4),
-            ),
-            child: media != null && media.bytes.isNotEmpty
-                ? ClipRRect(
-                    borderRadius: BorderRadius.circular(4),
-                    child: Image.memory(
-                      Uint8List.fromList(media.bytes),
-                      fit: BoxFit.cover,
-                      width: double.infinity,
-                      height: double.infinity,
-                    ),
-                  )
-                : const Center(
-                    child: Icon(Icons.image_outlined, size: 28),
-                  ),
-          ),
-        );
-      },
+    final sync = MediaLocalCache.resolvePreviewSync(
+      msg.plaintext,
+      messageId: msg.id,
+    );
+    return GestureDetector(
+      onTap: onTap,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(4),
+        ),
+        child: sync != null && sync.bytes.isNotEmpty
+            ? ClipRRect(
+                borderRadius: BorderRadius.circular(4),
+                child: Image.memory(
+                  Uint8List.fromList(sync.bytes),
+                  fit: BoxFit.cover,
+                  width: double.infinity,
+                  height: double.infinity,
+                  gaplessPlayback: true,
+                ),
+              )
+            : const Center(
+                child: Icon(Icons.image_outlined, size: 28),
+              ),
+      ),
     );
   }
 }
