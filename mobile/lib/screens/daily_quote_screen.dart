@@ -100,7 +100,7 @@ class _DailyQuoteScreenState extends State<DailyQuoteScreen> {
                     ],
                     const SizedBox(height: 28),
                     Text(
-                      '每日与 QQ 机器人推送的金句来自同一文案库；正文保留原有段落换行。',
+                      '每日与 QQ 机器人推送的金句来自同一文案库；按日轮换，同一天内容一致，走完一轮后才重复。',
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
                             color: scheme.onSurfaceVariant,
                           ),

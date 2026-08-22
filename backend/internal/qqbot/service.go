@@ -157,7 +157,7 @@ func (s *Service) replyPoetry(ctx context.Context, openID, msgID string) {
 }
 
 func (s *Service) replyQuote(ctx context.Context, openID, msgID string) {
-	entry, err := PickRandomQuoteEntry(s.cfg.QQQuotesFilePath)
+	entry, err := PickDailyQuoteEntry(s.cfg.QQQuotesFilePath, time.Now())
 	if err != nil {
 		_ = s.client.SendText(ctx, openID, "金句读取失败（请检查 QQ_QUOTES_FILE_PATH 与文件内容）。", msgID, 1)
 		log.Printf("qqbot quote pick: %v", err)
@@ -230,7 +230,7 @@ func (s *Service) BroadcastQuotes(ctx context.Context) {
 	if !s.Enabled() {
 		return
 	}
-	text, err := PickRandomQuoteEntry(s.cfg.QQQuotesFilePath)
+	text, err := PickDailyQuoteEntry(s.cfg.QQQuotesFilePath, time.Now())
 	if err != nil {
 		log.Printf("qqbot daily quote pick: %v", err)
 		return

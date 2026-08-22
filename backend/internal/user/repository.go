@@ -245,6 +245,18 @@ func (r *Repository) GetByEmail(ctx context.Context, email string) (*User, strin
 	return u, passwordHash, err
 }
 
+func (r *Repository) GetByUsername(ctx context.Context, username string) (*User, string, error) {
+	row := r.pool.QueryRow(ctx, `
+		SELECT id, email, username, avatar_url, identity_public_key, email_verified_at, created_at, updated_at, password_hash
+		FROM users WHERE username = $1`, username)
+	var passwordHash string
+	u, err := scanUserWithPassword(row, &passwordHash)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, "", ErrNotFound
+	}
+	return u, passwordHash, err
+}
+
 func (r *Repository) GetPasswordHashByID(ctx context.Context, userID string) (string, error) {
 	var hash string
 	err := r.pool.QueryRow(ctx, `SELECT password_hash FROM users WHERE id = $1`, userID).Scan(&hash)

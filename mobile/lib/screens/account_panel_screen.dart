@@ -9,12 +9,14 @@ class AccountPanelScreen extends StatelessWidget {
     super.key,
     required this.user,
     required this.onProfile,
+    required this.onDailyQuote,
     required this.onSettings,
     required this.onLogout,
   });
 
   final User user;
   final VoidCallback onProfile;
+  final VoidCallback onDailyQuote;
   final VoidCallback onSettings;
   final VoidCallback onLogout;
 
@@ -97,6 +99,13 @@ class AccountPanelScreen extends StatelessWidget {
                         title: const Text('个人资料'),
                         trailing: const Icon(Icons.chevron_right),
                         onTap: onProfile,
+                      ),
+                      ListTile(
+                        leading: const Icon(Icons.format_quote_outlined),
+                        title: const Text('今日金句'),
+                        subtitle: const Text('按日轮换，与 QQ 推送同源'),
+                        trailing: const Icon(Icons.chevron_right),
+                        onTap: onDailyQuote,
                       ),
                       ListTile(
                         leading: const Icon(Icons.settings_outlined),

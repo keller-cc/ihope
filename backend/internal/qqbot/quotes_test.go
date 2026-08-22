@@ -74,6 +74,30 @@ func TestPickDailyQuoteStable(t *testing.T) {
 	}
 }
 
+func TestPickDailyQuoteSequentialNoRepeat(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/quotes.txt"
+	content := "第一条\n来自@1\n\n第二条\n来自@2\n\n第三条\n来自@3"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	day, err := time.ParseInLocation("2006-01-02", "2026-08-20", time.Local)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := make(map[string]bool)
+	for i := 0; i < 3; i++ {
+		e, err := PickDailyQuoteEntry(path, day.AddDate(0, 0, i))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if seen[e.Body] {
+			t.Fatalf("repeated within one cycle: %q", e.Body)
+		}
+		seen[e.Body] = true
+	}
+}
+
 func TestReformatDeployQuotesExample(t *testing.T) {
 	if os.Getenv("REFORMAT_QUOTES") != "1" {
 		t.Skip("set REFORMAT_QUOTES=1 to rewrite deploy/quotes/quotes.example.txt")

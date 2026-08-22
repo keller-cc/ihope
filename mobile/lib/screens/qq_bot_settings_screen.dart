@@ -217,7 +217,7 @@ class _QqBotSettingsScreenState extends State<QqBotSettingsScreen> {
                     ),
                     SwitchListTile(
                       title: const Text('每日金句（图片）'),
-                      subtitle: const Text('服务端文案库；设置里可阅「今日金句」'),
+                      subtitle: const Text('服务端文案库；首页左侧面板可阅「今日金句」'),
                       value: _quotes,
                       onChanged: _busy
                           ? null

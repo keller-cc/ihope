@@ -25,14 +25,26 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> {
-  final _email = TextEditingController();
+  final _loginId = TextEditingController();
   final _password = TextEditingController();
   bool _loading = false;
   String? _error;
 
   @override
+  void initState() {
+    super.initState();
+    _loadLastLoginId();
+  }
+
+  Future<void> _loadLastLoginId() async {
+    final saved = await widget.auth.storage.readLastLoginIdentifier();
+    if (!mounted || saved == null || saved.isEmpty) return;
+    _loginId.text = saved;
+  }
+
+  @override
   void dispose() {
-    _email.dispose();
+    _loginId.dispose();
     _password.dispose();
     super.dispose();
   }
@@ -44,30 +56,33 @@ class _LoginScreenState extends State<LoginScreen> {
     });
     try {
       await widget.auth.login(
-        email: _email.text,
+        login: _loginId.text,
         password: _password.text,
       );
       widget.onLoggedIn();
     } on ApiException catch (e) {
       setState(() => _error = e.message);
       if (e.isEmailNotVerified && mounted) {
-        final email = _email.text.trim();
+        final raw = _loginId.text.trim();
+        final email = raw.contains('@') ? raw.toLowerCase() : null;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: const Text('请先验证邮箱'),
-            action: SnackBarAction(
-              label: '去验证',
-              onPressed: () {
-                Navigator.of(context).push(
-                  appPageRoute(
-                    builder: (_) => VerifyEmailPendingScreen(
-                      auth: widget.auth,
-                      email: email,
-                    ),
+            action: email == null
+                ? null
+                : SnackBarAction(
+                    label: '去验证',
+                    onPressed: () {
+                      Navigator.of(context).push(
+                        appPageRoute(
+                          builder: (_) => VerifyEmailPendingScreen(
+                            auth: widget.auth,
+                            email: email,
+                          ),
+                        ),
+                      );
+                    },
                   ),
-                );
-              },
-            ),
           ),
         );
       }
@@ -86,10 +101,14 @@ class _LoginScreenState extends State<LoginScreen> {
         padding: const EdgeInsets.all(24),
         children: [
           TextField(
-            controller: _email,
-            decoration: const InputDecoration(labelText: '邮箱'),
-            keyboardType: TextInputType.emailAddress,
-            autofillHints: const [AutofillHints.email],
+            controller: _loginId,
+            decoration: const InputDecoration(
+              labelText: '用户名或邮箱',
+              hintText: '支持用户名或注册邮箱',
+            ),
+            keyboardType: TextInputType.text,
+            textInputAction: TextInputAction.next,
+            autofillHints: const [AutofillHints.username, AutofillHints.email],
           ),
           const SizedBox(height: 12),
           TextField(

@@ -23,6 +23,7 @@ import '../widgets/slide_from_left_route.dart';
 import 'account_panel_screen.dart';
 import 'chat/chat_thread_loader.dart';
 import 'chat_screen.dart';
+import 'daily_quote_screen.dart';
 import 'new_chat_screen.dart';
 import 'new_group_screen.dart';
 import 'profile_screen.dart';
@@ -1043,6 +1044,14 @@ class _ConversationsScreenState extends State<ConversationsScreen>
     }
   }
 
+  Future<void> _openDailyQuote() async {
+    await Navigator.of(context).push<void>(
+      appPageRoute(
+        builder: (_) => DailyQuoteScreen(auth: widget.auth),
+      ),
+    );
+  }
+
   Future<void> _openSettings() async {
     final result = await Navigator.of(context).push<Object?>(
       appPageRoute(
@@ -1089,6 +1098,10 @@ class _ConversationsScreenState extends State<ConversationsScreen>
           onProfile: () {
             Navigator.of(context).pop();
             unawaited(_openProfile());
+          },
+          onDailyQuote: () {
+            Navigator.of(context).pop();
+            unawaited(_openDailyQuote());
           },
           onSettings: () {
             Navigator.of(context).pop();

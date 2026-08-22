@@ -8,7 +8,6 @@ import '../services/auth_service.dart';
 import '../services/notification_service.dart';
 import '../widgets/app_page_route.dart';
 import 'change_password_screen.dart';
-import 'daily_quote_screen.dart';
 import 'device_link_screen.dart';
 import 'devices_screen.dart';
 import 'notification_settings_screen.dart';
@@ -112,19 +111,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     auth: widget.auth,
                     notification: widget.notification,
                   ),
-                ),
-              );
-            },
-          ),
-          ListTile(
-            leading: const Icon(Icons.format_quote_outlined),
-            title: const Text('今日金句'),
-            subtitle: const Text('服务端文案库，保留原文段落'),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () {
-              Navigator.of(context).push<void>(
-                appPageRoute(
-                  builder: (_) => DailyQuoteScreen(auth: widget.auth),
                 ),
               );
             },

@@ -3,8 +3,6 @@ package qqbot
 import (
 	"bufio"
 	"fmt"
-	"hash/fnv"
-	"math/rand"
 	"os"
 	"regexp"
 	"strings"
@@ -140,25 +138,28 @@ func parseLegacyAttributionQuotes(text string) ([]QuoteEntry, error) {
 	return out, nil
 }
 
-// PickRandomQuoteEntry 随机一条金句。
-func PickRandomQuoteEntry(path string) (QuoteEntry, error) {
-	entries, err := ReadQuoteEntries(path)
-	if err != nil {
-		return QuoteEntry{}, err
-	}
-	return entries[rand.Intn(len(entries))], nil
+// quoteDayNumber 日历日在当前时区下的序号（用于按日轮换，避免随机重复）。
+func quoteDayNumber(day time.Time) int {
+	y, m, d := day.Date()
+	loc := day.Location()
+	midnight := time.Date(y, m, d, 0, 0, 0, 0, loc)
+	return int(midnight.Unix() / 86400)
 }
 
-// PickDailyQuoteEntry 按日历日稳定选取（全员同日看到同一条，便于讨论）。
+// PickDailyQuoteEntry 按日历日轮换选取：文件顺序逐条推进，走完一轮后才重复。
+// 同一天内（QQ 手动「金句」、每日推送、App 今日金句）均为同一条。
 func PickDailyQuoteEntry(path string, day time.Time) (QuoteEntry, error) {
 	entries, err := ReadQuoteEntries(path)
 	if err != nil {
 		return QuoteEntry{}, err
 	}
-	h := fnv.New32a()
-	_, _ = h.Write([]byte(day.Format("2006-01-02")))
-	idx := int(h.Sum32()) % len(entries)
+	idx := quoteDayNumber(day) % len(entries)
 	return entries[idx], nil
+}
+
+// PickRandomQuoteEntry 返回当日金句（与 PickDailyQuoteEntry 相同，已取消随机）。
+func PickRandomQuoteEntry(path string) (QuoteEntry, error) {
+	return PickDailyQuoteEntry(path, time.Now())
 }
 
 // FormatQuoteBlocks 将条目格式化为 --- 分隔的标准文件内容。

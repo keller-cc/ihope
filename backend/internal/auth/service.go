@@ -52,7 +52,8 @@ type RegisterInput struct {
 }
 
 type LoginInput struct {
-	Email      string
+	Login      string // 邮箱或用户名
+	Email      string // 兼容旧客户端
 	Password   string
 	DeviceID   string
 	DeviceName string
@@ -204,14 +205,40 @@ func (s *Service) sendEmailVerification(ctx context.Context, userID, email strin
 	return "", nil
 }
 
+func (s *Service) lookupUserWithPassword(ctx context.Context, login string) (*user.User, string, error) {
+	login = strings.TrimSpace(login)
+	if login == "" {
+		return nil, "", user.ErrNotFound
+	}
+	if strings.Contains(login, "@") {
+		email := NormalizeEmail(login)
+		if ValidateEmail(email) {
+			u, hash, err := s.users.GetByEmail(ctx, email)
+			if err == nil {
+				return u, hash, nil
+			}
+			if !errors.Is(err, user.ErrNotFound) {
+				return nil, "", err
+			}
+		}
+	}
+	if ValidateUsername(login) {
+		return s.users.GetByUsername(ctx, login)
+	}
+	return nil, "", user.ErrNotFound
+}
+
 func (s *Service) Login(ctx context.Context, in LoginInput) (*TokenResponse, error) {
-	email := NormalizeEmail(in.Email)
+	login := strings.TrimSpace(in.Login)
+	if login == "" {
+		login = strings.TrimSpace(in.Email)
+	}
 	deviceID := strings.TrimSpace(in.DeviceID)
-	if !ValidateEmail(email) || !ValidatePassword(in.Password) || deviceID == "" {
+	if login == "" || !ValidatePassword(in.Password) || deviceID == "" {
 		return nil, ErrInvalidCredentials
 	}
 
-	u, passwordHash, err := s.users.GetByEmail(ctx, email)
+	u, passwordHash, err := s.lookupUserWithPassword(ctx, login)
 	if err != nil {
 		if errors.Is(err, user.ErrNotFound) {
 			return nil, ErrInvalidCredentials

@@ -128,7 +128,7 @@ docker logs ihope-postgres-dev --tail 30            # 日志
 
 推送 / QQ 门铃见 [docs/推送配置指南.md](../docs/推送配置指南.md)。
 
-**金句文件格式**（`deploy/quotes/quotes.example.txt` 已整理为范例）：条目之间单独一行 `---`；正文可多段换行；可选末尾 `来自@昵称`。App **设置 → 今日金句** 与 QQ 推送共用该文件；接口 `GET /api/quotes/today`（需登录）。
+**金句文件格式**（`deploy/quotes/quotes.example.txt` 已整理为范例）：条目之间单独一行 `---`；正文可多段换行；可选末尾 `来自@昵称`。App **设置 → 今日金句** 与 QQ 推送共用该文件；接口 `GET /api/quotes/today`（需登录）。**选取规则**：按日历日顺序轮换（非随机），同一天 QQ 手动/定时推送与 App 均为同一条；走完文件全部条目一轮后才重复。
 
 ```bash
 cp deploy/quotes/quotes.example.txt deploy/quotes/quotes.txt

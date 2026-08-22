@@ -300,18 +300,20 @@ class AuthService {
   }
 
   Future<User> login({
-    required String email,
+    required String login,
     required String password,
   }) async {
+    final loginId = login.trim();
     final deviceId = await storage.deviceId();
     try {
       final data = await api.postJson('/api/auth/login', body: {
-        'email': email.trim(),
+        'login': loginId,
         'password': password,
         'device_id': deviceId,
         'device_name': 'Flutter',
       });
       await _saveTokenResponse(data);
+      await storage.writeLastLoginIdentifier(loginId);
     } on ApiException catch (e) {
       if (e.isEmailNotVerified) {
         throw ApiException('请先验证邮箱后再登录', code: 'email_not_verified');

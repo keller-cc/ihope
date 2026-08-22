@@ -12,6 +12,7 @@ const _kDeviceId = 'device_id';
 const _kUserProfile = 'user_profile';
 const _kPushNotifications = 'push_notifications_enabled';
 const _kServerBaseUrl = 'server_base_url';
+const _kLastLoginId = 'last_login_identifier';
 
 class AuthStorage {
   AuthStorage({FlutterSecureStorage? storage})
@@ -81,6 +82,15 @@ class AuthStorage {
 
   Future<void> clearServerBaseUrl() async {
     await _storage.delete(key: _kServerBaseUrl);
+  }
+
+  Future<String?> readLastLoginIdentifier() =>
+      _storage.read(key: _kLastLoginId);
+
+  Future<void> writeLastLoginIdentifier(String login) async {
+    final trimmed = login.trim();
+    if (trimmed.isEmpty) return;
+    await _storage.write(key: _kLastLoginId, value: trimmed);
   }
 
   Future<Uint8List?> readIdentitySeedForUser(String userId) =>

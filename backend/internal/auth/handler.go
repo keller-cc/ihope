@@ -29,6 +29,7 @@ type registerRequest struct {
 }
 
 type loginRequest struct {
+	Login      string `json:"login"`
 	Email      string `json:"email"`
 	Password   string `json:"password"`
 	DeviceID   string `json:"device_id"`
@@ -90,7 +91,7 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusCreated, resp)
 }
 
-// Login POST /api/auth/login — 验证邮箱密码，签发 access_token + refresh_token。
+// Login POST /api/auth/login — 验证邮箱或用户名与密码，签发 access_token + refresh_token。
 func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	var req loginRequest
 	if err := httpx.DecodeJSON(r, &req); err != nil {
@@ -99,13 +100,14 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp, err := h.svc.Login(r.Context(), LoginInput{
+		Login:      req.Login,
 		Email:      req.Email,
 		Password:   req.Password,
 		DeviceID:   req.DeviceID,
 		DeviceName: req.DeviceName,
 	})
 	if errors.Is(err, ErrInvalidCredentials) {
-		httpx.WriteError(w, http.StatusUnauthorized, "invalid_credentials", "invalid email or password")
+		httpx.WriteError(w, http.StatusUnauthorized, "invalid_credentials", "invalid account or password")
 		return
 	}
 	if errors.Is(err, ErrAccountDisabled) {

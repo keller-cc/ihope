@@ -55,6 +55,17 @@ func TestAuthFlowIntegration(t *testing.T) {
 		t.Fatalf("login status = %d body = %s", loginRec.Code, loginRec.Body.String())
 	}
 
+	// login with username
+	usernameLoginRec := doJSON(t, handler, http.MethodPost, "/api/auth/login", map[string]string{
+		"login":       username,
+		"password":    password,
+		"device_id":   deviceID + "-username",
+		"device_name": "Integration Test Username",
+	}, "")
+	if usernameLoginRec.Code != http.StatusOK {
+		t.Fatalf("username login status = %d body = %s", usernameLoginRec.Code, usernameLoginRec.Body.String())
+	}
+
 	var loginResp struct {
 		AccessToken  string `json:"access_token"`
 		RefreshToken string `json:"refresh_token"`
