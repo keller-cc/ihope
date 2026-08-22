@@ -1,4 +1,6 @@
 -- 用户、设备、密码重置、管理字段
+-- Postgres 12 需 pgcrypto；13+ 内置 gen_random_uuid()，扩展可安全重复创建
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 CREATE TABLE users (
     id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
