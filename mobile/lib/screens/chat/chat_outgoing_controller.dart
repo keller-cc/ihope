@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
 
@@ -415,12 +416,13 @@ class ChatOutgoingController {
         }
       }
     }
+    final ext = p.extension(file.name);
     await sendMedia(
       type: 'file',
       media: MediaPayload(
         kind: 'file',
-        mime: file.extension != null
-            ? 'application/${file.extension}'
+        mime: ext.isNotEmpty
+            ? 'application/${ext.substring(1)}'
             : 'application/octet-stream',
         name: file.name,
         bytes: bytes,
