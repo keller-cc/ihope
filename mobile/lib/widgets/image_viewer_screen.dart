@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 
 import '../utils/media_download_index.dart';
+import '../utils/media_local_cache.dart';
 import '../utils/media_save.dart';
 
 class ImageViewerScreen extends StatefulWidget {
@@ -14,6 +15,7 @@ class ImageViewerScreen extends StatefulWidget {
     this.onRetryLoad,
     required this.name,
     this.messageId,
+    this.expectedPlaintext,
   })  : assert(bytes != null || bytesFuture != null || onRetryLoad != null),
         _bytes = bytes,
         _bytesFuture = bytesFuture;
@@ -23,6 +25,7 @@ class ImageViewerScreen extends StatefulWidget {
   final Future<Uint8List> Function()? onRetryLoad;
   final String name;
   final String? messageId;
+  final String? expectedPlaintext;
 
   @override
   State<ImageViewerScreen> createState() => _ImageViewerScreenState();
@@ -100,14 +103,17 @@ class _ImageViewerScreenState extends State<ImageViewerScreen> {
   }
 
   Future<void> _save() async {
-    final bytes = _bytes;
-    if (bytes == null || _saving || _savedLabel != null || _loadingFull) return;
+    if (_saving || _savedLabel != null) return;
     final id = widget.messageId;
     setState(() {
       _saving = true;
       _progress = 0;
+      _loadError = null;
     });
     try {
+      final bytes = await _bytesForSave();
+      if (!mounted) return;
+      setState(() => _bytes = bytes);
       final result = id != null
           ? await MediaDownloadIndex.saveForMessage(
               messageId: id,
@@ -130,6 +136,7 @@ class _ImageViewerScreenState extends State<ImageViewerScreen> {
       setState(() {
         _savedLabel = result.displayLabel;
         _saving = false;
+        _loadingFull = false;
       });
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -144,6 +151,28 @@ class _ImageViewerScreenState extends State<ImageViewerScreen> {
         SnackBar(content: Text('保存失败：$e')),
       );
     }
+  }
+
+  Future<Uint8List> _bytesForSave() async {
+    final current = _bytes;
+    if (current != null &&
+        current.isNotEmpty &&
+        MediaLocalCache.hasFullImageBytes(
+          current.length,
+          widget.expectedPlaintext,
+        )) {
+      return current;
+    }
+    final loader = widget._bytesFuture ?? widget.onRetryLoad;
+    if (loader == null) {
+      if (current != null && current.isNotEmpty) return current;
+      throw StateError('无法加载原图');
+    }
+    final bytes = await loader();
+    if (!MediaLocalCache.hasFullImageBytes(bytes.length, widget.expectedPlaintext)) {
+      throw StateError('原图尚未下载完成');
+    }
+    return bytes;
   }
 
   @override
@@ -257,7 +286,7 @@ class _ImageViewerScreenState extends State<ImageViewerScreen> {
                 elevation: 4,
                 borderRadius: BorderRadius.circular(28),
                 child: InkWell(
-                  onTap: _saving || saved || _loadingFull ? null : _save,
+                  onTap: _saving || saved ? null : () => unawaited(_save()),
                   borderRadius: BorderRadius.circular(28),
                   child: Padding(
                     padding: const EdgeInsets.symmetric(

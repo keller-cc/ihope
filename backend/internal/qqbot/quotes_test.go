@@ -10,7 +10,7 @@ import (
 func TestReadQuoteEntriesLegacy(t *testing.T) {
 	dir := t.TempDir()
 	path := dir + "/quotes.txt"
-	content := "第一段\n第二段\n\n来自@燕子\n\n另一条金句\n来自@测试"
+	content := "第一段\n\n第二段\n\n来自@燕子\n\n另一条金句\n来自@测试"
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -21,7 +21,7 @@ func TestReadQuoteEntriesLegacy(t *testing.T) {
 	if len(entries) != 2 {
 		t.Fatalf("entries=%d", len(entries))
 	}
-	if entries[0].Body != "第一段\n第二段" || entries[0].Author != "燕子" {
+	if entries[0].Body != "第一段\n\n第二段" || entries[0].Author != "燕子" {
 		t.Fatalf("first=%+v", entries[0])
 	}
 	if entries[1].Body != "另一条金句" || entries[1].Author != "测试" {
@@ -32,7 +32,7 @@ func TestReadQuoteEntriesLegacy(t *testing.T) {
 func TestReadQuoteEntriesBlocks(t *testing.T) {
 	dir := t.TempDir()
 	path := dir + "/quotes.txt"
-	content := "# header\n\n---\n\n行一\n行二\n\n来自@作者A\n\n---\n\n只有正文"
+	content := "# header\n\n---\n\n行一\n\n行二\n\n来自@作者A\n\n---\n\n只有正文"
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -43,7 +43,7 @@ func TestReadQuoteEntriesBlocks(t *testing.T) {
 	if len(entries) != 2 {
 		t.Fatalf("entries=%d", len(entries))
 	}
-	if entries[0].Body != "行一\n行二" || entries[0].Author != "作者A" {
+	if entries[0].Body != "行一\n\n行二" || entries[0].Author != "作者A" {
 		t.Fatalf("first=%+v", entries[0])
 	}
 	if entries[1].Body != "只有正文" || entries[1].Author != "" {
@@ -95,6 +95,25 @@ func TestPickDailyQuoteSequentialNoRepeat(t *testing.T) {
 			t.Fatalf("repeated within one cycle: %q", e.Body)
 		}
 		seen[e.Body] = true
+	}
+}
+
+func TestCollapseBodySoftBreaks(t *testing.T) {
+	in := "很少人究问人当怎样行才能上天堂，所有的人却都想知道天堂是怎样的。几乎所有人都\n懒惰且厌战，却同时梦想将来的得胜。\n\n第二段开头\n续行内容"
+	got := collapseBodySoftBreaks(in)
+	want := "很少人究问人当怎样行才能上天堂，所有的人却都想知道天堂是怎样的。几乎所有人都懒惰且厌战，却同时梦想将来的得胜。\n\n第二段开头续行内容"
+	if got != want {
+		t.Fatalf("got %q want %q", got, want)
+	}
+}
+
+func TestPoetryColumnsFromText(t *testing.T) {
+	cols := poetryColumnsFromText("床前明月光，疑是地上霜。举头望明月，低头思故乡。")
+	if len(cols) != 4 {
+		t.Fatalf("cols=%v", cols)
+	}
+	if cols[0] != "床前明月光，" || cols[1] != "疑是地上霜。" {
+		t.Fatalf("cols=%v", cols)
 	}
 }
 

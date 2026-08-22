@@ -61,9 +61,16 @@ class _MediaMessageBodyState extends State<MediaMessageBody> {
     if (widget.initialMedia != null) {
       _media = widget.initialMedia;
       _loadState = _MediaLoadState.ready;
+    } else if (widget.msg.type == 'image') {
+      final sync = MediaLocalCache.resolvePreviewSync(widget.msg.plaintext);
+      if (sync != null) {
+        _media = sync;
+        _loadState = _MediaLoadState.ready;
+      }
     }
     unawaited(_loadMedia());
     unawaited(_restoreExportState());
+    unawaited(_prefetchFullImageIfNeeded());
   }
 
   @override
@@ -76,7 +83,21 @@ class _MediaMessageBodyState extends State<MediaMessageBody> {
       _loadState =
           _media != null ? _MediaLoadState.ready : _MediaLoadState.loading;
       unawaited(_loadMedia());
+      unawaited(_prefetchFullImageIfNeeded());
     }
+  }
+
+  Future<void> _prefetchFullImageIfNeeded() async {
+    if (widget.msg.type != 'image' || widget.onMediaRetry == null) return;
+    final needs = await MediaLocalCache.needsFullImageDownload(
+      messageId: widget.msg.id,
+      plaintext: widget.msg.plaintext,
+      fileId: widget.msg.fileId,
+    );
+    if (!needs) return;
+    await widget.onMediaRetry!(widget.msg.id);
+    if (!mounted) return;
+    await _loadMedia();
   }
 
   Future<void> _retryLoadMedia() async {
@@ -293,6 +314,7 @@ class _MediaMessageBodyState extends State<MediaMessageBody> {
           onRetryLoad: () => _loadFullImageBytes(),
           name: name,
           messageId: widget.msg.id,
+          expectedPlaintext: widget.msg.plaintext,
         ),
       ),
     );
@@ -457,7 +479,7 @@ class _MediaMessageBodyState extends State<MediaMessageBody> {
     if (_loadState == _MediaLoadState.loading && media == null) {
       return const SizedBox(
         width: 96,
-        height: 40,
+        height: 96,
         child: Center(
           child: SizedBox(
             width: 18,

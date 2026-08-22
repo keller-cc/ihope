@@ -120,6 +120,13 @@ class MediaLocalCache {
     return false;
   }
 
+  /// 字节数是否达到附件声明的原图体积（用于区分 preview 与完整文件）。
+  static bool hasFullImageBytes(int byteLen, String? plaintext) {
+    final expected = expectedAttachmentBytes(plaintext);
+    if (expected == null || expected <= 0) return true;
+    return byteLen >= expected * 0.9;
+  }
+
   /// 远程图片附件是否尚未拉取原图（仅有缩略图或本地文件体积不足）。
   static Future<bool> needsFullImageDownload({
     required String messageId,
@@ -301,6 +308,32 @@ class MediaLocalCache {
   }
 
   /// 聊天列表/气泡用预览图：优先消息内 preview，不拉取服务端原图。
+  static MediaPayload? resolvePreviewSync(String? plaintext) {
+    if (plaintext == null || plaintext.isEmpty) return null;
+    final fromInline = _imageFromPlaintextMap(plaintext);
+    if (fromInline != null) return fromInline;
+    final att = AttachmentPayload.fromPlaintext(plaintext);
+    if (att != null && att.kind == 'image') {
+      if (att.previewBytes != null && att.previewBytes!.isNotEmpty) {
+        return MediaPayload(
+          kind: 'image',
+          mime: att.mime,
+          name: att.name,
+          bytes: att.previewBytes!,
+        );
+      }
+      if (att.thumbBytes != null && att.thumbBytes!.isNotEmpty) {
+        return MediaPayload(
+          kind: 'image',
+          mime: att.mime,
+          name: att.name,
+          bytes: att.thumbBytes!,
+        );
+      }
+    }
+    return null;
+  }
+
   static Future<MediaPayload?> resolvePreview(
     String messageId,
     String? plaintext, {

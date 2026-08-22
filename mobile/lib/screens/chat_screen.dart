@@ -13,6 +13,7 @@ import '../utils/announcement_read.dart';
 import '../config/app_config.dart';
 import '../utils/cloud_drive_launcher.dart';
 import '../utils/media_payload.dart';
+import '../utils/media_local_cache.dart';
 import '../widgets/chat_input_bar.dart';
 import '../widgets/app_page_route.dart';
 import '../widgets/group_announcement_banner.dart';
@@ -63,6 +64,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   late ConversationItem _conversation;
   List<ChatMessage> _messages = [];
+  final Set<String> _prefetchingImages = {};
   bool _loading = true;
   String? _error;
   int _historyEpoch = 0;
@@ -237,6 +239,27 @@ class _ChatScreenState extends State<ChatScreen> {
     }
     unawaited(_thread.cacheIfReady(list));
     if (unread == 0) unawaited(_markReadToLast());
+    unawaited(_prefetchChatImages(_messages));
+  }
+
+  Future<void> _prefetchChatImages(List<ChatMessage> messages) async {
+    if (_conversation.isArchived) return;
+    for (final m in messages) {
+      if (m.type != 'image' || m.fileId == null || m.fileId!.isEmpty) continue;
+      if (_prefetchingImages.contains(m.id)) continue;
+      final needs = await MediaLocalCache.needsFullImageDownload(
+        messageId: m.id,
+        plaintext: m.plaintext,
+        fileId: m.fileId,
+      );
+      if (!needs) continue;
+      _prefetchingImages.add(m.id);
+      unawaited(
+        _repairMessageMedia(m.id).whenComplete(
+          () => _prefetchingImages.remove(m.id),
+        ),
+      );
+    }
   }
 
   Future<void> _bootstrap() async {
@@ -500,6 +523,7 @@ class _ChatScreenState extends State<ChatScreen> {
     } else {
       _scrollCoord.endScrollLockAfterTailInsert();
     }
+    unawaited(_prefetchChatImages([materialized]));
   }
 
   Future<void> _repairMessageMedia(String messageId) async {

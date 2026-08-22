@@ -94,11 +94,38 @@ func entryFromBlock(block string) (QuoteEntry, bool) {
 		}
 		bodyLines = append(bodyLines, line)
 	}
-	body := strings.TrimSpace(strings.Join(bodyLines, "\n"))
+	body := collapseBodySoftBreaks(strings.Join(bodyLines, "\n"))
 	if body == "" {
 		return QuoteEntry{}, false
 	}
 	return QuoteEntry{Body: body, Author: author}, true
+}
+
+// collapseBodySoftBreaks 合并源文件中因排版产生的软换行，保留空行分段。
+func collapseBodySoftBreaks(body string) string {
+	body = strings.TrimSpace(body)
+	if body == "" {
+		return ""
+	}
+	var paragraphs []string
+	var current strings.Builder
+	flush := func() {
+		if current.Len() == 0 {
+			return
+		}
+		paragraphs = append(paragraphs, strings.TrimSpace(current.String()))
+		current.Reset()
+	}
+	for _, line := range strings.Split(body, "\n") {
+		t := strings.TrimSpace(line)
+		if t == "" {
+			flush()
+			continue
+		}
+		current.WriteString(t)
+	}
+	flush()
+	return strings.Join(paragraphs, "\n\n")
 }
 
 func parseLegacyAttributionQuotes(text string) ([]QuoteEntry, error) {
@@ -108,7 +135,7 @@ func parseLegacyAttributionQuotes(text string) ([]QuoteEntry, error) {
 	var author string
 
 	flush := func() {
-		body := strings.TrimSpace(strings.Join(bodyLines, "\n"))
+		body := collapseBodySoftBreaks(strings.Join(bodyLines, "\n"))
 		if body == "" {
 			bodyLines = nil
 			author = ""
@@ -166,7 +193,8 @@ func PickRandomQuoteEntry(path string) (QuoteEntry, error) {
 func FormatQuoteBlocks(entries []QuoteEntry) string {
 	var b strings.Builder
 	b.WriteString("# IHope 金句库\n")
-	b.WriteString("# 条目之间用单独一行 --- 分隔；正文保留换行；可选末尾「来自@昵称」\n\n")
+	b.WriteString("# 条目之间用单独一行 --- 分隔；段落之间空一行；可选末尾「来自@昵称」\n")
+	b.WriteString("# 同一段落内请勿手动折行（读取时会自动合并软换行）\n\n")
 	for i, e := range entries {
 		if i > 0 {
 			b.WriteString("\n---\n\n")
@@ -203,7 +231,7 @@ func RenderQuoteCard(entry QuoteEntry, fontPath string) ([]byte, error) {
 	if a := strings.TrimSpace(entry.Author); a != "" {
 		sub = "—— 来自@" + a
 	}
-	return renderLiteraryCard(body, sub, "IHope · 金句", fontPath)
+	return renderLiteraryCard(body, sub, "", fontPath)
 }
 
 // PickRandomQuote 兼容旧调用：仅返回正文。
