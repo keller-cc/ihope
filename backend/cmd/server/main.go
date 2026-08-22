@@ -25,6 +25,7 @@ import (
 	"github.com/ihope/ihope/internal/ws"
 	"github.com/ihope/ihope/internal/lifecycle"
 	"github.com/ihope/ihope/internal/push"
+	"github.com/ihope/ihope/internal/qqbot"
 )
 
 func main() {
@@ -55,6 +56,27 @@ func main() {
 	msgSvc := message.NewService(msgRepo, convRepo, fileSvc)
 	pushSvc := push.New(cfg)
 	pushDispatch := push.NewDispatcher(pushSvc, userRepo, convRepo, hub)
+
+	var qqSvc *qqbot.Service
+	var qqHTTP *qqbot.HTTPHandler
+	var qqSched *qqbot.Scheduler
+	if cfg.QQBotEnabled {
+		qqStore := qqbot.NewStore(pool)
+		qqClient := qqbot.NewClient(cfg.QQBotAppID, cfg.QQBotAppSecret)
+		qqMedia := qqbot.NewMediaHost(cfg.UploadDir, cfg.AppPublicURL)
+		qqSvc = qqbot.NewService(cfg, qqStore, qqClient, qqMedia, hub)
+		qqHTTP = qqbot.NewHTTPHandler(qqSvc, qqMedia)
+		pushDispatch.SetQQDoorbell(qqSvc, hub)
+		qqSched = qqbot.NewScheduler(qqSvc, cfg.QQDailyPoetryHHMM, cfg.QQDailyNewsHHMM)
+		qqSched.Start()
+		log.Printf("qqbot: enabled webhook=%s app_id=%s public=%s", cfg.QQWebhookPath, cfg.QQBotAppID, cfg.AppPublicURL)
+		probeCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
+		if err := qqClient.ProbeCredentials(probeCtx); err != nil {
+			log.Printf("qqbot: token probe failed: %v", err)
+		}
+		cancel()
+	}
+
 	msgNotify := server.NewMessageNotifier(hub, pushDispatch)
 	wsHandler := ws.NewHandler(hub, msgNotify, jwtMgr, userRepo, convSvc, msgSvc)
 	convNotify := server.NewConvRealtime(hub)
@@ -77,6 +99,8 @@ func main() {
 		admin.NewHandler(userRepo, hub, cfg.RefreshTokenTTL, admin.RuntimeConfigFrom(cfg)),
 		devicelink.NewHandler(deviceLinkSvc),
 		filestore.NewHandler(fileSvc),
+		qqHTTP,
+		qqSvc,
 	)
 
 	httpServer := &http.Server{
@@ -87,6 +111,9 @@ func main() {
 	done := make(chan struct{})
 	lifecycle.SetDrainWait(time.Duration(cfg.DrainSeconds) * time.Second)
 	lifecycle.SetShutdownFunc(func() {
+		if qqSched != nil {
+			qqSched.Stop()
+		}
 		hub.CloseAll()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), time.Duration(cfg.DrainSeconds+5)*time.Second)
 		defer cancel()

@@ -135,7 +135,7 @@ class _ChatHistorySearchScreenState extends State<ChatHistorySearchScreen> {
                   ? const Center(child: Text('无匹配消息'))
                   : ListView.separated(
                       itemCount: results.length,
-                      separatorBuilder: (_, __) => const Divider(height: 1),
+                      separatorBuilder: (_, _) => const Divider(height: 1),
                       itemBuilder: (context, index) {
                         final msg = results[index];
                         return ChatHistoryResultTile(

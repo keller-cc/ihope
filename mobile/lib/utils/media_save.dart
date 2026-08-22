@@ -162,8 +162,8 @@ class MediaSave {
       isImage: isImage,
     );
     onProgress?.call(1);
-    final openPath = saved['openPath'] as String?;
-    final displayLabel = saved['displayLabel'] as String?;
+    final openPath = saved['openPath'];
+    final displayLabel = saved['displayLabel'];
     if (openPath == null || displayLabel == null) {
       throw StateError('保存失败：系统未返回文件路径');
     }

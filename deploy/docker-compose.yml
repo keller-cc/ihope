@@ -40,8 +40,10 @@ services:
       SERVER_PORT: "8080"
       UPLOAD_DIR: /data/uploads
       ADMIN_WEB_DIR: /app/admin
+      FCM_CREDENTIALS_FILE: /run/secrets/fcm-service-account.json
     volumes:
       - uploads_data:/data/uploads
+      - ${FCM_CREDENTIALS_HOST_FILE:-./ihope-606b3-firebase-adminsdk-fbsvc-1db7523612.json}:/run/secrets/fcm-service-account.json:ro
     depends_on:
       postgres:
         condition: service_healthy

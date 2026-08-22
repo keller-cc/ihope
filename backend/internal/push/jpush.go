@@ -92,7 +92,7 @@ func pushExtras(p Payload) map[string]string {
 // multiSender 按设备 platform 字段路由：android_cn→极光，android/ios→FCM，否则日志。
 type multiSender struct {
 	jpush    *jpushSender
-	fcm      *fcmSender
+	fcm      Sender
 	fallback Sender
 }
 

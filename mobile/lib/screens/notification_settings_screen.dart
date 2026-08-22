@@ -5,7 +5,7 @@ import 'package:flutter/material.dart';
 import '../services/auth_service.dart';
 import '../services/notification_service.dart';
 
-/// 后台消息通知开关（WebSocket 本地横幅 + 可选离线极光/FCM）。
+/// 后台消息通知开关（WebSocket 本地横幅；离线可用 QQ 门铃 / 海外 FCM）。
 class NotificationSettingsScreen extends StatefulWidget {
   const NotificationSettingsScreen({
     super.key,
@@ -42,8 +42,8 @@ class _NotificationSettingsScreenState
         _hint = '当前平台不支持系统通知';
       } else if (!widget.notification.isRemotePushAvailable) {
         _hint =
-            '离线推送（App 被系统杀掉后）需配置 flavor：国内 domestic + 极光，海外 global + FCM。'
-            '见 docs/推送配置指南.md';
+            '离线提醒（App 被杀掉后）可在「设置 → QQ 提醒」绑定机器人门铃；'
+            '海外包可配置 FCM。见 docs/推送配置指南.md';
       }
     });
   }
@@ -77,7 +77,7 @@ class _NotificationSettingsScreenState
         if (!widget.notification.isRemotePushAvailable) {
           setState(() {
             _hint =
-                '已开启后台本地通知。App 被完全杀掉后需配置极光/FCM 才能继续收消息。';
+                '已开启后台本地通知。App 被完全杀掉后请绑定 QQ 门铃，或使用海外 FCM。';
           });
         }
       } else {
@@ -135,7 +135,7 @@ class _NotificationSettingsScreenState
               '• 前台聊天仍走 WebSocket，当前会话内不弹横幅\n'
               '• 切到后台后 Android 会显示「正在接收新消息」并保持连接\n'
               '• 若仍收不到，请在系统设置中将 IHope 设为「不受电池优化」\n'
-              '• App 被系统杀掉后，需极光/FCM 才能继续推送\n'
+              '• App 被系统杀掉后，可用 QQ 门铃（设置 → QQ 提醒）或海外 FCM\n'
               '• 通知不含消息明文',
               style: TextStyle(fontSize: 13, height: 1.4),
             ),

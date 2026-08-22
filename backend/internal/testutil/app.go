@@ -119,5 +119,7 @@ func NewTestServer(t *testing.T) *server.Server {
 		admin.NewHandler(userRepo, hub, cfg.RefreshTokenTTL, admin.RuntimeConfigFrom(cfg)),
 		devicelink.NewHandler(deviceLinkSvc),
 		filestore.NewHandler(fileSvc),
+		nil,
+		nil,
 	)
 }

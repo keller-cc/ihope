@@ -2,8 +2,5 @@
 sdk.dir=D:\\Android\\Sdk
 flutter.sdk=D:\\Flutter\\flutter
 
-# 国内包（domestic flavor）极光 AppKey，与极光控制台、后端 JPUSH_APP_KEY 一致
-JPUSH_APPKEY=
-
 # 设为 true 启用阿里云 Gradle 镜像（国内网络推荐）
 # useCnMavenMirror=true

@@ -58,7 +58,7 @@ class _HomeConnectionStatusState extends State<HomeConnectionStatus> {
   String get _label {
     if (!_hasNetwork) return '离线';
     final ws = widget.wsConnected ? '在线' : '未连接';
-    return '$ws-${_networkLabel}';
+    return '$ws-$_networkLabel';
   }
 
   Color _color(ColorScheme scheme) {

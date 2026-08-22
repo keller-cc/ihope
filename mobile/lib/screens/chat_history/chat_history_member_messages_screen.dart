@@ -32,7 +32,7 @@ class ChatHistoryMemberMessagesScreen extends StatelessWidget {
           ? const Center(child: Text('暂无消息'))
           : ListView.separated(
               itemCount: messages.length,
-              separatorBuilder: (_, __) => const Divider(height: 1),
+              separatorBuilder: (_, _) => const Divider(height: 1),
               itemBuilder: (context, index) {
                 final msg = messages[index];
                 return ChatHistoryResultTile(

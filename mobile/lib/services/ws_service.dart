@@ -237,7 +237,7 @@ class WsService {
       'event': 'gmk_request',
       'conversation_id': conversationId,
       if (epochs != null && epochs.isNotEmpty) 'epochs': epochs,
-      if (epoch != null) 'epoch': epoch,
+      'epoch': ?epoch,
     });
   }
 

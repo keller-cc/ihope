@@ -229,6 +229,7 @@ class _ConversationsScreenState extends State<ConversationsScreen>
     if (!mounted) return;
 
     _pinnedIds = await widget.auth.pinnedConversationIds();
+    if (!mounted) return;
     setState(() {
       final index = _items.indexWhere((c) => c.id == frame.conversationId);
       if (index >= 0) {
@@ -917,6 +918,7 @@ class _ConversationsScreenState extends State<ConversationsScreen>
     if (mounted && initialUnread > 0) {
       setState(() => _unreadCounts[item.id] = 0);
     }
+    if (!mounted) return;
     final result = await Navigator.of(context).push<Object?>(
       appPageRoute(
         wrapNavigationPopScope: false,
@@ -1274,7 +1276,7 @@ class _ConversationsScreenState extends State<ConversationsScreen>
                             )
                           : ListView.separated(
                               itemCount: visible.length,
-                              separatorBuilder: (_, __) =>
+                              separatorBuilder: (_, _) =>
                                   const Divider(height: 1),
                               itemBuilder: (context, index) {
                                 final item = visible[index];

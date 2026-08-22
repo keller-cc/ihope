@@ -112,10 +112,17 @@ docker logs ihope-postgres-dev --tail 30            # 日志
 | `MAIL_DRIVER` | `log` = 开发打印邮件；生产用 `smtp` |
 | `SMTP_*` | 生产发信配置 |
 | `EMAIL_VERIFY_TTL_MIN` | 注册验证链接有效期（分钟，默认 1440） |
-| `JPUSH_APP_KEY` / `JPUSH_MASTER_SECRET` | 国内极光推送（可选） |
-| `FCM_SERVER_KEY` | 海外 Firebase 推送（可选） |
+| `QQ_BOT_ENABLED` / `QQ_BOT_APP_ID` / `QQ_BOT_APP_SECRET` | QQ 官方机器人门铃与每日图卡 |
+| `QQ_WEBHOOK_PATH` | 默认 `/api/webhooks/qq`；开放平台回调填 `{APP_PUBLIC_URL}` + 该路径 |
+| `QQ_POETRY_FONT_PATH` | 金句 PNG 用中文字体（本机或容器内路径） |
+| `QQ_DAILY_POETRY_HHMM` / `QQ_DAILY_NEWS_HHMM` | 每日推送时刻 |
+| `FCM_CREDENTIALS_FILE` | 海外 FCM v1 服务账号 JSON（可选） |
+| `FCM_CREDENTIALS_HOST_FILE` | Docker 宿主机 JSON 挂载路径 |
+| `FCM_PROJECT_ID` | Firebase 项目 ID（可省略） |
+| `FCM_CREDENTIALS_JSON` | 整段服务账号 JSON（优先于 FILE） |
+| `JPUSH_*` | 极光（后端遗留可选；App 已不集成） |
 
-推送说明见 [docs/推送配置指南.md](../docs/推送配置指南.md)。
+推送 / QQ 门铃见 [docs/推送配置指南.md](../docs/推送配置指南.md)。
 
 ### 客户端可见配置（env → `/api/health`）
 

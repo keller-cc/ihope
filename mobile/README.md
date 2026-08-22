@@ -8,7 +8,7 @@ E2EE 单聊 / 群聊、媒体消息、WebSocket 实时推送。
 
 ## 构建（Android）
 
-与 **Flutter 3.44** 模板对齐：**Gradle 9.1**、**AGP 9.0.1**、**Kotlin 2.3.20**。极光已暂移除，可正常用 Gradle 9。
+与 **Flutter 3.44** 模板对齐：**Gradle 9.1**、**AGP 9.0.1**、**Kotlin 2.3.20**。国内离线提醒用 **QQ 门铃**（不依赖极光）。
 
 ```powershell
 cd D:\IHope\mobile
@@ -56,12 +56,9 @@ flutter pub get
 
 # 日常开发（模拟器，默认连 http://10.0.2.2:8080）
 flutter run --flavor domestic -d emulator-5556
-
-# 可选：启用极光/FCM 推送通道
-flutter run --flavor domestic --dart-define-from-file=config/domestic.json
 ```
 
-后端需先启动（见上文或 `docs/Windows开发环境.md`）。构建失败若提示 `jcenter` / Gradle 9，请确认 `android/gradle/wrapper/gradle-wrapper.properties` 为 **Gradle 8.x**（非 9.x）。
+后端需先启动（见上文或 `docs/Windows开发环境.md`）。
 
 ## 后台系统通知（国内 / 海外）
 
@@ -69,25 +66,21 @@ flutter run --flavor domestic --dart-define-from-file=config/domestic.json
 
 1. **前台聊天**：WebSocket 实时；不在当前会话时，App 顶部 **应用内横幅**（回到首页可见，不经系统通知栏）  
 2. **后台进程存活**：前台服务保 WebSocket + **系统栏本地通知**（无需第三方）  
-3. **App 被系统杀掉**：**FCM**（海外 `global`）；国内离线兜底 **暂不含极光**（见下）
+3. **App 被系统杀掉**：**QQ 门铃**（设置 → QQ 提醒）；海外可选 **FCM**（`global`）
 
-用户在 **个人资料 → 通知** 开启并授权后，**零第三方配置** 即可测第 2 层。登录后 WebSocket 监听同时驱动 **应用内顶部横幅**（前台）与后台系统通知。
+用户在 **设置 → 通知** 开启并授权后，**零第三方配置** 即可测第 2 层。登录后 WebSocket 监听同时驱动 **应用内顶部横幅**（前台）与后台系统通知。
 
-**真机建议**：除开启通知外，将 IHope 加入系统 **电池优化白名单 / 允许后台运行**，否则进程易被杀死，只能依赖 FCM/极光离线推送。
+**真机建议**：除开启通知外，将 IHope 加入系统 **电池优化白名单 / 允许后台运行**，否则进程易被杀死，需依赖 QQ 门铃或 FCM。
 
 ```powershell
-# 国内 Android（包名 .cn；离线极光暂不可用）
+# 国内 Android（包名 .cn；离线用 QQ 门铃）
 flutter run --flavor domestic
 
-# 海外 Android（离线兜底：FCM，需 google-services.json）
+# 海外 Android（离线兜底：FCM，需 android/app/src/global/google-services.json）
 flutter run --flavor global --dart-define-from-file=config/global.json
 ```
 
-### 极光推送（暂移除）
-
-`jpush_flutter` 3.4.6 仍含 `jcenter()`，与 **Gradle 8.14+** 不兼容，已从依赖移除。国内内测用 **WebSocket + 本地通知**；待官方修复后见 [docs/推送配置指南.md](../docs/推送配置指南.md)。
-
-后端不配 `FCM_SERVER_KEY` 时：在线设备仍可通过 WebSocket + 本地通知收横幅。
+配置见 [docs/推送配置指南.md](../docs/推送配置指南.md)。后端不配 FCM 时：在线设备仍可通过 WebSocket + 本地通知收横幅。
 
 ## 生产 release APK
 

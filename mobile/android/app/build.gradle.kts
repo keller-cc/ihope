@@ -33,10 +33,11 @@ val allowCleartextTraffic = apiBaseFromDefine.startsWith("http://")
 
 
 
-if (file("google-services.json").exists()) {
-
+// FCM 仅海外 global；国内 domestic 包名为 com.clprince.ihope.cn（离线用 QQ 门铃）
+val hasGlobalGoogleServices = file("src/global/google-services.json").exists()
+val hasRootGoogleServices = file("google-services.json").exists()
+if (hasGlobalGoogleServices || hasRootGoogleServices) {
     apply(plugin = "com.google.gms.google-services")
-
 }
 
 
@@ -116,12 +117,6 @@ android {
 
             resValue("string", "app_name", "IHope")
 
-            val jpushKey = (project.findProperty("JPUSH_APPKEY") as String?) ?: ""
-
-            manifestPlaceholders["JPUSH_APPKEY"] = jpushKey
-
-            manifestPlaceholders["JPUSH_CHANNEL"] = "clprince-ihope-domestic"
-
         }
 
         create("global") {
@@ -174,6 +169,15 @@ flutter {
 
 dependencies {
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
+}
+
+// domestic 无 Firebase 应用，跳过 process*Domestic*GoogleServices（否则包名 .cn 对不上）
+tasks.configureEach {
+    if (name.contains("GoogleServices", ignoreCase = true) &&
+        name.contains("Domestic", ignoreCase = true)
+    ) {
+        enabled = false
+    }
 }
 
 

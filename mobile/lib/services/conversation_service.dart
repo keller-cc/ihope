@@ -215,8 +215,8 @@ class ConversationService {
       '/api/conversations/$conversationId/messages',
       query: {
         'limit': limit,
-        if (before != null) 'before': before,
-        if (type != null) 'type': type,
+        'before': ?before,
+        'type': ?type,
       },
     );
     return (data['messages'] as List<dynamic>)
@@ -237,7 +237,7 @@ class ConversationService {
       body: {
         'type': type,
         'ciphertext': ciphertext,
-        if (fileId != null) 'file_id': fileId,
+        'file_id': ?fileId,
       },
       receiveTimeout: isMedia ? const Duration(seconds: 120) : null,
       sendTimeout: isMedia ? const Duration(seconds: 120) : null,

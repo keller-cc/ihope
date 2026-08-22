@@ -1,0 +1,41 @@
+---
+description: 优先使用成熟库，减少自研通用代码
+alwaysApply: true
+---
+
+# 优先调用库，减少自研代码
+
+新增或修改功能时，**先查是否有成熟、维护中的库**可覆盖；能依赖库就不要从零实现通用能力。
+
+## 适用场景（优先用库）
+
+| 领域 | 推荐方向 | 本项目已有示例 |
+|------|----------|----------------|
+| HTTP / WebSocket | dio、web_socket_channel | `api_client.dart` |
+| 安全存储 | flutter_secure_storage | `auth_storage.dart` |
+| 加密 / Signal | cryptography、libsignal_protocol_dart | `crypto/` |
+| 日期时间格式化 | intl (`DateFormat`) | `message_time.dart` |
+| UUID | uuid | 消息/设备 ID |
+| 网络状态 | connectivity_plus | 首页连接条 |
+| 媒体选择/播放 | image_picker、file_picker、audioplayers | 聊天附件 |
+| Go 后端 | pgx、jwt、gorilla/websocket、google/uuid | `backend/go.mod` |
+
+## 仍应自研的部分
+
+- **业务规则**：未读气泡、群 epoch、公告已读、会话排序策略
+- **E2EE 编排**：`ChatCrypto`、`GroupKeyService`、与后端的密钥协议
+- **产品定制 UI**：QQ 风格表情面板、聊天滚动协调器
+- **几行以内的工具函数**：如 `text_search.dart` 的 `contains` 封装，不必为省几行引入依赖
+
+## 决策标准
+
+1. **复杂度**：重复逻辑 > ~30 行、或涉及时区/编码/安全/协议时，优先库
+2. **维护成本**：库有稳定 release、文档和广泛使用
+3. **依赖预算**：不堆叠功能重叠的包；新依赖需在 `pubspec.yaml` / `go.mod` 中显式声明
+4. **行为一致**：库的行为须符合产品（例如跑马灯仅在文字溢出时滚动——若无合适库可保留薄封装）
+
+## 实施要求
+
+- 引入新依赖前，先搜索 `pubspec.yaml` / `go.mod` 是否已有同类能力
+- 用库替换自研代码时，**保留或更新对应单元测试**
+- 勿为「看起来更专业」而引入未使用的库

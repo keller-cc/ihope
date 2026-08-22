@@ -32,7 +32,7 @@ class HomeSearchMessagesScreen extends StatelessWidget {
       appBar: AppBar(title: Text(title)),
       body: ListView.separated(
         itemCount: messages.length,
-        separatorBuilder: (_, __) => const Divider(height: 1),
+        separatorBuilder: (_, _) => const Divider(height: 1),
         itemBuilder: (context, index) {
           final msg = messages[index];
           final text = homeSearchMessagePreview(msg);

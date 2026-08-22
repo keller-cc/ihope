@@ -39,13 +39,20 @@ func New(cfg config.Config) *Service {
 		m.jpush = &jpushSender{appKey: key, masterSecret: cfg.JPushMasterSecret}
 		log.Printf("push: jpush enabled (android_cn)")
 	}
-	if key := strings.TrimSpace(cfg.FCMServerKey); key != "" {
-		m.fcm = &fcmSender{serverKey: key}
-		log.Printf("push: fcm enabled (android/ios)")
+	if s := newFCMSender(cfg.FCMCredentialsJSON, cfg.FCMCredentialsFile, cfg.FCMProjectID, cfg.FCMServerKey); s != nil {
+		m.fcm = s
+		switch {
+		case strings.TrimSpace(cfg.FCMCredentialsJSON) != "":
+			log.Printf("push: fcm v1 enabled (FCM_CREDENTIALS_JSON)")
+		case strings.TrimSpace(cfg.FCMCredentialsFile) != "":
+			log.Printf("push: fcm v1 enabled (FCM_CREDENTIALS_FILE)")
+		default:
+			log.Printf("push: fcm legacy enabled (android/ios)")
+		}
 	}
 
 	if m.jpush == nil && m.fcm == nil {
-		log.Printf("push: no JPUSH_* or FCM_SERVER_KEY; using log driver only")
+		log.Printf("push: no JPUSH_* or FCM credentials; using log driver only")
 	}
 
 	// 显式 PUSH_DRIVER=log 时仍走路由，只是没有密钥则全部落日志。

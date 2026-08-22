@@ -17,7 +17,7 @@ class MessageCacheStore {
   Future<Database> _database() async {
     if (_db != null) return _db!;
     _db = _openDatabaseForTest != null
-        ? await _openDatabaseForTest!()
+        ? await _openDatabaseForTest()
         : await _openPersistent();
     return _db!;
   }

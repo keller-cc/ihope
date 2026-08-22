@@ -11,6 +11,7 @@ import 'change_password_screen.dart';
 import 'device_link_screen.dart';
 import 'devices_screen.dart';
 import 'notification_settings_screen.dart';
+import 'qq_bot_settings_screen.dart';
 import 'server_settings_screen.dart';
 import 'storage_settings_screen.dart';
 import 'version_check_screen.dart';
@@ -75,13 +76,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
             subtitle: const Text('查看并踢下线其它设备'),
             trailing: const Icon(Icons.chevron_right),
             onTap: () async {
-              final result = await Navigator.of(context).push<Object?>(
+              final navigator = Navigator.of(context);
+              final result = await navigator.push<Object?>(
                 appPageRoute(
                   builder: (_) => DevicesScreen(auth: widget.auth),
                 ),
               );
-              if (result == 'logout' && mounted) {
-                Navigator.of(context).pop('logout');
+              if (!mounted) return;
+              if (result == 'logout') {
+                navigator.pop('logout');
               }
             },
           ),
@@ -117,12 +120,26 @@ class _SettingsScreenState extends State<SettingsScreen> {
             },
           ),
           ListTile(
+            leading: const Icon(Icons.chat_outlined),
+            title: const Text('QQ 提醒'),
+            subtitle: const Text('离线门铃 · 金句图 · 60s读世界'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () {
+              Navigator.of(context).push<void>(
+                appPageRoute(
+                  builder: (_) => QqBotSettingsScreen(auth: widget.auth),
+                ),
+              );
+            },
+          ),
+          ListTile(
             leading: const Icon(Icons.dns_outlined),
             title: const Text('服务器'),
             subtitle: Text(ServerConfig.apiBase),
             trailing: const Icon(Icons.chevron_right),
             onTap: () async {
-              final result = await Navigator.of(context).push<Object?>(
+              final navigator = Navigator.of(context);
+              final result = await navigator.push<Object?>(
                 appPageRoute(
                   builder: (_) => ServerSettingsScreen(
                     auth: widget.auth,
@@ -130,8 +147,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ),
                 ),
               );
-              if (result == 'logout' && mounted) {
-                Navigator.of(context).pop('logout');
+              if (!mounted) return;
+              if (result == 'logout') {
+                navigator.pop('logout');
               }
             },
           ),

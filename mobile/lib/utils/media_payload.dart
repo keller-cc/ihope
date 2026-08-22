@@ -79,7 +79,7 @@ class MediaPayload {
             final sec = voiceDurationSecondsFromMs(
               readDurationMs(map['duration_ms']),
             );
-            return sec > 0 ? '[语音 ${sec}秒]' : '[语音]';
+            return sec > 0 ? '[语音 $sec秒]' : '[语音]';
           case 'file':
             return '[文件] ${map['name'] ?? 'file'}';
           default:
@@ -106,7 +106,7 @@ class MediaPayload {
           return '[图片]';
         case 'audio':
           final sec = voiceDurationSecondsFromMs(media.durationMs);
-          return sec > 0 ? '[语音 ${sec}秒]' : '[语音]';
+          return sec > 0 ? '[语音 $sec秒]' : '[语音]';
         case 'file':
           return '[文件] ${media.name}';
         default:

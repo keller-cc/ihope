@@ -113,7 +113,7 @@ class _ChatHistoryFilesTabState extends State<ChatHistoryFilesTab> {
               ? const Center(child: Text('暂无文件'))
               : ListView.separated(
                   itemCount: list.length,
-                  separatorBuilder: (_, __) => const Divider(height: 1),
+                  separatorBuilder: (_, _) => const Divider(height: 1),
                   itemBuilder: (context, index) {
                     final msg = list[index];
                     final media = MediaPayload.tryParse(msg.plaintext);

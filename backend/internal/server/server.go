@@ -3,6 +3,7 @@ package server
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/ihope/ihope/internal/admin"
 	"github.com/ihope/ihope/internal/apprelease"
@@ -16,6 +17,7 @@ import (
 	"github.com/ihope/ihope/internal/lifecycle"
 	"github.com/ihope/ihope/internal/message"
 	"github.com/ihope/ihope/internal/middleware"
+	"github.com/ihope/ihope/internal/qqbot"
 	"github.com/ihope/ihope/internal/signal"
 	"github.com/ihope/ihope/internal/user"
 	"github.com/ihope/ihope/internal/ws"
@@ -32,6 +34,8 @@ type Server struct {
 	admin         *admin.Handler
 	deviceLink    *devicelink.Handler
 	files         *filestore.Handler
+	qqbot         *qqbot.HTTPHandler
+	qqbotSvc      *qqbot.Service
 	userRepo      *user.Repository
 	jwt           *jwt.Manager
 	loginLimit    *middleware.RateLimiter
@@ -50,6 +54,8 @@ func New(
 	adminHandler *admin.Handler,
 	deviceLinkHandler *devicelink.Handler,
 	fileHandler *filestore.Handler,
+	qqbotHandler *qqbot.HTTPHandler,
+	qqbotSvc *qqbot.Service,
 ) *Server {
 	return &Server{
 		cfg:           cfg,
@@ -62,6 +68,8 @@ func New(
 		admin:         adminHandler,
 		deviceLink:    deviceLinkHandler,
 		files:         fileHandler,
+		qqbot:         qqbotHandler,
+		qqbotSvc:      qqbotSvc,
 		userRepo:      userRepo,
 		jwt:           jwtMgr,
 		loginLimit:    middleware.NewRateLimiter(cfg.LoginRateLimit, cfg.LoginRateWindow),
@@ -95,6 +103,22 @@ func (s *Server) Router() http.Handler {
 	mux.Handle("GET /api/devices", authRequired(http.HandlerFunc(s.users.ListDevices)))
 	mux.Handle("DELETE /api/devices/{deviceId}", authRequired(http.HandlerFunc(s.users.KickDevice)))
 	mux.HandleFunc("GET /api/avatars/{filename}", s.users.ServeAvatar)
+
+	if s.qqbot != nil {
+		mux.Handle("GET /api/public/qq-media/{name}", http.HandlerFunc(s.qqbot.PublicMedia))
+		mux.Handle("POST /api/users/me/qq-bot/bind-code", authRequired(http.HandlerFunc(s.qqbot.CreateBindCode)))
+		mux.Handle("GET /api/users/me/qq-bot", authRequired(http.HandlerFunc(s.qqbot.Status)))
+		mux.Handle("PATCH /api/users/me/qq-bot", authRequired(http.HandlerFunc(s.qqbot.Patch)))
+		mux.Handle("DELETE /api/users/me/qq-bot", authRequired(http.HandlerFunc(s.qqbot.Unbind)))
+	}
+	if s.qqbotSvc != nil {
+		path := s.cfg.QQWebhookPath
+		if path == "" {
+			path = "/api/webhooks/qq"
+		}
+		mux.Handle("POST "+path, http.HandlerFunc(s.qqbotSvc.HandleWebhook))
+	}
+
 	mux.Handle("GET /api/users", authRequired(http.HandlerFunc(s.users.List)))
 
 	if s.signal != nil {
@@ -168,6 +192,11 @@ func cors(allowOrigin string, next http.Handler) http.Handler {
 		allowOrigin = "*"
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// QQ 回调勿加 CORS，避免部分验签客户端误解析
+		if strings.HasPrefix(r.URL.Path, "/api/webhooks/qq") {
+			next.ServeHTTP(w, r)
+			return
+		}
 		w.Header().Set("Access-Control-Allow-Origin", allowOrigin)
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, PUT, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")

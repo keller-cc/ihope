@@ -741,6 +741,7 @@ class _ChatScreenState extends State<ChatScreen> {
       onPopInvokedWithResult: (didPop, _) async {
         if (didPop || !mounted || _popInProgress) return;
         _popInProgress = true;
+        final navigator = Navigator.of(context);
         try {
           if (!isArchived && _messages.isNotEmpty) {
             await widget.auth.markConversationRead(
@@ -749,7 +750,7 @@ class _ChatScreenState extends State<ChatScreen> {
             );
           }
           if (!mounted) return;
-          Navigator.of(context).pop(isArchived ? 'left' : null);
+          navigator.pop(isArchived ? 'left' : null);
         } finally {
           _popInProgress = false;
         }

@@ -38,11 +38,26 @@ type Config struct {
 	ServerVersion         string
 	DrainSeconds          int
 	AppDownloadURL        string
-	PushDriver         string
-	FCMServerKey       string
+	PushDriver            string
+	FCMServerKey          string
+	FCMCredentialsFile    string
+	FCMCredentialsJSON    string
+	FCMProjectID          string
 	JPushAppKey        string
 	JPushMasterSecret  string
 	AdminSecret string
+
+	QQBotEnabled         bool
+	QQBotAppID           string
+	QQBotAppSecret       string
+	QQWebhookPath        string
+	QQPoetryAPIURL       string
+	QQNews60sAPIURL      string
+	QQPoetryFontPath     string
+	QQDailyPoetryHHMM    string
+	QQDailyNewsHHMM      string
+	QQDoorbellCooldownSec int
+	QQBotAddHint         string
 }
 
 // Load 读取 .env 与环境变量。
@@ -83,10 +98,25 @@ func Load() Config {
 		DrainSeconds:          envInt("DRAIN_SECONDS", 15),
 		AppDownloadURL:        env("APP_DOWNLOAD_URL", ""),
 		PushDriver:        env("PUSH_DRIVER", "log"),
-		FCMServerKey:      env("FCM_SERVER_KEY", ""),
+		FCMServerKey:       env("FCM_SERVER_KEY", ""),
+		FCMCredentialsFile: env("FCM_CREDENTIALS_FILE", ""),
+		FCMCredentialsJSON: env("FCM_CREDENTIALS_JSON", ""),
+		FCMProjectID:       env("FCM_PROJECT_ID", ""),
 		JPushAppKey:       env("JPUSH_APP_KEY", ""),
 		JPushMasterSecret: env("JPUSH_MASTER_SECRET", ""),
 		AdminSecret: env("ADMIN_SECRET", ""),
+
+		QQBotEnabled:         envBool("QQ_BOT_ENABLED", false),
+		QQBotAppID:           strings.TrimSpace(env("QQ_BOT_APP_ID", "")),
+		QQBotAppSecret:       strings.TrimSpace(env("QQ_BOT_APP_SECRET", "")),
+		QQWebhookPath:        env("QQ_WEBHOOK_PATH", "/api/webhooks/qq"),
+		QQPoetryAPIURL:       env("QQ_POETRY_API_URL", "https://v1.hitokoto.cn/?c=i"),
+		QQNews60sAPIURL:      env("QQ_NEWS_60S_API_URL", "https://60s.viki.moe/v2/60s?encoding=image-proxy"),
+		QQPoetryFontPath:     env("QQ_POETRY_FONT_PATH", ""),
+		QQDailyPoetryHHMM:    env("QQ_DAILY_POETRY_HHMM", "08:00"),
+		QQDailyNewsHHMM:      env("QQ_DAILY_NEWS_HHMM", "08:05"),
+		QQDoorbellCooldownSec: envInt("QQ_DOORBELL_COOLDOWN_SEC", 600),
+		QQBotAddHint:         env("QQ_BOT_ADD_HINT", "请在 QQ 中添加 IHope 机器人，并将绑定码发送给它"),
 	}
 }
 
@@ -126,6 +156,22 @@ func env(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+func envBool(key string, fallback bool) bool {
+	v := strings.TrimSpace(strings.ToLower(os.Getenv(key)))
+	if v == "" {
+		return fallback
+	}
+	switch v {
+	case "1", "true", "yes", "on":
+		return true
+	case "0", "false", "no", "off":
+		return false
+	default:
+		log.Printf("config: invalid %s=%q, use default %v", key, v, fallback)
+		return fallback
+	}
 }
 
 func envInt(key string, fallback int) int {

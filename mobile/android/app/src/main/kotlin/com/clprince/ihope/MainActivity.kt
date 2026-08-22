@@ -5,6 +5,9 @@ import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity() {
+    // 避免 Flutter 3.29+ 将推送 intent 误当 deep link 导致白屏
+    override fun shouldHandleDeeplinking(): Boolean = false
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         MethodChannel(

@@ -1,10 +1,8 @@
 import 'dart:async';
-import 'dart:io';
 
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
-import 'package:permission_handler/permission_handler.dart';
 
 import '../config/push_config.dart';
 import '../models/message.dart';
@@ -14,11 +12,10 @@ import 'remote_push_handler.dart';
 
 export 'remote_push_handler.dart' show firebaseMessagingBackgroundHandler;
 
-/// 离线兜底：FCM 传密文，客户端解密后本地展示明文通知。
-/// 极光（jpush）暂未接入 — 插件与 Gradle 8.14+ 不兼容，见 mobile/README.md。
+/// 离线兜底：FCM（海外）传密文，客户端解密后本地展示明文通知。
+/// 国内推荐 QQ 门铃（不依赖本类）；未配置时仅 WebSocket + 本地通知。
 class PushService {
-  PushService({PushChannel? channel})
-      : _channel = channel ?? pushChannel;
+  PushService({PushChannel? channel}) : _channel = channel ?? pushChannel;
 
   final PushChannel _channel;
 
@@ -33,8 +30,10 @@ class PushService {
 
   String get channelLabel => pushChannelLabel;
 
-  bool get isAvailable =>
-      _channel == PushChannel.fcm && _ready;
+  bool get isAvailable {
+    if (_channel == PushChannel.none) return false;
+    return _ready;
+  }
 
   Future<void> initialize({
     required AuthService auth,
@@ -48,14 +47,6 @@ class PushService {
     _onForegroundMessage = onForegroundMessage;
 
     if (kIsWeb || _channel == PushChannel.none) return;
-
-    if (_channel == PushChannel.jpush) {
-      debugPrint(
-        'PushService: 极光推送暂未集成（jpush_flutter 与 Gradle 8.14+ 不兼容）。'
-        ' 后台仍可用 WebSocket + 本地通知；恢复见 mobile/README.md',
-      );
-      return;
-    }
 
     if (_channel == PushChannel.fcm) {
       await _initFcm();
@@ -115,21 +106,9 @@ class PushService {
   }
 
   Future<bool> enableNotifications() async {
-    if (_channel == PushChannel.jpush) {
-      debugPrint('PushService: 极光未集成，仅启用本地/WebSocket 通知路径');
-      if (_auth == null) return false;
-      if (Platform.isAndroid) {
-        final status = await Permission.notification.request();
-        _permissionGranted = status.isGranted;
-      } else {
-        _permissionGranted = true;
-      }
-      if (!_permissionGranted) return false;
-      await _auth!.setPushNotificationEnabled(true);
-      return true;
-    }
+    if (_auth == null) return false;
 
-    if (!_ready || _auth == null || _channel == PushChannel.none) {
+    if (!_ready || _channel == PushChannel.none) {
       return false;
     }
 
@@ -170,16 +149,19 @@ class PushService {
   }
 
   Future<void> syncToken() async {
-    if (!_ready || _auth == null || _channel != PushChannel.fcm) return;
-    try {
-      final token = await FirebaseMessaging.instance.getToken();
-      if (token == null || token.isEmpty) return;
-      await _auth!.registerPushToken(
-        pushToken: token,
-        platform: pushPlatformTag(_channel),
-      );
-    } catch (e) {
-      debugPrint('PushService: sync token failed: $e');
+    if (!_ready || _auth == null) return;
+
+    if (_channel == PushChannel.fcm) {
+      try {
+        final token = await FirebaseMessaging.instance.getToken();
+        if (token == null || token.isEmpty) return;
+        await _auth!.registerPushToken(
+          pushToken: token,
+          platform: pushPlatformTag(_channel),
+        );
+      } catch (e) {
+        debugPrint('PushService(FCM): sync token failed: $e');
+      }
     }
   }
 

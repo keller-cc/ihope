@@ -698,7 +698,7 @@ class _InviteMembersSheetState extends State<_InviteMembersSheet> {
                           : ListView.separated(
                               controller: widget.scrollController,
                               itemCount: _users.length,
-                              separatorBuilder: (_, __) =>
+                              separatorBuilder: (_, _) =>
                                   const Divider(height: 1),
                               itemBuilder: (context, index) {
                                 final u = _users[index];

@@ -95,6 +95,13 @@ func (h *Hub) IsDeviceOnline(userID, deviceID string) bool {
 	return false
 }
 
+// IsUserOnline 任意设备仍保持 WebSocket。
+func (h *Hub) IsUserOnline(userID string) bool {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return len(h.conns[userID]) > 0
+}
+
 func (h *Hub) NotifyMessage(memberUserIDs []string, msg *message.Message) {
 	const wsCipherLimit = 24 * 1024
 	wireMsg := any(msg)

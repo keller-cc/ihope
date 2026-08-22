@@ -1,7 +1,6 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
-import 'package:cryptography/cryptography.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ihope/crypto/group_epoch.dart';
 import 'package:ihope/crypto/identity.dart';

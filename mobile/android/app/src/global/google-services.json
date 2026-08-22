@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "87647376269",
+    "project_id": "ihope-606b3",
+    "storage_bucket": "ihope-606b3.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:87647376269:android:9dd08aac10ca69be76a3c4",
+        "android_client_info": {
+          "package_name": "com.clprince.ihope"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDtE10Rqd3eYnBF0pP3QtYYxypbW9QnIok"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

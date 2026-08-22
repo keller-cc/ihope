@@ -55,6 +55,8 @@ Desktop.ini
 # Docker 数据卷（本地）
 deploy/data/
 deploy/uploads/
+deploy/firebase-adminsdk*.json
+deploy/*firebase*adminsdk*.json
 backend/uploads/
 uploads/
 *.log

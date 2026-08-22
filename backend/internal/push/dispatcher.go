@@ -14,12 +14,24 @@ type OnlineCheck interface {
 	IsDeviceOnline(userID, deviceID string) bool
 }
 
+// UserOnlineCheck 判断用户是否有任意设备在线。
+type UserOnlineCheck interface {
+	IsUserOnline(userID string) bool
+}
+
+// QQDoorbell 离线 QQ 门铃。
+type QQDoorbell interface {
+	NotifyDoorbell(ctx context.Context, userID, senderHint string)
+}
+
 // Dispatcher 在新消息写入后，向离线设备发送推送。
 type Dispatcher struct {
-	push    *Service
-	users   *user.Repository
-	conv    *conversation.Repository
-	online  OnlineCheck
+	push     *Service
+	users    *user.Repository
+	conv     *conversation.Repository
+	online   OnlineCheck
+	userOn  UserOnlineCheck
+	qq       QQDoorbell
 }
 
 func NewDispatcher(
@@ -29,6 +41,11 @@ func NewDispatcher(
 	online OnlineCheck,
 ) *Dispatcher {
 	return &Dispatcher{push: push, users: users, conv: conv, online: online}
+}
+
+func (d *Dispatcher) SetQQDoorbell(qq QQDoorbell, userOn UserOnlineCheck) {
+	d.qq = qq
+	d.userOn = userOn
 }
 
 func (d *Dispatcher) NotifyNewMessage(ctx context.Context, memberUserIDs []string, msg *message.Message) {
@@ -66,6 +83,10 @@ func (d *Dispatcher) NotifyNewMessage(ctx context.Context, memberUserIDs []strin
 	for _, uid := range memberUserIDs {
 		if uid == msg.SenderID {
 			continue
+		}
+		userOnline := d.userOn != nil && d.userOn.IsUserOnline(uid)
+		if !userOnline && d.qq != nil {
+			d.qq.NotifyDoorbell(ctx, uid, senderName)
 		}
 		targets, err := d.users.ListPushTargets(ctx, uid)
 		if err != nil {

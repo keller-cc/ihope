@@ -404,6 +404,33 @@ class AuthService {
     });
   }
 
+  Future<QqBotStatus> fetchQqBotStatus() async {
+    final data = await api.getJson('/api/users/me/qq-bot');
+    return QqBotStatus.fromJson(data);
+  }
+
+  Future<QqBotBindCode> createQqBotBindCode() async {
+    final data = await api.postJson('/api/users/me/qq-bot/bind-code', body: {});
+    return QqBotBindCode.fromJson(data);
+  }
+
+  Future<QqBotStatus> patchQqBot({
+    bool? doorbellEnabled,
+    bool? poetryEnabled,
+    bool? newsEnabled,
+  }) async {
+    final body = <String, dynamic>{};
+    if (doorbellEnabled != null) body['doorbell_enabled'] = doorbellEnabled;
+    if (poetryEnabled != null) body['poetry_enabled'] = poetryEnabled;
+    if (newsEnabled != null) body['news_enabled'] = newsEnabled;
+    final data = await api.patchJson('/api/users/me/qq-bot', body: body);
+    return QqBotStatus.fromJson(data);
+  }
+
+  Future<void> unbindQqBot() async {
+    await api.deleteJson('/api/users/me/qq-bot');
+  }
+
   ConversationItem? getCachedConversation(String id) => _conversationCache[id];
 
   Future<ConversationItem?> conversationForId(String id) async {
@@ -2489,5 +2516,52 @@ class AuthService {
       return true;
     }
     return false;
+  }
+}
+
+class QqBotStatus {
+  const QqBotStatus({
+    required this.botEnabled,
+    required this.bound,
+    required this.doorbellEnabled,
+    required this.poetryEnabled,
+    required this.newsEnabled,
+  });
+
+  final bool botEnabled;
+  final bool bound;
+  final bool doorbellEnabled;
+  final bool poetryEnabled;
+  final bool newsEnabled;
+
+  factory QqBotStatus.fromJson(Map<String, dynamic> json) {
+    return QqBotStatus(
+      botEnabled: json['bot_enabled'] == true,
+      bound: json['bound'] == true,
+      doorbellEnabled: json['doorbell_enabled'] != false,
+      poetryEnabled: json['poetry_enabled'] != false,
+      newsEnabled: json['news_enabled'] != false,
+    );
+  }
+}
+
+class QqBotBindCode {
+  const QqBotBindCode({
+    required this.code,
+    required this.expiresAt,
+    required this.botAddHint,
+  });
+
+  final String code;
+  final String expiresAt;
+  final String botAddHint;
+
+  factory QqBotBindCode.fromJson(Map<String, dynamic> json) {
+    return QqBotBindCode(
+      code: json['code'] is String ? json['code'] as String : '',
+      expiresAt: json['expires_at'] is String ? json['expires_at'] as String : '',
+      botAddHint:
+          json['bot_add_hint'] is String ? json['bot_add_hint'] as String : '',
+    );
   }
 }
