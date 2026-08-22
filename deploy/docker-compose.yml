@@ -18,7 +18,9 @@ services:
       POSTGRES_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
       POSTGRES_DB: ${POSTGRES_DB:-ihope}
     volumes:
-      - postgres_data:/var/lib/postgresql/data:z
+      - postgres_data:/var/lib/postgresql/data:Z
+    security_opt:
+      - label=disable
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ihope} -d ${POSTGRES_DB:-ihope}"]
       interval: 5s
@@ -42,8 +44,10 @@ services:
       ADMIN_WEB_DIR: /app/admin
       FCM_CREDENTIALS_FILE: /run/secrets/fcm-service-account.json
     volumes:
-      - uploads_data:/data/uploads:z
+      - uploads_data:/data/uploads:Z
       - ${FCM_CREDENTIALS_HOST_FILE:-./fcm-placeholder.json}:/run/secrets/fcm-service-account.json:ro
+    security_opt:
+      - label=disable
     depends_on:
       postgres:
         condition: service_healthy

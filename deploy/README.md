@@ -204,7 +204,7 @@ curl http://localhost/api/health
 | `backend` | 镜像自 `backend/Dockerfile`；上传目录卷 `uploads_data` |
 | `nginx` | 反代 REST + `/ws`；`client_max_body_size 320m` |
 
-**CentOS / RHEL / SELinux：** 若 Postgres 日志出现 `Operation not permitted` 写 `pg_wal`，compose 已为数据卷加 `:z` 标签。仍失败时执行 `getenforce`；临时验证可 `sudo setenforce 0`，长期可 `sudo setsebool -P container_manage_cgroup on` 或保持 compose 中 `:z` 后 `docker compose down -v && docker compose up -d`。
+**CentOS / RHEL / SELinux：** 若 Postgres 日志出现 `Operation not permitted` 写 `pg_wal`，compose 已为 postgres/backend 加 `security_opt: label=disable` 与卷 `:Z`。仍失败时临时 `sudo setenforce 0` 验证，然后 `docker compose down -v && docker compose up -d`。
 
 **生产 `.env` 注意：**
 
