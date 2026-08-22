@@ -76,7 +76,7 @@ REFRESH_TOKEN_TTL_DAYS=30
 
 定义 **一个服务**：`postgres`。
 
-- 镜像：`postgres:16-alpine`
+- 镜像：`postgres:12-alpine`（生产；兼容 CentOS 7 等旧内核 VPS。本地开发见 `docker-compose.dev.yml` 的 16）
 - 容器名：`ihope-postgres-dev`
 - 读取同目录 `.env` 中的 `DB_PASSWORD`、`POSTGRES_USER`、`POSTGRES_DB`、`DB_PORT`
 - 把容器内 `5432` 映射到宿主机 `${DB_PORT}`
@@ -200,7 +200,7 @@ curl http://localhost/api/health
 
 | 服务 | 说明 |
 |------|------|
-| `postgres` | 数据卷 `postgres_data`，不暴露到公网 |
+| `postgres` | 数据卷 `postgres_data`；镜像 `postgres:12-alpine`（CentOS 7 兼容） |
 | `backend` | 镜像自 `backend/Dockerfile`；上传目录卷 `uploads_data` |
 | `nginx` | 反代 REST + `/ws`；`client_max_body_size 320m` |
 

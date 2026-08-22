@@ -5,18 +5,20 @@
 #   cp ..\.env.example .env
 #   docker compose up -d --build
 #   curl http://localhost/api/health
+# 生产 compose 使用 postgres:12-alpine（兼容 CentOS 7 内核 3.10）；本地开发 dev compose 仍用 16。
 # =============================================================================
 
 services:
   postgres:
-    image: postgres:16-alpine
+    image: postgres:12-alpine
     container_name: ihope-postgres
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-ihope}
       POSTGRES_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
       POSTGRES_DB: ${POSTGRES_DB:-ihope}
+      PGDATA: /var/lib/postgresql/data/pgdata
     volumes:
-      - postgres_data:/var/lib/postgresql/data:Z
+      - postgres_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ihope} -d ${POSTGRES_DB:-ihope}"]
       interval: 5s
@@ -40,7 +42,7 @@ services:
       ADMIN_WEB_DIR: /app/admin
       FCM_CREDENTIALS_FILE: /run/secrets/fcm-service-account.json
     volumes:
-      - uploads_data:/data/uploads:Z
+      - uploads_data:/data/uploads
       - ${FCM_CREDENTIALS_HOST_FILE:-./fcm-placeholder.json}:/run/secrets/fcm-service-account.json:ro
     depends_on:
       postgres:
