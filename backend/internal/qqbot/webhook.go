@@ -38,11 +38,38 @@ func (v *validationBody) UnmarshalJSON(data []byte) error {
 	if len(raw.EventTs) == 0 || string(raw.EventTs) == "null" {
 		return fmt.Errorf("missing event_ts")
 	}
-	if raw.EventTs[0] == '"' {
-		return json.Unmarshal(raw.EventTs, &v.EventTs)
+	eventTs, err := parseQQEventTs(raw.EventTs)
+	if err != nil {
+		return err
 	}
-	v.EventTs = strings.TrimSpace(string(raw.EventTs))
+	v.EventTs = eventTs
 	return nil
+}
+
+// parseQQEventTs 保留 JSON 数字的十进制表示（避免 float 科学计数法影响签名）。
+func parseQQEventTs(raw json.RawMessage) (string, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return "", fmt.Errorf("missing event_ts")
+	}
+	if raw[0] == '"' {
+		var s string
+		if err := json.Unmarshal(raw, &s); err != nil {
+			return "", err
+		}
+		if s == "" {
+			return "", fmt.Errorf("empty event_ts")
+		}
+		return s, nil
+	}
+	var n json.Number
+	if err := json.Unmarshal(raw, &n); err != nil {
+		return "", err
+	}
+	s := n.String()
+	if s == "" {
+		return "", fmt.Errorf("empty event_ts")
+	}
+	return s, nil
 }
 
 type c2cMessageBody struct {
@@ -76,6 +103,7 @@ func (s *Service) HandleWebhook(w http.ResponseWriter, r *http.Request) {
 	if payload.Op == 13 {
 		var v validationBody
 		if err := json.Unmarshal(payload.D, &v); err != nil || v.PlainToken == "" || v.EventTs == "" {
+			log.Printf("qqbot validation parse: err=%v body=%s", err, string(payload.D))
 			http.Error(w, "invalid validation", http.StatusBadRequest)
 			return
 		}
@@ -93,7 +121,14 @@ func (s *Service) HandleWebhook(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "encode failed", http.StatusInternalServerError)
 			return
 		}
-		log.Printf("qqbot webhook: validation ok appid=%s ua=%s", r.Header.Get("X-Bot-Appid"), r.Header.Get("User-Agent"))
+		log.Printf(
+			"qqbot webhook: validation ok appid=%s ua=%s event_ts=%s plain_token=%s… sig=%s",
+			r.Header.Get("X-Bot-Appid"),
+			r.Header.Get("User-Agent"),
+			v.EventTs,
+			truncate(v.PlainToken, 8),
+			sig,
+		)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write(rsp)
@@ -126,7 +161,7 @@ func (s *Service) dispatchEvent(payload WebhookPayload) {
 	}
 }
 
-// signValidation：Secret 填充至 ≥32 字节取前 32 作 seed，Ed25519 签 event_ts+plain_token。
+// signValidation：与官方文档一致 — Secret 填充至 32 字节 seed，GenerateKey 后签 event_ts+plain_token。
 func signValidation(secret, eventTs, plainToken string) (string, error) {
 	secret = strings.TrimSpace(secret)
 	if secret == "" {
@@ -136,7 +171,11 @@ func signValidation(secret, eventTs, plainToken string) (string, error) {
 	for len(seed) < ed25519.SeedSize {
 		seed = strings.Repeat(seed, 2)
 	}
-	privateKey := ed25519.NewKeyFromSeed([]byte(seed[:ed25519.SeedSize]))
+	seed = seed[:ed25519.SeedSize]
+	_, privateKey, err := ed25519.GenerateKey(strings.NewReader(seed))
+	if err != nil {
+		return "", fmt.Errorf("ed25519 generate key: %w", err)
+	}
 	var msg bytes.Buffer
 	msg.WriteString(eventTs)
 	msg.WriteString(plainToken)

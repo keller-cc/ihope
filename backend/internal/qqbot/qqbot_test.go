@@ -59,6 +59,16 @@ func TestValidationBodyEventTsNumber(t *testing.T) {
 	}
 }
 
+func TestValidationBodyEventTsString(t *testing.T) {
+	var v validationBody
+	if err := json.Unmarshal([]byte(`{"plain_token":"abc","event_ts":"1725442341"}`), &v); err != nil {
+		t.Fatal(err)
+	}
+	if v.EventTs != "1725442341" || v.PlainToken != "abc" {
+		t.Fatalf("%+v", v)
+	}
+}
+
 func TestParseExpiresIn(t *testing.T) {
 	if got := parseExpiresIn(json.RawMessage(`7200`)); got != 7200 {
 		t.Fatalf("int: %d", got)
