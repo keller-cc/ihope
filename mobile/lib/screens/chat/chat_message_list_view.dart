@@ -10,7 +10,6 @@ import 'chat_scroll_coordinator.dart';
 class ChatMessageListView extends StatefulWidget {
   const ChatMessageListView({
     super.key,
-    required this.loading,
     required this.error,
     required this.messages,
     required this.conversation,
@@ -29,7 +28,6 @@ class ChatMessageListView extends StatefulWidget {
     this.onAnnouncementTap,
   });
 
-  final bool loading;
   final String? error;
   final List<ChatMessage> messages;
   final ConversationItem conversation;
@@ -93,8 +91,9 @@ class _ChatMessageListViewState extends State<ChatMessageListView> {
 
   @override
   Widget build(BuildContext context) {
-    if (widget.loading) return const Center(child: CircularProgressIndicator());
-    if (widget.error != null) return Center(child: Text(widget.error!));
+    if (widget.error != null && widget.messages.isEmpty) {
+      return Center(child: Text(widget.error!));
+    }
 
     if (widget.messages.isEmpty) {
       return RefreshIndicator(
@@ -145,7 +144,12 @@ class _ChatMessageListViewState extends State<ChatMessageListView> {
 
     return NotificationListener<ScrollNotification>(
       onNotification: (notification) {
+        if (notification is ScrollStartNotification &&
+            notification.dragDetails != null) {
+          scrollCoord.setUserScrollActive(true);
+        }
         if (notification is ScrollEndNotification) {
+          scrollCoord.setUserScrollActive(false);
           scrollCoord.onScrollIdle();
         }
         return false;
@@ -197,7 +201,6 @@ class _ChatMessageListViewState extends State<ChatMessageListView> {
                 ),
               ),
             ),
-            const SliverFillRemaining(hasScrollBody: false, child: SizedBox.shrink()),
           ],
         ),
       ),

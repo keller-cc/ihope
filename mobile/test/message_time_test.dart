@@ -39,6 +39,17 @@ void main() {
       expect(MessageTimeFormat.formatBubble(today), '14:08');
     });
 
+    test('clock times stay 24-hour including midnight and evening', () {
+      final evening = DateTime(2026, 8, 23, 15, 30);
+      final midnight = DateTime(2026, 8, 23, 0, 5);
+      final late = DateTime(2026, 8, 23, 23, 59);
+      expect(MessageTimeFormat.formatHm(evening), '15:30');
+      expect(MessageTimeFormat.formatHm(midnight), '00:05');
+      expect(MessageTimeFormat.formatHm(late), '23:59');
+      expect(MessageTimeFormat.formatHm(evening), isNot(contains('下午')));
+      expect(MessageTimeFormat.formatHm(evening), isNot(contains('PM')));
+    });
+
     test('formats list weekday in Chinese', () async {
       await initializeDateFormatting('zh_CN');
       final now = DateTime.now();

@@ -80,7 +80,7 @@ class _VerifyEmailPendingScreenState extends State<VerifyEmailPendingScreen> {
         padding: const EdgeInsets.all(24),
         children: [
           const Text(
-            '我们已向你的邮箱发送了验证链接。请打开邮件并点击链接完成激活，然后返回 App 登录。',
+            '我们已向你的邮箱发送了验证链接。请打开邮件，在网页里点击「完成验证」，然后返回 App 登录。',
           ),
           const SizedBox(height: 12),
           Text(

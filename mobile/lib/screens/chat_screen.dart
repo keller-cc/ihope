@@ -369,10 +369,7 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<void> _loadHistory() async {
     final epoch = _historyEpoch;
     if (_messages.isEmpty) {
-      setState(() {
-        _loading = true;
-        _error = null;
-      });
+      setState(() => _error = null);
     }
 
     try {
@@ -431,11 +428,18 @@ class _ChatScreenState extends State<ChatScreen> {
       final cached = await widget.auth.loadCachedMessages(_conversation.id);
       final list = await _thread.resolve(cached: cached, fetchRemote: true);
       if (_isStale(epoch) || !mounted) return;
+      if (!_scrollCoord.tailPinned) {
+        _scrollCoord.beginScrollLockForTailInsert();
+      }
       setState(
         () => _messages = ChatThreadLoader.preserveLocalOutgoing(list, _messages),
       );
       await _thread.cacheIfReady(_messages);
-      if (_scrollCoord.tailPinned) _scrollCoord.stickToTailIfPinned();
+      if (!_scrollCoord.tailPinned) {
+        _scrollCoord.endScrollLockAfterTailInsert();
+      } else if (!_scrollCoord.isUserScrolling) {
+        _scrollCoord.stickToTailIfPinned();
+      }
     } catch (e) {
       if (mounted && _messages.isEmpty) setState(() => _error = e.toString());
     }
@@ -497,37 +501,47 @@ class _ChatScreenState extends State<ChatScreen> {
     _showSnack(_friendlySendError(error));
   }
 
+  bool _isMatchableOutgoing(ChatMessage m) =>
+      m.isLocalOutgoing &&
+      (m.sendStatus == MessageSendStatus.sending ||
+          m.sendStatus == MessageSendStatus.failed);
+
   int? _outgoingEchoIndex(List<ChatMessage> list, ChatMessage echo, String meId) {
     if (echo.senderId != meId) return null;
     if (echo.fileId != null && echo.fileId!.isNotEmpty) {
       final byFile = list.indexWhere(
-        (m) =>
-            m.isLocalOutgoing &&
-            m.sendStatus == MessageSendStatus.sending &&
-            m.fileId == echo.fileId,
+        (m) => _isMatchableOutgoing(m) && m.fileId == echo.fileId,
       );
       if (byFile >= 0) return byFile;
     }
     if (echo.type == 'text' && echo.plaintext != null) {
       final byText = list.indexWhere(
         (m) =>
-            m.isLocalOutgoing &&
-            m.sendStatus == MessageSendStatus.sending &&
+            _isMatchableOutgoing(m) &&
             m.type == 'text' &&
             m.plaintext == echo.plaintext,
       );
       if (byText >= 0) return byText;
     }
     final byType = list.indexWhere(
-      (m) =>
-          m.isLocalOutgoing &&
-          m.sendStatus == MessageSendStatus.sending &&
-          m.type == echo.type,
+      (m) => _isMatchableOutgoing(m) && m.type == echo.type,
     );
     return byType >= 0 ? byType : null;
   }
 
   Future<void> _onSendRetry(ChatMessage msg) async {
+    final fileId = msg.fileId;
+    if (fileId != null && fileId.isNotEmpty) {
+      for (final existing in _messages) {
+        if (!existing.isLocalOutgoing && existing.fileId == fileId) {
+          _onMessageSent(
+            msg.id,
+            existing.copyWith(plaintext: msg.plaintext ?? existing.plaintext),
+          );
+          return;
+        }
+      }
+    }
     await _outgoing.resend(msg);
   }
 
@@ -931,7 +945,6 @@ class _ChatScreenState extends State<ChatScreen> {
                 clipBehavior: Clip.none,
                 children: [
                   ChatMessageListView(
-                    loading: _loading,
                     error: _error,
                     messages: _messages,
                     conversation: _conversation,

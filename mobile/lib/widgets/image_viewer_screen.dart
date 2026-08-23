@@ -437,16 +437,22 @@ class _ImageViewerContentState extends State<_ImageViewerContent> {
       );
     }
 
-    return InteractiveViewer(
-      minScale: 0.5,
-      maxScale: 4,
-      child: Center(
-        child: Image.memory(
-          bytes,
-          fit: BoxFit.contain,
-          gaplessPlayback: true,
-          filterQuality: FilterQuality.high,
-          isAntiAlias: true,
+    return GestureDetector(
+      onTap: () => Navigator.of(context).maybePop(),
+      behavior: HitTestBehavior.opaque,
+      child: SizedBox.expand(
+        child: InteractiveViewer(
+          minScale: 0.2,
+          maxScale: 12,
+          child: SizedBox.expand(
+            child: Image.memory(
+              bytes,
+              fit: BoxFit.contain,
+              gaplessPlayback: true,
+              filterQuality: FilterQuality.high,
+              isAntiAlias: true,
+            ),
+          ),
         ),
       ),
     );

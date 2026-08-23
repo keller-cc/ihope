@@ -117,6 +117,8 @@ class AuthService {
   final _realtimeRestoredController = StreamController<void>.broadcast();
   final _conversationPatchedController =
       StreamController<ConversationItem>.broadcast();
+  final _pinsChangedController = StreamController<void>.broadcast();
+  final _localDataClearedController = StreamController<void>.broadcast();
 
   static const _refreshSkew = Duration(minutes: 2);
 
@@ -128,6 +130,12 @@ class AuthService {
   /// 本地会话元数据变更（如群头像上传），供会话列表即时刷新。
   Stream<ConversationItem> get onConversationPatched =>
       _conversationPatchedController.stream;
+
+  /// 置顶变更，供首页立刻重排。
+  Stream<void> get onPinsChanged => _pinsChangedController.stream;
+
+  /// 本地缓存/会话数据被清除。
+  Stream<void> get onLocalDataCleared => _localDataClearedController.stream;
 
   /// 群 GMK 就绪（当前打开的会话可据此重新解密）。
   Stream<String> get onGroupKeyReady => groupKeys.onKeysReady;
@@ -471,9 +479,40 @@ class AuthService {
     await api.deleteJson('/api/users/me/qq-bot');
   }
 
-  Future<DailyQuote> fetchTodayQuote() async {
+  DailyQuote? _todayQuoteMem;
+
+  Future<DailyQuote?> peekStoredTodayQuote() async {
+    final today = DailyQuote.dateKey();
+    final mem = _todayQuoteMem;
+    if (mem != null && mem.date == today && mem.hasContent) return mem;
+    final raw = await storage.readDailyQuoteJson(today);
+    if (raw == null) return null;
+    final stored = DailyQuote.fromJson(raw);
+    if (!stored.hasContent) return null;
+    _todayQuoteMem = stored.date == today
+        ? stored
+        : DailyQuote(body: stored.body, author: stored.author, date: today);
+    return _todayQuoteMem;
+  }
+
+  Future<DailyQuote> fetchTodayQuote({bool force = false}) async {
+    if (!force) {
+      final stored = await peekStoredTodayQuote();
+      if (stored != null) return stored;
+    }
+    final today = DailyQuote.dateKey();
     final data = await api.getJson('/api/quotes/today');
-    return DailyQuote.fromJson(data);
+    final parsed = DailyQuote.fromJson(data);
+    final quote = (parsed.date == null || parsed.date!.isEmpty)
+        ? DailyQuote(body: parsed.body, author: parsed.author, date: today)
+        : parsed;
+    if (quote.hasContent) {
+      _todayQuoteMem = quote.date == today
+          ? quote
+          : DailyQuote(body: quote.body, author: quote.author, date: today);
+      await storage.writeDailyQuoteJson(today, _todayQuoteMem!.toJson());
+    }
+    return quote;
   }
 
   ConversationItem? getCachedConversation(String id) => _conversationCache[id];
@@ -714,6 +753,9 @@ class AuthService {
       ids.remove(conversationId);
     }
     await storage.writePinnedConversations(user.id, ids);
+    if (!_pinsChangedController.isClosed) {
+      _pinsChangedController.add(null);
+    }
   }
 
   /// 是否处于会话列表首页（无聊天/设置等子页压栈）；QQ 式横幅仅在此展示。
@@ -943,8 +985,14 @@ class AuthService {
       try {
         final remote = await convApi.listMessages(fresh.id, limit: 100);
         final merged = _mergeMessageCaches(remote, cached);
-        final visible = fresh.messagesVisibleToMember(me.id, merged);
+        var visible = fresh.messagesVisibleToMember(me.id, merged);
         if (visible.isNotEmpty) {
+          if (fresh.type == 'group') {
+            try {
+              await ensureGroupKeysForMessages(fresh, visible);
+            } catch (_) {}
+          }
+          visible = await decryptMessagesLocal(fresh, visible);
           await cacheMessages(fresh.id, visible);
           synced = true;
         }
@@ -1018,7 +1066,7 @@ class AuthService {
     }
     await ensureValidAccessToken();
     await ensureCryptoReady();
-    var fresh = await _refreshConversation(conversation);
+    var fresh = _conversationCache[conversation.id] ?? conversation;
     if (fresh.type == 'group') {
       fresh = await groupKeys.maybeRotateBeforeSend(fresh);
       await groupKeys.ensureReadyForSend(fresh);
@@ -1481,6 +1529,9 @@ class AuthService {
     if (me != null) {
       await storage.deleteLegacyMessageCachesForUser(me.id);
     }
+    if (!_localDataClearedController.isClosed) {
+      _localDataClearedController.add(null);
+    }
   }
 
   /// 清除更广的本地数据（含会话快照、已读游标等），保留登录与加密密钥。
@@ -1495,6 +1546,9 @@ class AuthService {
     _conversationReadAtCache.clear();
     _unreadCounts.clear();
     _messageCacheMigrated.remove(me.id);
+    if (!_localDataClearedController.isClosed) {
+      _localDataClearedController.add(null);
+    }
   }
 
   Future<ChatMessage> _compactMessageForCache(ChatMessage msg) async {
@@ -2732,6 +2786,16 @@ class DailyQuote {
   final String? author;
   final String? date;
 
+  bool get hasContent => body.trim().isNotEmpty;
+
+  static String dateKey([DateTime? now]) {
+    final d = now ?? DateTime.now();
+    final y = d.year.toString().padLeft(4, '0');
+    final m = d.month.toString().padLeft(2, '0');
+    final day = d.day.toString().padLeft(2, '0');
+    return '$y-$m-$day';
+  }
+
   factory DailyQuote.fromJson(Map<String, dynamic> json) {
     return DailyQuote(
       body: (json['body'] as String?)?.trim() ?? '',
@@ -2739,6 +2803,12 @@ class DailyQuote {
       date: json['date'] as String?,
     );
   }
+
+  Map<String, dynamic> toJson() => {
+        'body': body,
+        if (author != null) 'author': author,
+        if (date != null) 'date': date,
+      };
 }
 
 class QqBotBindCode {

@@ -78,6 +78,32 @@ void main() {
           plaintext: id,
         );
 
+    test('drops failed local when server echo already has same fileId', () {
+      final failed = ChatMessage(
+        id: '${ChatMessage.localIdPrefix}img',
+        conversationId: 'c1',
+        senderId: 'u1',
+        type: 'image',
+        ciphertext: '',
+        createdAt: DateTime.utc(2026, 1, 1, 12),
+        plaintext: 'img',
+        fileId: 'file-1',
+        sendStatus: MessageSendStatus.failed,
+      );
+      final echoed = ChatMessage(
+        id: 'server-img',
+        conversationId: 'c1',
+        senderId: 'u1',
+        type: 'image',
+        ciphertext: 'x',
+        createdAt: DateTime.utc(2026, 1, 1, 12),
+        plaintext: 'img',
+        fileId: 'file-1',
+      );
+      final merged = ChatThreadLoader.preserveLocalOutgoing([echoed], [failed]);
+      expect(merged.map((m) => m.id), ['server-img']);
+    });
+
     test('keeps sending and failed local messages after history merge', () {
       final pending = local('${ChatMessage.localIdPrefix}1', MessageSendStatus.sending);
       final failed = local('${ChatMessage.localIdPrefix}2', MessageSendStatus.failed);

@@ -364,14 +364,12 @@ class ChatOutgoingController {
   Future<void> pickImage({ImageSource source = ImageSource.gallery}) async {
     try {
       final picker = ImagePicker();
-      final file = source == ImageSource.gallery
-          ? await picker.pickImage(source: source)
-          : await picker.pickImage(
-              source: source,
-              maxWidth: 1920,
-              maxHeight: 1920,
-              imageQuality: 85,
-            );
+      final file = await picker.pickImage(
+        source: source,
+        maxWidth: 1920,
+        maxHeight: 1920,
+        imageQuality: 85,
+      );
       if (file == null) return;
       final name = file.name.isNotEmpty
           ? file.name

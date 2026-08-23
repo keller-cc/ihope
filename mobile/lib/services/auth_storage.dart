@@ -13,6 +13,7 @@ const _kUserProfile = 'user_profile';
 const _kPushNotifications = 'push_notifications_enabled';
 const _kServerBaseUrl = 'server_base_url';
 const _kLastLoginId = 'last_login_identifier';
+const _kDailyQuotes = 'daily_quotes_by_date';
 
 class AuthStorage {
   AuthStorage({FlutterSecureStorage? storage})
@@ -688,5 +689,41 @@ class AuthStorage {
 
   Future<void> _writeSeed(String key, Uint8List seed) async {
     await _storage.write(key: key, value: base64Encode(seed));
+  }
+
+  Future<Map<String, Map<String, dynamic>>> readDailyQuotesJson() async {
+    final raw = await _storage.read(key: _kDailyQuotes);
+    if (raw == null || raw.isEmpty) return {};
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return {};
+      final out = <String, Map<String, dynamic>>{};
+      decoded.forEach((key, value) {
+        if (value is Map<String, dynamic>) {
+          out['$key'] = value;
+        } else if (value is Map) {
+          out['$key'] = Map<String, dynamic>.from(value);
+        }
+      });
+      return out;
+    } catch (_) {
+      return {};
+    }
+  }
+
+  Future<Map<String, dynamic>?> readDailyQuoteJson(String date) async {
+    if (date.isEmpty) return null;
+    final all = await readDailyQuotesJson();
+    return all[date];
+  }
+
+  Future<void> writeDailyQuoteJson(
+    String date,
+    Map<String, dynamic> json,
+  ) async {
+    if (date.isEmpty) return;
+    final all = await readDailyQuotesJson();
+    all[date] = json;
+    await _storage.write(key: _kDailyQuotes, value: jsonEncode(all));
   }
 }

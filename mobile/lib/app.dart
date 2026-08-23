@@ -133,6 +133,14 @@ class _IHopeAppState extends State<IHopeApp> with WidgetsBindingObserver {
     return MaterialApp(
       title: 'IHope',
       navigatorObservers: [appRouteObserver],
+      builder: (context, child) {
+        return MediaQuery(
+          data: MediaQuery.of(context).copyWith(
+            alwaysUse24HourFormat: true,
+          ),
+          child: child ?? const SizedBox.shrink(),
+        );
+      },
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.indigo),
         useMaterial3: true,

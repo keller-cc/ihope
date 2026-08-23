@@ -464,12 +464,6 @@ func (r *Repository) ConsumePasswordResetToken(ctx context.Context, tokenHash st
 
 func (r *Repository) CreateEmailVerificationToken(ctx context.Context, userID, tokenHash string, expiresAt time.Time) error {
 	_, err := r.pool.Exec(ctx, `
-		DELETE FROM email_verification_tokens
-		WHERE user_id = $1 AND used_at IS NULL`, userID)
-	if err != nil {
-		return err
-	}
-	_, err = r.pool.Exec(ctx, `
 		INSERT INTO email_verification_tokens (user_id, token_hash, expires_at)
 		VALUES ($1, $2, $3)`, userID, tokenHash, expiresAt)
 	return err

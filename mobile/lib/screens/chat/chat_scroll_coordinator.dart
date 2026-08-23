@@ -195,10 +195,19 @@ class ChatScrollCoordinator extends ChangeNotifier {
     _notifyChanged(immediate: true);
   }
 
+  /// 用户手指还在拖动时禁止程序化回跳，避免「往下划、列表往上顶」。
+  bool _userScrollActive = false;
+
+  void setUserScrollActive(bool active) {
+    _userScrollActive = active;
+  }
+
+  bool get isUserScrolling => _userScrollActive;
+
   double get _stickThreshold {
-    if (!scrollController.hasClients) return 120;
+    if (!scrollController.hasClients) return 64;
     final v = scrollController.position.viewportDimension;
-    return math.max(120, v * 0.35);
+    return math.max(48, v * 0.08);
   }
 
   bool get isAtBottom {
@@ -598,8 +607,12 @@ class ChatScrollCoordinator extends ChangeNotifier {
 
   void endScrollLockAfterTailInsert() {
     if (_scrollLockPixels == null) return;
+    if (_userScrollActive) {
+      _clearScrollLock();
+      return;
+    }
     void once() {
-      if (!scrollController.hasClients) {
+      if (!scrollController.hasClients || _userScrollActive) {
         _clearScrollLock();
         return;
       }
@@ -633,9 +646,11 @@ class ChatScrollCoordinator extends ChangeNotifier {
   }
 
   void stickToTailIfPinned() {
-    if (!tailPinned) return;
+    if (!tailPinned || _userScrollActive) return;
     void once() {
-      if (!scrollController.hasClients || !tailPinned) return;
+      if (!scrollController.hasClients || !tailPinned || _userScrollActive) {
+        return;
+      }
       if (scrollController.position.pixels > 1) {
         _suppressScrollHandling = true;
         scrollController.jumpTo(scrollController.position.minScrollExtent);

@@ -9,11 +9,12 @@ class ImageThumbnail {
   /// 旧消息极小缩略图（仅 thumb_b64）。
   static const thumbMaxEdge = 200;
 
-  /// 气泡/查看器预览：与原图相同像素尺寸，仅 JPEG 压缩降体积。
-  static const previewQuality = 82;
+  /// 气泡预览边长；原图仍走附件上传，避免把整图塞进 E2EE 明文。
+  static const previewMaxEdge = 480;
+  static const previewQuality = 72;
 
   static Future<Uint8List> generatePreview(List<int> imageBytes) async {
-    return _compressSameDimensions(imageBytes, quality: previewQuality);
+    return _resize(imageBytes, previewMaxEdge, quality: previewQuality);
   }
 
   /// 解码图片像素尺寸（用于预览与原图对齐）。
@@ -25,17 +26,6 @@ class ImageThumbnail {
 
   static Future<Uint8List> generate(List<int> imageBytes) async {
     return _resize(imageBytes, thumbMaxEdge, quality: 70);
-  }
-
-  static Future<Uint8List> _compressSameDimensions(
-    List<int> imageBytes, {
-    required int quality,
-  }) async {
-    final decoded = img.decodeImage(Uint8List.fromList(imageBytes));
-    if (decoded == null) {
-      throw StateError('无法解析图片');
-    }
-    return Uint8List.fromList(img.encodeJpg(decoded, quality: quality));
   }
 
   static Future<Uint8List> _resize(

@@ -61,4 +61,41 @@ void main() {
     );
     expect(none, isNull);
   });
+
+  test('filterByDay only returns messages on that local day', () {
+    final messages = [
+      ChatMessage(
+        id: 'm1',
+        conversationId: 'c1',
+        senderId: 'u1',
+        type: 'text',
+        ciphertext: 'c',
+        createdAt: DateTime(2026, 3, 15, 9, 30),
+        plaintext: 'morning',
+      ),
+      ChatMessage(
+        id: 'm2',
+        conversationId: 'c1',
+        senderId: 'u1',
+        type: 'text',
+        ciphertext: 'c',
+        createdAt: DateTime(2026, 3, 15, 20, 0),
+        plaintext: 'evening',
+      ),
+      ChatMessage(
+        id: 'm3',
+        conversationId: 'c1',
+        senderId: 'u1',
+        type: 'text',
+        ciphertext: 'c',
+        createdAt: DateTime(2026, 3, 16, 8, 0),
+        plaintext: 'next',
+      ),
+    ];
+
+    final onDay = ChatHistoryLoader.filterByDay(messages, DateTime(2026, 3, 15));
+    expect(onDay.map((m) => m.id), ['m1', 'm2']);
+    expect(ChatHistoryLoader.hasMessagesOnDay(messages, DateTime(2026, 3, 15)), isTrue);
+    expect(ChatHistoryLoader.hasMessagesOnDay(messages, DateTime(2026, 3, 17)), isFalse);
+  });
 }

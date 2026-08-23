@@ -1,18 +1,25 @@
 import 'package:flutter/material.dart';
 
+import '../../models/conversation.dart';
 import '../../models/message.dart';
+import '../../services/auth_service.dart';
 import 'chat_history_loader.dart';
+import 'widgets/chat_history_result_tile.dart';
 
-/// 按月份日历查找，选中日期跳转到该日之后最近一条消息。
+/// 按月份日历查找；有消息的日子点进去在本页展示当天记录（QQ 风格）。
 class ChatHistoryDateTab extends StatefulWidget {
   const ChatHistoryDateTab({
     super.key,
+    required this.auth,
+    required this.conversation,
     required this.messages,
     required this.onPick,
     required this.onEmpty,
     this.loadMessages,
   });
 
+  final AuthService auth;
+  final ConversationItem conversation;
   final List<ChatMessage> messages;
   final void Function(String messageId) onPick;
   final VoidCallback onEmpty;
@@ -24,14 +31,21 @@ class ChatHistoryDateTab extends StatefulWidget {
 
 class _ChatHistoryDateTabState extends State<ChatHistoryDateTab> {
   DateTime? _selected;
+  List<ChatMessage> _dayMessages = const [];
+  bool _showingDay = false;
+
+  List<ChatMessage> get _all => widget.messages;
+
+  Set<DateTime> get _daysWithMessages =>
+      ChatHistoryLoader.daysWithMessages(_all);
 
   List<DateTime> get _months {
     final now = DateTime.now();
-    if (widget.messages.isEmpty) {
+    if (_all.isEmpty) {
       return [DateTime(now.year, now.month)];
     }
-    var earliest = widget.messages.first.createdAt.toLocal();
-    for (final m in widget.messages) {
+    var earliest = _all.first.createdAt.toLocal();
+    for (final m in _all) {
       final t = m.createdAt.toLocal();
       if (t.isBefore(earliest)) earliest = t;
     }
@@ -47,25 +61,123 @@ class _ChatHistoryDateTabState extends State<ChatHistoryDateTab> {
   }
 
   Future<void> _onDayTap(DateTime day) async {
-    setState(() => _selected = day);
     var messages = widget.messages;
     if (messages.isEmpty && widget.loadMessages != null) {
       messages = await widget.loadMessages!();
       if (!mounted) return;
     }
-    final hit = ChatHistoryLoader.nearestOnOrAfter(messages, day);
-    if (hit == null) {
+    final onDay = ChatHistoryLoader.filterByDay(messages, day);
+    if (onDay.isEmpty) {
+      setState(() {
+        _selected = day;
+        _showingDay = false;
+        _dayMessages = const [];
+      });
       widget.onEmpty();
       return;
     }
-    widget.onPick(hit.id);
+    setState(() {
+      _selected = day;
+      _showingDay = true;
+      _dayMessages = onDay;
+    });
+  }
+
+  void _backToCalendar() {
+    setState(() {
+      _showingDay = false;
+      _dayMessages = const [];
+    });
+  }
+
+  String _nameFor(ChatMessage msg) {
+    final me = widget.auth.currentUser;
+    if (me != null && msg.senderId == me.id) return me.username;
+    return widget.auth.groupMemberUsername(widget.conversation, msg.senderId);
+  }
+
+  String? _avatarFor(ChatMessage msg) {
+    final me = widget.auth.currentUser;
+    if (me != null && msg.senderId == me.id) return me.avatarUrl;
+    return widget.auth.groupMemberAvatarUrl(widget.conversation, msg.senderId);
   }
 
   @override
   Widget build(BuildContext context) {
+    final body = _showingDay && _selected != null
+        ? _buildDayMessages(context, _selected!)
+        : _buildCalendar(context);
+    return PopScope(
+      canPop: !_showingDay,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop && _showingDay) _backToCalendar();
+      },
+      child: body,
+    );
+  }
+
+  Widget _buildDayMessages(BuildContext context, DateTime day) {
+    final title = '${day.year}年${day.month}月${day.day}日';
+    final isGroup = widget.conversation.type == 'group';
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Material(
+          color: Theme.of(context).colorScheme.surfaceContainerLow,
+          child: InkWell(
+            onTap: _backToCalendar,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(8, 8, 16, 8),
+              child: Row(
+                children: [
+                  const Icon(Icons.arrow_back_ios_new, size: 18),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      title,
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                            fontWeight: FontWeight.w700,
+                          ),
+                    ),
+                  ),
+                  Text(
+                    '返回日历',
+                    style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                          color: Theme.of(context).colorScheme.primary,
+                        ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+        Expanded(
+          child: ListView.separated(
+            itemCount: _dayMessages.length,
+            separatorBuilder: (_, _) => const Divider(height: 1),
+            itemBuilder: (context, index) {
+              final msg = _dayMessages[index];
+              return ChatHistoryResultTile(
+                msg: msg,
+                name: _nameFor(msg),
+                senderTitle: isGroup
+                    ? widget.conversation.memberTitle(msg.senderId)
+                    : null,
+                avatarUrl: _avatarFor(msg),
+                onTap: () => widget.onPick(msg.id),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildCalendar(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final today = DateTime.now();
     final todayDate = DateTime(today.year, today.month, today.day);
+    final marked = _daysWithMessages;
 
     return ListView.builder(
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 24),
@@ -101,7 +213,10 @@ class _ChatHistoryDateTabState extends State<ChatHistoryDateTab> {
                             child: Center(
                               child: Text(
                                 w,
-                                style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .labelSmall
+                                    ?.copyWith(
                                       color: scheme.onSurfaceVariant,
                                     ),
                               ),
@@ -114,7 +229,8 @@ class _ChatHistoryDateTabState extends State<ChatHistoryDateTab> {
                   GridView.builder(
                     shrinkWrap: true,
                     physics: const NeverScrollableScrollPhysics(),
-                    gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                    gridDelegate:
+                        const SliverGridDelegateWithFixedCrossAxisCount(
                       crossAxisCount: 7,
                       mainAxisSpacing: 4,
                       crossAxisSpacing: 4,
@@ -132,6 +248,7 @@ class _ChatHistoryDateTabState extends State<ChatHistoryDateTab> {
                           _selected!.year == date.year &&
                           _selected!.month == date.month &&
                           _selected!.day == date.day;
+                      final hasMsg = marked.contains(date);
 
                       return InkWell(
                         onTap: () => _onDayTap(date),
@@ -141,7 +258,8 @@ class _ChatHistoryDateTabState extends State<ChatHistoryDateTab> {
                             color: isSelected
                                 ? scheme.primary
                                 : isToday
-                                    ? scheme.primaryContainer.withValues(alpha: 0.5)
+                                    ? scheme.primaryContainer
+                                        .withValues(alpha: 0.5)
                                     : null,
                             borderRadius: BorderRadius.circular(8),
                           ),
@@ -151,7 +269,7 @@ class _ChatHistoryDateTabState extends State<ChatHistoryDateTab> {
                               Text(
                                 '$day',
                                 style: TextStyle(
-                                  fontWeight: isToday || isSelected
+                                  fontWeight: isToday || isSelected || hasMsg
                                       ? FontWeight.w700
                                       : FontWeight.w500,
                                   color: isSelected
@@ -159,7 +277,19 @@ class _ChatHistoryDateTabState extends State<ChatHistoryDateTab> {
                                       : scheme.onSurface,
                                 ),
                               ),
-                              if (isToday)
+                              const SizedBox(height: 2),
+                              if (hasMsg)
+                                Container(
+                                  width: 5,
+                                  height: 5,
+                                  decoration: BoxDecoration(
+                                    color: isSelected
+                                        ? scheme.onPrimary
+                                        : scheme.primary,
+                                    shape: BoxShape.circle,
+                                  ),
+                                )
+                              else if (isToday)
                                 Text(
                                   '今天',
                                   style: Theme.of(context)
@@ -171,7 +301,9 @@ class _ChatHistoryDateTabState extends State<ChatHistoryDateTab> {
                                             ? scheme.onPrimary
                                             : scheme.primary,
                                       ),
-                                ),
+                                )
+                              else
+                                const SizedBox(height: 5),
                             ],
                           ),
                         ),

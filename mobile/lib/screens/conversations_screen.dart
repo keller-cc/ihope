@@ -69,6 +69,8 @@ class _ConversationsScreenState extends State<ConversationsScreen>
   StreamSubscription<ConversationItem>? _patchedSub;
   StreamSubscription<void>? _realtimeRestoredSub;
   StreamSubscription<String>? _groupKeySub;
+  StreamSubscription<void>? _pinsSub;
+  StreamSubscription<void>? _cacheClearedSub;
   bool _syncAfterOnlineInFlight = false;
   bool _loadInFlight = false;
   bool _resumeRefreshInFlight = false;
@@ -109,6 +111,26 @@ class _ConversationsScreenState extends State<ConversationsScreen>
     _groupKeySub = widget.auth.onGroupKeyReady.listen((convId) {
       unawaited(_refreshPreviewFor(convId));
     });
+    _pinsSub = widget.auth.onPinsChanged.listen((_) {
+      unawaited(_refreshPinOrder());
+    });
+    _cacheClearedSub = widget.auth.onLocalDataCleared.listen((_) {
+      unawaited(_onLocalDataCleared());
+    });
+  }
+
+  Future<void> _onLocalDataCleared() async {
+    if (!mounted) return;
+    setState(() {
+      _previews.clear();
+      _messageCache.clear();
+      _unreadCounts.clear();
+      _announcementUnread.clear();
+    });
+    _hiddenIds = await widget.auth.hiddenConversationIds();
+    _pinnedIds = await widget.auth.pinnedConversationIds();
+    if (!mounted) return;
+    await _load();
   }
 
   Future<void> _refreshPreviewFor(String conversationId) async {
@@ -223,6 +245,8 @@ class _ConversationsScreenState extends State<ConversationsScreen>
     _patchedSub?.cancel();
     _realtimeRestoredSub?.cancel();
     _groupKeySub?.cancel();
+    _pinsSub?.cancel();
+    _cacheClearedSub?.cancel();
     _connSub?.cancel();
     super.dispose();
   }
@@ -378,6 +402,11 @@ class _ConversationsScreenState extends State<ConversationsScreen>
     final me = widget.auth.currentUser;
     if (me == null) return;
 
+    if (_hiddenIds.contains(msg.conversationId) && msg.senderId != me.id) {
+      unawaited(widget.auth.restoreConversationToList(msg.conversationId));
+      _hiddenIds.remove(msg.conversationId);
+    }
+
     final index = _items.indexWhere((c) => c.id == msg.conversationId);
     if (index < 0) {
       _bumpUnreadForIncoming(msg);
@@ -449,10 +478,14 @@ class _ConversationsScreenState extends State<ConversationsScreen>
     final refreshed = updated.copyWith(lastMessage: msg);
     setState(() {
       _previews[conv.id] = preview;
-      if (storedPt != null) {
+      if (storedPt != null &&
+          !ChatMessage.isDecryptPlaceholder(storedPt) &&
+          !ChatMessage.isDecryptFailure(storedPt)) {
         _upsertCachedMessage(conv.id, msg, storedPt);
-      } else {
-        _upsertCachedMessageSkeleton(conv.id, msg);
+      } else if (!ChatMessage.isDecryptFailure(preview) &&
+          !ChatMessage.isDecryptPlaceholder(preview) &&
+          msg.type == 'text') {
+        _upsertCachedMessage(conv.id, msg, preview);
       }
       final idx = _items.indexWhere((c) => c.id == conv.id);
       if (idx >= 0) {
@@ -740,57 +773,32 @@ class _ConversationsScreenState extends State<ConversationsScreen>
     bool isPinned, {
     Offset? anchor,
   }) async {
-    final overlay = Overlay.of(context, rootOverlay: true);
-    final box = context.findRenderObject() as RenderBox?;
-    if (box == null || !box.hasSize) return;
-
-    final tileRect = box.localToGlobal(Offset.zero) & box.size;
-    final top = (tileRect.top - 52).clamp(
-      MediaQuery.paddingOf(context).top + 8,
-      tileRect.top - 8,
-    );
-
-    late OverlayEntry entry;
-    void dismiss() {
-      entry.remove();
-    }
-
-    entry = OverlayEntry(
-      builder: (ctx) => Stack(
-        children: [
-          Positioned.fill(
-            child: GestureDetector(
-              onTap: dismiss,
-              behavior: HitTestBehavior.opaque,
-              child: const ColoredBox(color: Color(0x1A000000)),
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (ctx) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+            child: ConversationActionBubbles(
+              isPinned: isPinned,
+              onPin: () {
+                Navigator.pop(ctx);
+                unawaited(_pinConversation(item, !isPinned));
+              },
+              onRead: () {
+                Navigator.pop(ctx);
+                unawaited(_markConversationRead(item));
+              },
+              onDelete: () {
+                Navigator.pop(ctx);
+                unawaited(_deleteConversation(item));
+              },
             ),
           ),
-          Positioned(
-            left: 0,
-            right: 0,
-            top: top,
-            child: Center(
-              child: ConversationActionBubbles(
-                isPinned: isPinned,
-                onPin: () {
-                  dismiss();
-                  unawaited(_pinConversation(item, !isPinned));
-                },
-                onRead: () {
-                  dismiss();
-                  unawaited(_markConversationRead(item));
-                },
-                onDelete: () {
-                  dismiss();
-                  unawaited(_deleteConversation(item));
-                },
-              ),
-            ),
-          ),
-        ],
-      ),
+        );
+      },
     );
-    overlay.insert(entry);
   }
 
   Future<void> _deleteConversation(ConversationItem item) async {
@@ -816,8 +824,16 @@ class _ConversationsScreenState extends State<ConversationsScreen>
     if (!mounted) return;
     setState(() {
       _hiddenIds.add(item.id);
+      _items.removeWhere((c) => c.id == item.id);
       _unreadCounts.remove(item.id);
+      _previews.remove(item.id);
+      _messageCache.remove(item.id);
     });
+  }
+
+  Future<void> _mergeHiddenIds() async {
+    final stored = await widget.auth.hiddenConversationIds();
+    _hiddenIds = {..._hiddenIds, ...stored};
   }
 
 
@@ -837,7 +853,7 @@ class _ConversationsScreenState extends State<ConversationsScreen>
       final cached = await widget.auth.listCachedConversations();
       if (cached.isNotEmpty && mounted) {
         final pinned = await widget.auth.pinnedConversationIds();
-        _hiddenIds = await widget.auth.hiddenConversationIds();
+        await _mergeHiddenIds();
         setState(() {
           _pinnedIds = pinned;
           _items = sortConversationsByPin(cached, pinned);
@@ -852,7 +868,7 @@ class _ConversationsScreenState extends State<ConversationsScreen>
       _error = null;
     });
     try {
-      _hiddenIds = await widget.auth.hiddenConversationIds();
+      await _mergeHiddenIds();
       final wsConnect = widget.auth.ensureRealtimeConnected();
 
       final pinned = await widget.auth.pinnedConversationIds();
@@ -1408,7 +1424,7 @@ class _ConversationsScreenState extends State<ConversationsScreen>
                                       icon: isPinned
                                           ? Icons.push_pin_outlined
                                           : Icons.push_pin,
-                                      label: isPinned ? '取消' : '置顶',
+                                      label: isPinned ? '取消置顶' : '置顶',
                                       color: Colors.orange,
                                       onTap: () => unawaited(
                                         _pinConversation(item, !isPinned),
@@ -1418,6 +1434,12 @@ class _ConversationsScreenState extends State<ConversationsScreen>
                                   child: _ConversationRow(
                                     lastMessageId: last?.id,
                                     child: ListTile(
+                                      tileColor: isPinned
+                                          ? Theme.of(context)
+                                              .colorScheme
+                                              .surfaceContainerHighest
+                                              .withValues(alpha: 0.55)
+                                          : null,
                                       leading: UserAvatar(
                                         name: peerName,
                                         imageUrl: item.displayAvatarUrl(me.id),
@@ -1428,10 +1450,10 @@ class _ConversationsScreenState extends State<ConversationsScreen>
                                           if (isPinned)
                                             Padding(
                                               padding:
-                                                  const EdgeInsets.only(right: 4),
+                                                  const EdgeInsets.only(right: 6),
                                               child: Icon(
                                                 Icons.push_pin,
-                                                size: 16,
+                                                size: 18,
                                                 color: Theme.of(context)
                                                     .colorScheme
                                                     .primary,
@@ -1484,6 +1506,13 @@ class _ConversationsScreenState extends State<ConversationsScreen>
                                         ),
                                       ),
                                       onTap: () => _openChat(item),
+                                      onLongPress: () => unawaited(
+                                        _showConversationActionMenu(
+                                          context,
+                                          item,
+                                          isPinned,
+                                        ),
+                                      ),
                                     ),
                                   ),
                                 );

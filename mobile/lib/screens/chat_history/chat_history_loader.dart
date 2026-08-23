@@ -31,6 +31,33 @@ class ChatHistoryLoader {
     return _cache!;
   }
 
+  static bool isSameLocalDay(DateTime a, DateTime b) {
+    final la = a.toLocal();
+    final lb = b.toLocal();
+    return la.year == lb.year && la.month == lb.month && la.day == lb.day;
+  }
+
+  static bool hasMessagesOnDay(List<ChatMessage> messages, DateTime day) {
+    return messages.any((m) => isSameLocalDay(m.createdAt, day));
+  }
+
+  static List<ChatMessage> filterByDay(
+    List<ChatMessage> messages,
+    DateTime day,
+  ) {
+    return messages.where((m) => isSameLocalDay(m.createdAt, day)).toList()
+      ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+  }
+
+  static Set<DateTime> daysWithMessages(List<ChatMessage> messages) {
+    final days = <DateTime>{};
+    for (final m in messages) {
+      final t = m.createdAt.toLocal();
+      days.add(DateTime(t.year, t.month, t.day));
+    }
+    return days;
+  }
+
   /// 选中日期当天 00:00 起，最近的一条消息（含当天首条）。
   static ChatMessage? nearestOnOrAfter(List<ChatMessage> messages, DateTime day) {
     final start = DateTime(day.year, day.month, day.day);

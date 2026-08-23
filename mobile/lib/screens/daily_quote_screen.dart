@@ -24,26 +24,35 @@ class _DailyQuoteScreenState extends State<DailyQuoteScreen> {
     unawaited(_load());
   }
 
-  Future<void> _load() async {
+  Future<void> _load({bool force = false}) async {
+    if (!force) {
+      final stored = await widget.auth.peekStoredTodayQuote();
+      if (!mounted) return;
+      if (stored != null) {
+        setState(() {
+          _quote = stored;
+          _error = null;
+          _loading = false;
+        });
+        return;
+      }
+    }
     setState(() {
-      _loading = true;
+      _loading = _quote == null;
       _error = null;
     });
     try {
-      final q = await widget.auth.fetchTodayQuote();
+      final q = await widget.auth.fetchTodayQuote(force: force);
       if (!mounted) return;
       setState(() {
-        _quote = q;
+        _quote = q.hasContent ? q : null;
         _loading = false;
-        if ((q.body).trim().isEmpty) {
-          _error = '暂无金句内容';
-          _quote = null;
-        }
+        _error = q.hasContent ? null : '暂无金句内容';
       });
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        _error = '无法加载金句';
+        _error = _quote == null ? '无法加载金句' : null;
         _loading = false;
       });
     }
@@ -58,7 +67,8 @@ class _DailyQuoteScreenState extends State<DailyQuoteScreen> {
         actions: [
           IconButton(
             tooltip: '刷新',
-            onPressed: _loading ? null : () => unawaited(_load()),
+            onPressed:
+                _loading ? null : () => unawaited(_load(force: _error != null)),
             icon: const Icon(Icons.refresh),
           ),
         ],
@@ -75,7 +85,7 @@ class _DailyQuoteScreenState extends State<DailyQuoteScreen> {
                         Text(_error!, textAlign: TextAlign.center),
                         const SizedBox(height: 16),
                         FilledButton.icon(
-                          onPressed: _loading ? null : () => unawaited(_load()),
+                          onPressed: _loading ? null : () => unawaited(_load(force: true)),
                           icon: const Icon(Icons.refresh),
                           label: const Text('重试'),
                         ),

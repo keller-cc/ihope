@@ -7,14 +7,19 @@ class MessageTimeFormat {
   /// 相邻消息间隔超过 [dividerGapMinutes] 分钟则插入居中时间条。
   static const dividerGapMinutes = 5;
 
-  static final _hm = DateFormat('HH:mm');
-  static final _mdHm = DateFormat('M月d日 HH:mm');
-  static final _ymdHm = DateFormat('yyyy年M月d日 HH:mm');
+  static final _md = DateFormat('M月d日');
+  static final _ymd = DateFormat('yyyy年M月d日');
   static final _mdSlash = DateFormat('M/d');
   static final _ymdSlash = DateFormat('yyyy/M/d');
-  static final _mdSlashHm = DateFormat('M/d HH:mm');
-  static final _ymdSlashHm = DateFormat('yyyy/M/d HH:mm');
   static final _weekday = DateFormat('EEEE', 'zh_CN');
+
+  /// 固定 24 小时制，不跟随系统 12 小时 / 上午下午。
+  static String formatHm(DateTime time) {
+    final t = time.toLocal();
+    final h = t.hour.toString().padLeft(2, '0');
+    final m = t.minute.toString().padLeft(2, '0');
+    return '$h:$m';
+  }
 
   static bool shouldShowDivider(DateTime? previous, DateTime current) {
     if (previous == null) return true;
@@ -28,12 +33,12 @@ class MessageTimeFormat {
     final today = _dateOnly(now);
     final msgDay = _dateOnly(t);
 
-    if (msgDay == today) return _hm.format(t);
+    if (msgDay == today) return formatHm(t);
     if (msgDay == today.subtract(const Duration(days: 1))) {
-      return '昨天 ${_hm.format(t)}';
+      return '昨天 ${formatHm(t)}';
     }
-    if (t.year == now.year) return _mdHm.format(t);
-    return _ymdHm.format(t);
+    if (t.year == now.year) return '${_md.format(t)} ${formatHm(t)}';
+    return '${_ymd.format(t)} ${formatHm(t)}';
   }
 
   /// 会话列表右侧（QQ）：今天 HH:mm，昨天 HH:mm，近 7 天 星期X，同年 M/d。
@@ -44,8 +49,10 @@ class MessageTimeFormat {
     final msgDay = _dateOnly(t);
     final dayDiff = today.difference(msgDay).inDays;
 
-    if (msgDay == today) return _hm.format(t);
-    if (msgDay == today.subtract(const Duration(days: 1))) return '昨天 ${_hm.format(t)}';
+    if (msgDay == today) return formatHm(t);
+    if (msgDay == today.subtract(const Duration(days: 1))) {
+      return '昨天 ${formatHm(t)}';
+    }
     if (dayDiff >= 2 && dayDiff < 7) return _weekday.format(t);
     if (t.year == now.year) return _mdSlash.format(t);
     return _ymdSlash.format(t);
@@ -57,13 +64,16 @@ class MessageTimeFormat {
     final today = _dateOnly(now);
     final msgDay = _dateOnly(t);
 
-    if (msgDay == today) return _hm.format(t);
-    if (t.year == now.year) return _mdSlashHm.format(t);
-    return _ymdSlashHm.format(t);
+    if (msgDay == today) return formatHm(t);
+    if (t.year == now.year) return '${_mdSlash.format(t)} ${formatHm(t)}';
+    return '${_ymdSlash.format(t)} ${formatHm(t)}';
   }
 
   /// 群公告卡片左下角：yyyy年M月d日 HH:mm。
-  static String formatAnnouncementCard(DateTime time) => _ymdHm.format(time.toLocal());
+  static String formatAnnouncementCard(DateTime time) {
+    final t = time.toLocal();
+    return '${_ymd.format(t)} ${formatHm(t)}';
+  }
 
   static DateTime _dateOnly(DateTime d) => DateTime(d.year, d.month, d.day);
 }

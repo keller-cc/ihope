@@ -83,12 +83,14 @@ class _ChatHistoryCategoryScreenState extends State<ChatHistoryCategoryScreen> {
     switch (widget.kind) {
       case ChatHistoryCategoryKind.date:
         return ChatHistoryDateTab(
+          auth: widget.auth,
+          conversation: widget.conversation,
           messages: _messages,
           loadMessages: _ensureMessages,
           onPick: (id) => _jumpToMessage(id),
           onEmpty: () {
             ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('该日期之后暂无消息')),
+              const SnackBar(content: Text('这一天没有聊天记录')),
             );
           },
         );

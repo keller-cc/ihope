@@ -63,7 +63,7 @@ class _StorageSettingsScreenState extends State<StorageSettingsScreen> {
       body: '将删除本机保存的消息副本、图片/语音/文件缓存，以及最近使用的表情。\n\n'
           '不会退出登录，也不会删除加密密钥或会话列表。',
       action: widget.auth.clearLocalCache,
-      success: '聊天与媒体缓存已清除，打开会话时将重新加载',
+      success: '聊天与媒体缓存已清除，首页预览已刷新',
     );
   }
 
@@ -76,7 +76,7 @@ class _StorageSettingsScreenState extends State<StorageSettingsScreen> {
           '· 置顶、归档等本地偏好\n\n'
           '仍保留登录与加密密钥；返回首页后会从服务器重新同步。',
       action: widget.auth.clearLocalData,
-      success: '本地会话数据已重置，请下拉刷新首页会话',
+      success: '本地会话数据已重置，正在重新同步首页',
     );
   }
 

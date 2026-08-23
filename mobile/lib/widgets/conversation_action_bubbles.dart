@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-/// 会话行操作：置顶 / 已读 / 删除，气泡横排。
+/// 会话行操作：置顶 / 已读 / 删除，连成一条饱满操作栏。
 class ConversationActionBubbles extends StatelessWidget {
   const ConversationActionBubbles({
     super.key,
@@ -15,44 +15,53 @@ class ConversationActionBubbles extends StatelessWidget {
   final VoidCallback onRead;
   final VoidCallback onDelete;
 
-  static const bubbleHeight = 44.0;
-  static const bubbleSpacing = 8.0;
+  static const bubbleHeight = 52.0;
+  static const bubbleSpacing = 0.0;
 
   @override
   Widget build(BuildContext context) {
     return Material(
       color: Colors.transparent,
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          _Bubble(
-            icon: isPinned ? Icons.push_pin_outlined : Icons.push_pin,
-            label: isPinned ? '取消' : '置顶',
-            color: Colors.orange,
-            onTap: onPin,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(12),
+        child: SizedBox(
+          height: bubbleHeight,
+          child: Row(
+            children: [
+              Expanded(
+                child: _Segment(
+                  icon: isPinned ? Icons.push_pin_outlined : Icons.push_pin,
+                  label: isPinned ? '取消置顶' : '置顶',
+                  color: Colors.orange,
+                  onTap: onPin,
+                ),
+              ),
+              Expanded(
+                child: _Segment(
+                  icon: Icons.done_all,
+                  label: '已读',
+                  color: Colors.blue,
+                  onTap: onRead,
+                ),
+              ),
+              Expanded(
+                child: _Segment(
+                  icon: Icons.delete_outline,
+                  label: '删除',
+                  color: Colors.red,
+                  onTap: onDelete,
+                ),
+              ),
+            ],
           ),
-          const SizedBox(width: bubbleSpacing),
-          _Bubble(
-            icon: Icons.done_all,
-            label: '已读',
-            color: Colors.blue,
-            onTap: onRead,
-          ),
-          const SizedBox(width: bubbleSpacing),
-          _Bubble(
-            icon: Icons.delete_outline,
-            label: '删除',
-            color: Colors.red,
-            onTap: onDelete,
-          ),
-        ],
+        ),
       ),
     );
   }
 }
 
-class _Bubble extends StatelessWidget {
-  const _Bubble({
+class _Segment extends StatelessWidget {
+  const _Segment({
     required this.icon,
     required this.label,
     required this.color,
@@ -68,29 +77,22 @@ class _Bubble extends StatelessWidget {
   Widget build(BuildContext context) {
     return Material(
       color: color,
-      elevation: 3,
-      shadowColor: Colors.black26,
-      borderRadius: BorderRadius.circular(22),
-      clipBehavior: Clip.antiAlias,
       child: InkWell(
         onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(icon, color: Colors.white, size: 18),
-              const SizedBox(width: 6),
-              Text(
-                label,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icon, color: Colors.white, size: 20),
+            const SizedBox(height: 4),
+            Text(
+              label,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );

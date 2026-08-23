@@ -4,6 +4,7 @@ package auth
 import (
 	"errors"
 	"fmt"
+	"html"
 	"net/http"
 	"strings"
 
@@ -170,38 +171,61 @@ type resendVerificationRequest struct {
 	Email string `json:"email"`
 }
 
-// VerifyEmail GET /api/auth/verify-email?token= — 点击邮件链接激活（返回简单 HTML）。
+// VerifyEmail GET /api/auth/verify-email?token= — 展示确认页，不立刻消耗 token（避免邮件扫描器误激活）。
 func (h *Handler) VerifyEmail(w http.ResponseWriter, r *http.Request) {
 	token := strings.TrimSpace(r.URL.Query().Get("token"))
 	if token == "" {
 		writeVerifyEmailHTML(w, http.StatusBadRequest, "缺少验证 token", false)
 		return
 	}
-	if err := h.svc.VerifyEmail(r.Context(), token); errors.Is(err, ErrInvalidVerifyToken) {
-		writeVerifyEmailHTML(w, http.StatusBadRequest, "链接无效或已过期", false)
-		return
-	} else if err != nil {
-		writeVerifyEmailHTML(w, http.StatusInternalServerError, "验证失败，请稍后重试", false)
-		return
-	}
-	writeVerifyEmailHTML(w, http.StatusOK, "邮箱已验证，可以返回 App 登录", true)
+	writeVerifyEmailConfirmHTML(w, token)
 }
 
-// VerifyEmailJSON POST /api/auth/verify-email — App/脚本用 JSON 提交 token。
+// VerifyEmailJSON POST /api/auth/verify-email — App JSON 或邮件确认表单提交 token。
 func (h *Handler) VerifyEmailJSON(w http.ResponseWriter, r *http.Request) {
-	var req verifyEmailRequest
-	if err := httpx.DecodeJSON(r, &req); err != nil {
+	token, asHTML := readVerifyToken(r)
+	if token == "" {
+		if asHTML {
+			writeVerifyEmailHTML(w, http.StatusBadRequest, "缺少验证 token", false)
+			return
+		}
 		httpx.WriteError(w, http.StatusBadRequest, "invalid_json", "invalid request body")
 		return
 	}
-	if err := h.svc.VerifyEmail(r.Context(), req.Token); errors.Is(err, ErrInvalidVerifyToken) {
+	if err := h.svc.VerifyEmail(r.Context(), token); errors.Is(err, ErrInvalidVerifyToken) {
+		if asHTML {
+			writeVerifyEmailHTML(w, http.StatusBadRequest, "链接无效或已过期", false)
+			return
+		}
 		httpx.WriteError(w, http.StatusBadRequest, "invalid_token", "invalid or expired verification token")
 		return
 	} else if err != nil {
+		if asHTML {
+			writeVerifyEmailHTML(w, http.StatusInternalServerError, "验证失败，请稍后重试", false)
+			return
+		}
 		httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "verification failed")
 		return
 	}
+	if asHTML {
+		writeVerifyEmailHTML(w, http.StatusOK, "邮箱已验证，可以返回 App 登录", true)
+		return
+	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]string{"message": "email verified"})
+}
+
+func readVerifyToken(r *http.Request) (string, bool) {
+	ct := strings.ToLower(r.Header.Get("Content-Type"))
+	if strings.Contains(ct, "application/x-www-form-urlencoded") ||
+		strings.Contains(ct, "multipart/form-data") {
+		_ = r.ParseForm()
+		return strings.TrimSpace(r.FormValue("token")), true
+	}
+	var req verifyEmailRequest
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		return "", false
+	}
+	return strings.TrimSpace(req.Token), false
 }
 
 // ResendVerification POST /api/auth/resend-verification — 重发验证邮件。
@@ -233,6 +257,13 @@ func writeVerifyEmailHTML(w http.ResponseWriter, status int, message string, ok 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(status)
 	_, _ = fmt.Fprintf(w, `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>%s</title><style>body{font-family:system-ui,sans-serif;max-width:32rem;margin:4rem auto;padding:0 1rem;color:#0f172a}h1{font-size:1.5rem}p{line-height:1.6;color:#334155}</style></head><body><h1>%s</h1><p>%s</p></body></html>`, title, title, message)
+}
+
+func writeVerifyEmailConfirmHTML(w http.ResponseWriter, token string) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	safe := html.EscapeString(token)
+	_, _ = fmt.Fprintf(w, `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>确认邮箱</title><style>body{font-family:system-ui,sans-serif;max-width:32rem;margin:4rem auto;padding:0 1rem;color:#0f172a}h1{font-size:1.5rem}p{line-height:1.6;color:#334155}button{margin-top:1rem;padding:.7rem 1.2rem;border:0;border-radius:.5rem;background:#2563eb;color:#fff;font-size:1rem;cursor:pointer}</style></head><body><h1>确认验证邮箱</h1><p>点击下方按钮完成邮箱验证，然后返回 App 登录。</p><form method="POST" action="/api/auth/verify-email"><input type="hidden" name="token" value="%s"><button type="submit">完成验证</button></form></body></html>`, safe)
 }
 
 // ForgotPassword POST /api/auth/forgot-password — 发重置邮件；邮箱不存在也返回 200。
