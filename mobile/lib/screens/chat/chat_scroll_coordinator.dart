@@ -490,7 +490,7 @@ class ChatScrollCoordinator extends ChangeNotifier {
     );
   }
 
-  void onJumpToLatest(List<ChatMessage> messages) {
+  void onJumpToLatest() {
     _cancelArrowTimers();
     showScrollToLatestArrow = false;
     scrollToLatestArrowOpacity = 0;

@@ -247,7 +247,6 @@ class _ConversationsScreenState extends State<ConversationsScreen>
     _groupKeySub?.cancel();
     _pinsSub?.cancel();
     _cacheClearedSub?.cancel();
-    _connSub?.cancel();
     super.dispose();
   }
 
@@ -770,9 +769,8 @@ class _ConversationsScreenState extends State<ConversationsScreen>
   Future<void> _showConversationActionMenu(
     BuildContext context,
     ConversationItem item,
-    bool isPinned, {
-    Offset? anchor,
-  }) async {
+    bool isPinned,
+  ) async {
     await showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
@@ -1173,8 +1171,6 @@ class _ConversationsScreenState extends State<ConversationsScreen>
     }
   }
 
-  List<ConversationItem> _filteredItems(String meId) => _visibleItems(meId);
-
   String _senderName(ConversationItem item, String meId, String senderId) {
     if (item.type == 'group') {
       return widget.auth.groupSenderLabel(item, meId, senderId);
@@ -1274,7 +1270,7 @@ class _ConversationsScreenState extends State<ConversationsScreen>
         body: Center(child: CircularProgressIndicator()),
       );
     }
-    final visible = _filteredItems(me.id);
+    final visible = _visibleItems(me.id);
     return MessageInAppBannerHost(
       stream: widget.notification.inAppBannerStream,
       scopeListenable: widget.auth.messageListHomeListenable,
@@ -1400,7 +1396,6 @@ class _ConversationsScreenState extends State<ConversationsScreen>
                                       context,
                                       item,
                                       isPinned,
-                                      anchor: details.globalPosition,
                                     ),
                                   ),
                                   actions: [

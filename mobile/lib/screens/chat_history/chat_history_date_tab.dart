@@ -34,18 +34,16 @@ class _ChatHistoryDateTabState extends State<ChatHistoryDateTab> {
   List<ChatMessage> _dayMessages = const [];
   bool _showingDay = false;
 
-  List<ChatMessage> get _all => widget.messages;
-
   Set<DateTime> get _daysWithMessages =>
-      ChatHistoryLoader.daysWithMessages(_all);
+      ChatHistoryLoader.daysWithMessages(widget.messages);
 
   List<DateTime> get _months {
     final now = DateTime.now();
-    if (_all.isEmpty) {
+    if (widget.messages.isEmpty) {
       return [DateTime(now.year, now.month)];
     }
-    var earliest = _all.first.createdAt.toLocal();
-    for (final m in _all) {
+    var earliest = widget.messages.first.createdAt.toLocal();
+    for (final m in widget.messages) {
       final t = m.createdAt.toLocal();
       if (t.isBefore(earliest)) earliest = t;
     }

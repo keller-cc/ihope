@@ -6,9 +6,6 @@ import 'package:image/image.dart' as img;
 class ImageThumbnail {
   ImageThumbnail._();
 
-  /// 旧消息极小缩略图（仅 thumb_b64）。
-  static const thumbMaxEdge = 200;
-
   /// 气泡预览边长；原图仍走附件上传，避免把整图塞进 E2EE 明文。
   static const previewMaxEdge = 480;
   static const previewQuality = 72;
@@ -22,10 +19,6 @@ class ImageThumbnail {
     final decoded = img.decodeImage(Uint8List.fromList(imageBytes));
     if (decoded == null) return null;
     return (width: decoded.width, height: decoded.height);
-  }
-
-  static Future<Uint8List> generate(List<int> imageBytes) async {
-    return _resize(imageBytes, thumbMaxEdge, quality: 70);
   }
 
   static Future<Uint8List> _resize(

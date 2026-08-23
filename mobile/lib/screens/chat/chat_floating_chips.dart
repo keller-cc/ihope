@@ -100,7 +100,7 @@ class _ChatFloatingChipsBody extends StatelessWidget {
                       shape: const CircleBorder(),
                       clipBehavior: Clip.antiAlias,
                       child: InkWell(
-                        onTap: () => scrollCoord.onJumpToLatest(messages),
+                        onTap: () => scrollCoord.onJumpToLatest(),
                         customBorder: const CircleBorder(),
                         child: Padding(
                           padding: const EdgeInsets.all(10),

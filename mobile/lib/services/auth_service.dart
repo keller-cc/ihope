@@ -303,6 +303,7 @@ class AuthService {
     _signalDm = null;
     _setCurrentUser(null);
     _accessExpiresAt = null;
+    _todayQuoteMem = null;
   }
 
   Future<void> _ensureCryptoInitialized() async {
@@ -430,8 +431,6 @@ class AuthService {
     await storage.saveUserProfile(currentUser!.toJson());
     return currentUser!;
   }
-
-  String? get openConversationId => _openConversationId;
 
   Future<bool> isPushNotificationEnabled() =>
       storage.readPushNotificationEnabled();
@@ -726,8 +725,6 @@ class AuthService {
     }
   }
 
-  Future<String?> accessToken() => storage.accessToken();
-
   Future<List<String>> pinnedConversationIds() async {
     final user = currentUser;
     if (user == null) return [];
@@ -792,9 +789,6 @@ class AuthService {
 
   bool isActivelyViewingConversation(String conversationId) =>
       _openConversationId == conversationId && _appInForeground;
-
-  bool isConversationOpen(String conversationId) =>
-      _openConversationId == conversationId;
 
   Future<DateTime?> readAtFor(String conversationId) async {
     final cached = _conversationReadAtCache[conversationId];
@@ -1509,9 +1503,7 @@ class AuthService {
         m.plaintext,
       );
       if (enriched != null && enriched != m.plaintext) {
-        final updated = m.copyWith(plaintext: enriched);
-        unawaited(upsertCachedMessage(conversationId, updated));
-        out.add(updated);
+        out.add(m.copyWith(plaintext: enriched));
       } else {
         out.add(m);
       }
@@ -1558,14 +1550,8 @@ class AuthService {
     if (ChatMessage.isDecryptFailure(pt)) return msg.forCacheWithoutPlaintext;
     if (msg.type == 'image' || msg.type == 'audio') {
       if (MediaLocalCache.isLocalRef(pt)) {
-        if (msg.type == 'image' && !MediaLocalCache.hasInlineImagePreview(pt)) {
-          final enriched =
-              await MediaLocalCache.enrichLocalRefWithPreview(msg.id, pt);
-          if (enriched != null && enriched != pt) {
-            return msg.copyWith(plaintext: enriched);
-          }
-        }
-        return msg;
+        final slim = MediaLocalCache.stripInlineMediaBytes(pt);
+        return slim != null && slim != pt ? msg.copyWith(plaintext: slim) : msg;
       }
       if (msg.type == 'image' && AttachmentPayload.tryParse(pt) != null) {
         final compact = await MediaLocalCache.persistPlaintext(msg.id, pt);
@@ -1636,17 +1622,6 @@ class AuthService {
       } catch (_) {}
     }
     return decryptMessagesLocal(conv, messages);
-  }
-
-  Future<Map<String, List<ChatMessage>>> loadLocalMessagesForConversations(
-    Iterable<ConversationItem> conversations,
-  ) async {
-    final out = <String, List<ChatMessage>>{};
-    for (final conv in conversations) {
-      final msgs = await loadLocalMessagesForSearch(conv);
-      if (msgs.isNotEmpty) out[conv.id] = msgs;
-    }
-    return out;
   }
 
   /// 媒体 plaintext 已损坏（local 引用但文件缺失等）时需重新解密。
@@ -2301,9 +2276,6 @@ class AuthService {
         waitForRelay: waitForRelay,
       );
 
-  Future<void> ensureOwnerGroupKeys(ConversationItem conversation) =>
-      groupKeys.ensureOwnerKeys(conversation);
-
   Future<void> ensureGroupKeysForMessages(
     ConversationItem conversation,
     List<ChatMessage> messages,
@@ -2349,13 +2321,6 @@ class AuthService {
     ChatMessage message,
   ) async {
     return _decryptOneLocal(conversation, message);
-  }
-
-  Future<List<ChatMessage>> decryptMessages(
-    ConversationItem conversation,
-    List<ChatMessage> messages,
-  ) async {
-    return decryptMessagesLocal(conversation, messages);
   }
 
   Future<ConversationItem> refreshConversation(ConversationItem conversation) {
@@ -2500,16 +2465,6 @@ class AuthService {
     }
   }
 
-  Future<Map<String, ConversationMember>> _directoryFor(
-    String conversationId,
-  ) async {
-    final cached = _memberDirectories[conversationId];
-    if (cached != null) return cached;
-    final me = currentUser;
-    if (me == null) return {};
-    return _directoryFromStorage(me.id, conversationId);
-  }
-
   Future<void> mergeMemberDirectory(
     String conversationId,
     List<ConversationMember> members, {
@@ -2582,16 +2537,6 @@ class AuthService {
       if (m.userId == userId) return m;
     }
     return _memberDirectories[conversation.id]?[userId];
-  }
-
-  Future<ConversationMember?> groupMemberProfile(
-    ConversationItem conversation,
-    String userId,
-  ) async {
-    final active = knownGroupMember(conversation, userId);
-    if (active != null) return active;
-    final dir = await _directoryFor(conversation.id);
-    return dir[userId];
   }
 
   String groupSenderLabel(

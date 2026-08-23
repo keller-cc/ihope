@@ -111,6 +111,7 @@ class ChatMessage {
     String? id,
     String? plaintext,
     String? fileId,
+    String? ciphertext,
     MessageSendStatus? sendStatus,
   }) {
     return ChatMessage(
@@ -118,7 +119,7 @@ class ChatMessage {
       conversationId: conversationId,
       senderId: senderId,
       type: type,
-      ciphertext: ciphertext,
+      ciphertext: ciphertext ?? this.ciphertext,
       createdAt: createdAt,
       epoch: epoch,
       plaintext: plaintext ?? this.plaintext,

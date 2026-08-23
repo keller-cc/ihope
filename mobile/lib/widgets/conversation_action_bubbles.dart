@@ -16,7 +16,6 @@ class ConversationActionBubbles extends StatelessWidget {
   final VoidCallback onDelete;
 
   static const bubbleHeight = 52.0;
-  static const bubbleSpacing = 0.0;
 
   @override
   Widget build(BuildContext context) {

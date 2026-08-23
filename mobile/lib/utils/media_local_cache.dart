@@ -414,6 +414,23 @@ class MediaLocalCache {
     return path;
   }
 
+  /// 去掉 plaintext 里的 base64 媒体字节，避免 SQLite 单行撑爆 CursorWindow。
+  static String? stripInlineMediaBytes(String? plaintext) {
+    if (plaintext == null || plaintext.isEmpty) return plaintext;
+    try {
+      final decoded = jsonDecode(plaintext);
+      if (decoded is! Map) return plaintext;
+      final map = Map<String, dynamic>.from(decoded);
+      var changed = false;
+      for (final key in const ['preview_b64', 'thumb_b64', 'b64']) {
+        if (map.remove(key) != null) changed = true;
+      }
+      return changed ? jsonEncode(map) : plaintext;
+    } catch (_) {
+      return plaintext;
+    }
+  }
+
   /// 消息 plaintext 是否含可展示的 inline 图片预览（无需原图落盘）。
   static bool hasInlineImagePreview(String? plaintext) {
     if (plaintext == null || plaintext.isEmpty) return false;

@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ihope/models/message.dart';
 import 'package:ihope/services/message_cache_store.dart';
@@ -60,5 +62,28 @@ void main() {
     await store.clearUser('user-1');
     expect(await store.load('user-1', 'conv-1'), isEmpty);
     await store.close();
+  });
+
+  test('encodePayload strips inline preview so the row stays small', () {
+    final preview = base64Encode(List<int>.filled(500000, 7));
+    final msg = ChatMessage(
+      id: 'img-1',
+      conversationId: 'conv-1',
+      senderId: 'alice',
+      type: 'image',
+      ciphertext: 'x' * 100,
+      createdAt: DateTime.utc(2026, 1, 1),
+      plaintext: jsonEncode({
+        'media': 'image',
+        'local': true,
+        'mime': 'image/jpeg',
+        'name': 'a.jpg',
+        'preview_b64': preview,
+      }),
+    );
+    final encoded = MessageCacheStore.encodePayload(msg);
+    expect(encoded, isNotNull);
+    expect(encoded!.contains('preview_b64'), isFalse);
+    expect(jsonDecode(encoded)['plaintext'], contains('"local":true'));
   });
 }
