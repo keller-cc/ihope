@@ -1,23 +1,22 @@
-import type { Contact, Conversation, FriendRequest } from '../api'
+import type { Contact, Conversation } from '../api'
 import { conversationTitle } from '../lib/chatFormat'
 import { Avatar } from './Avatar'
 
-type Section = 'friends' | 'groups' | 'requests'
+type Section = 'friends' | 'groups'
 
 type Props = {
   section: Section
   onSection: (s: Section) => void
   friends: Contact[]
   groups: Conversation[]
-  incoming: FriendRequest[]
+  incomingCount: number
   filter: string
   selectedFriendId: string | null
   selectedGroupId: string | null
+  requestsOpen?: boolean
   onSelectFriend: (f: Contact) => void
   onSelectGroup: (g: Conversation) => void
   onOpenRequests: () => void
-  onAccept: (id: string) => void
-  onReject: (id: string) => void
 }
 
 function displayName(f: Contact) {
@@ -29,15 +28,14 @@ export function ContactList({
   onSection,
   friends,
   groups,
-  incoming,
+  incomingCount,
   filter,
   selectedFriendId,
   selectedGroupId,
+  requestsOpen,
   onSelectFriend,
   onSelectGroup,
   onOpenRequests,
-  onAccept,
-  onReject,
 }: Props) {
   const q = filter.trim().toLowerCase()
   const filteredFriends = friends.filter(
@@ -53,7 +51,7 @@ export function ContactList({
       <div className="im-contact-tabs">
         <button
           type="button"
-          className={section === 'friends' || section === 'requests' ? 'is-active' : undefined}
+          className={section === 'friends' ? 'is-active' : undefined}
           onClick={() => onSection('friends')}
         >
           好友 ({friends.length})
@@ -67,42 +65,26 @@ export function ContactList({
         </button>
       </div>
 
-      {(section === 'friends' || section === 'requests') && (
+      {section === 'friends' && (
         <div className="im-list">
-          <button type="button" className="im-list-item" onClick={onOpenRequests}>
+          <button
+            type="button"
+            className={requestsOpen ? 'im-list-item is-active' : 'im-list-item'}
+            onClick={onOpenRequests}
+          >
             <span className="im-avatar im-avatar--soft">新</span>
             <span className="im-list-item__body">
               <span className="im-list-item__row">
                 <span className="im-list-item__title">新朋友</span>
-                {incoming.length > 0 && <span className="im-badge">{incoming.length}</span>}
+                {incomingCount > 0 && <span className="im-badge">{incomingCount}</span>}
               </span>
               <span className="im-list-item__preview">
-                {incoming.length > 0 ? `${incoming.length} 条待处理申请` : '添加好友与申请'}
+                {incomingCount > 0 ? `${incomingCount} 条待处理申请` : '添加好友与申请'}
               </span>
             </span>
           </button>
 
-          {section === 'requests' ? (
-            incoming.length === 0 ? (
-              <p className="im-empty-hint">暂无好友申请</p>
-            ) : (
-              incoming.map((r) => (
-                <div key={r.id} className="im-request-row">
-                  <Avatar name={r.fromUser?.username || '?'} src={r.fromUser?.avatarUrl} />
-                  <div className="im-list-item__body">
-                    <div className="im-list-item__title">{r.fromUser?.username}</div>
-                    <div className="im-list-item__preview">{r.message || '请求添加你为好友'}</div>
-                  </div>
-                  <button type="button" className="im-btn" onClick={() => onAccept(r.id)}>
-                    同意
-                  </button>
-                  <button type="button" className="im-btn im-btn--ghost" onClick={() => onReject(r.id)}>
-                    拒绝
-                  </button>
-                </div>
-              ))
-            )
-          ) : filteredFriends.length === 0 ? (
+          {filteredFriends.length === 0 ? (
             <p className="im-empty-hint">还没有好友，点 + 添加</p>
           ) : (
             filteredFriends.map((f) => (

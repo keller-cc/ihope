@@ -221,6 +221,8 @@ func (s *Service) ListConversations(ctx context.Context, userID string) ([]Conve
 				c.LastMessage = "[文件]"
 			} else if lastType == "voice" {
 				c.LastMessage = "[语音]"
+			} else if lastType == "call" {
+				c.LastMessage = "[通话]"
 			} else if lastType == "forward" {
 				c.LastMessage = "[聊天记录]"
 			} else {
@@ -252,6 +254,18 @@ func (s *Service) MarkRead(ctx context.Context, conversationID, userID string) e
 		UPDATE conversation_members SET last_read_at = now()
 		WHERE conversation_id = $1 AND user_id = $2
 	`, conversationID, userID)
+	return err
+}
+
+// MarkReadUsers advances last_read_at for given members (e.g. after a call summary).
+func (s *Service) MarkReadUsers(ctx context.Context, conversationID string, userIDs []string) error {
+	if len(userIDs) == 0 {
+		return nil
+	}
+	_, err := s.pool.Exec(ctx, `
+		UPDATE conversation_members SET last_read_at = now()
+		WHERE conversation_id = $1 AND user_id = ANY($2::uuid[])
+	`, conversationID, userIDs)
 	return err
 }
 
@@ -397,6 +411,25 @@ func (s *Service) resolveUser(ctx context.Context, login string) (*Contact, erro
 	return &c, nil
 }
 
+// sameAutonomousDomain is true when both users belong to fellowships in the same domain.
+func (s *Service) sameAutonomousDomain(ctx context.Context, a, b string) (bool, error) {
+	if a == b {
+		return true, nil
+	}
+	var ok bool
+	err := s.pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM users ua
+			JOIN fellowships fa ON fa.id = ua.fellowship_id
+			JOIN users ub ON ub.id = $2::uuid
+			JOIN fellowships fb ON fb.id = ub.fellowship_id
+			WHERE ua.id = $1::uuid AND fa.domain_id = fb.domain_id
+		)
+	`, a, b).Scan(&ok)
+	return ok, err
+}
+
 func looksLikeHopeID(s string) bool {
 	s = strings.TrimSpace(s)
 	n := len(s)
@@ -432,6 +465,13 @@ func (s *Service) RequestFriend(ctx context.Context, userID, peerLogin, message 
 	}
 	if peer.ID == userID {
 		return nil, errors.New("cannot add yourself")
+	}
+	same, err := s.sameAutonomousDomain(ctx, userID, peer.ID)
+	if err != nil {
+		return nil, err
+	}
+	if !same {
+		return nil, errors.New("user not found")
 	}
 	var already bool
 	_ = s.pool.QueryRow(ctx, `
@@ -536,6 +576,11 @@ func (s *Service) AcceptFriendRequest(ctx context.Context, userID, requestID str
 	if err != nil {
 		return nil, err
 	}
+	// 若双方互发申请，一并结案
+	_, _ = tx.Exec(ctx, `
+		UPDATE friend_requests SET status = 'accepted', decided_at = now()
+		WHERE from_user_id = $1 AND to_user_id = $2 AND status = 'pending'
+	`, toID, fromID)
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
@@ -553,6 +598,21 @@ func (s *Service) RejectFriendRequest(ctx context.Context, userID, requestID str
 	tag, err := s.pool.Exec(ctx, `
 		UPDATE friend_requests SET status = 'rejected', decided_at = now()
 		WHERE id = $1 AND to_user_id = $2 AND status = 'pending'
+	`, requestID, userID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return errors.New("request not found")
+	}
+	return nil
+}
+
+// CancelFriendRequest lets the sender withdraw a pending request.
+func (s *Service) CancelFriendRequest(ctx context.Context, userID, requestID string) error {
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE friend_requests SET status = 'rejected', decided_at = now()
+		WHERE id = $1 AND from_user_id = $2 AND status = 'pending'
 	`, requestID, userID)
 	if err != nil {
 		return err
@@ -1536,10 +1596,72 @@ func (s *Service) SendVoice(ctx context.Context, conversationID, userID string, 
 	return &m, nil
 }
 
+// CallBody is stored (sealed) for type=call system summary.
+type CallBody struct {
+	Kind        string `json:"kind"`
+	Status      string `json:"status"`
+	DurationSec int    `json:"durationSec,omitempty"`
+}
+
+func (s *Service) SendCallMessage(ctx context.Context, conversationID, senderID string, body CallBody) (*Message, error) {
+	ok, err := s.IsMember(ctx, conversationID, senderID)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, errors.New("forbidden")
+	}
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	sealed, err := crypto.Seal(s.key, payload)
+	if err != nil {
+		return nil, err
+	}
+	var m Message
+	var sealedOut string
+	err = s.pool.QueryRow(ctx, `
+		INSERT INTO messages (conversation_id, sender_id, type, body_sealed)
+		VALUES ($1, $2, 'call', $3)
+		RETURNING id::text, conversation_id::text, sender_id::text, type, body_sealed, created_at::text
+	`, conversationID, senderID, sealed).Scan(
+		&m.ID, &m.ConversationID, &m.SenderID, &m.Type, &sealedOut, &m.CreatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	m.Body = string(payload)
+	s.fillSenderMeta(ctx, &m, senderID)
+	_, _ = s.pool.Exec(ctx, `
+		UPDATE conversation_members SET hidden_at = NULL
+		WHERE conversation_id = $1 AND hidden_at IS NOT NULL
+	`, conversationID)
+	return &m, nil
+}
+
+func (s *Service) ConversationType(ctx context.Context, conversationID string) (string, error) {
+	var typ string
+	err := s.pool.QueryRow(ctx, `SELECT type FROM conversations WHERE id = $1`, conversationID).Scan(&typ)
+	if err != nil {
+		return "", err
+	}
+	return typ, nil
+}
+
 func (s *Service) SearchUser(ctx context.Context, viewerID, q string) (*PublicUser, error) {
 	peer, err := s.resolveUser(ctx, q)
 	if err != nil {
 		return nil, err
+	}
+	if peer.ID != viewerID {
+		same, err := s.sameAutonomousDomain(ctx, viewerID, peer.ID)
+		if err != nil {
+			return nil, err
+		}
+		if !same {
+			return nil, errors.New("user not found")
+		}
 	}
 	out := &PublicUser{
 		ID:        peer.ID,
@@ -1564,11 +1686,12 @@ func (s *Service) SearchGroup(ctx context.Context, viewerID, groupNo string) (*P
 		return nil, errors.New("group not found")
 	}
 	var g PublicGroup
+	var ownerID *string
 	err := s.pool.QueryRow(ctx, `
-		SELECT id::text, title, group_no, avatar_url,
+		SELECT id::text, title, group_no, avatar_url, owner_id::text,
 			(SELECT COUNT(*)::int FROM conversation_members cm WHERE cm.conversation_id = conversations.id)
 		FROM conversations WHERE type = 'group' AND group_no = $1
-	`, groupNo).Scan(&g.ID, &g.Title, &g.GroupNo, &g.AvatarURL, &g.MemberCount)
+	`, groupNo).Scan(&g.ID, &g.Title, &g.GroupNo, &g.AvatarURL, &ownerID, &g.MemberCount)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, errors.New("group not found")
@@ -1580,6 +1703,18 @@ func (s *Service) SearchGroup(ctx context.Context, viewerID, groupNo string) (*P
 		return nil, err
 	}
 	g.Joined = ok
+	if !ok {
+		if ownerID == nil || *ownerID == "" {
+			return nil, errors.New("group not found")
+		}
+		same, err := s.sameAutonomousDomain(ctx, viewerID, *ownerID)
+		if err != nil {
+			return nil, err
+		}
+		if !same {
+			return nil, errors.New("group not found")
+		}
+	}
 	return &g, nil
 }
 

@@ -5,14 +5,34 @@ export type ChatBg = {
   url?: string
 }
 
+export type ChatBgImage = {
+  id: string
+  url: string
+  createdAt: string
+}
+
+/** QQ 式随心调：主题色 / 气泡 / 背景 / 纹理 / 透明度 / 毛玻璃 */
+export type ChatTheme = {
+  accent?: string
+  bubbleMine?: string
+  bubblePeer?: string
+  background?: ChatBg | null
+  texture?: string
+  /** 0–1 面板透明度（不影响气泡） */
+  opacity?: number
+  /** 0–1 毛玻璃模糊强度（与透明度独立） */
+  blur?: number
+}
+
 export type User = {
   id: string
   email: string
   username: string
   emailVerified?: boolean
   hopeId?: string | null
-  hopeIdChangedAt?: string | null
   avatarUrl?: string | null
+  chatTheme?: ChatTheme | null
+  /** @deprecated use chatTheme.background */
   chatBg?: ChatBg | null
 }
 
@@ -117,6 +137,35 @@ export type ForwardBody = {
   items: ForwardItem[]
 }
 
+export type CallKind = 'voice' | 'video'
+
+export type CallPeer = {
+  userId: string
+  username: string
+  avatarUrl?: string | null
+  state: string
+  audio: boolean
+  video: boolean
+}
+
+export type CallRoom = {
+  id: string
+  conversationId: string
+  convType: string
+  kind: CallKind
+  hostId: string
+  status: string
+  createdAt: string
+  startedAt?: string
+  participants: CallPeer[]
+}
+
+export type CallIceServer = {
+  urls: string[]
+  username?: string
+  credential?: string
+}
+
 export type QQStatus = {
   botEnabled: boolean
   bound: boolean
@@ -212,6 +261,16 @@ export function apiErrorMessage(e: unknown, fallback: string): string {
     'username must be 1-32 characters after trim': '用户名须为 1–32 个字符（字母/中文/数字等）',
     'nothing to update': '没有可更新的内容',
     'invalid fellowship code': '团契码不正确',
+    'domain name taken': '自治域名称已存在',
+    'fellowship code taken': '团契码已存在',
+    'domain has fellowships': '请先移走或删除该域下的团契',
+    'fellowship has users': '请先将用户改到其他团契',
+    'name required': '请填写名称',
+    'code required': '请填写团契码',
+    'domain required': '请选择自治域',
+    'domain not found': '自治域不存在',
+    'fellowship not found': '团契不存在',
+    'not found': '未找到',
     'invalid credentials': '账号或密码错误',
     email_not_verified: '请先完成邮箱验证',
     'invalid verify token': '验证链接无效或已过期',
@@ -227,7 +286,6 @@ export function apiErrorMessage(e: unknown, fallback: string): string {
     'only owner can rename': '仅群主可修改群名称',
     'invalid hope id': 'IHope 号无效',
     'hope id taken': '该 IHope 号已被占用',
-    'hope id cooldown': 'IHope 号 30 天内只能刷新一次',
     'quotes disabled': '今日金句未配置',
     'quotes error': '无法读取今日金句',
     'already friends': '已经是好友',
@@ -395,6 +453,10 @@ export const api = {
     request<{ message: string }>(`/api/contacts/friend-requests/${id}/reject`, {
       method: 'POST',
     }),
+  cancelFriendRequest: (id: string) =>
+    request<{ message: string }>(`/api/contacts/friend-requests/${id}/cancel`, {
+      method: 'POST',
+    }),
   listGroups: () => request<{ groups: Conversation[] }>('/api/contacts/groups'),
   patchConversationMember: (
     id: string,
@@ -404,6 +466,12 @@ export const api = {
       method: 'PATCH',
       body: JSON.stringify(prefs),
     }),
+  patchMeChatTheme: (theme: ChatTheme) =>
+    request<User>('/api/me/chat-theme', {
+      method: 'PATCH',
+      body: JSON.stringify(theme),
+    }),
+  /** @deprecated use patchMeChatTheme({ background }) */
   patchMeChatBg: (chatBg: ChatBg) =>
     request<User>('/api/me/chat-bg', {
       method: 'PATCH',
@@ -430,6 +498,10 @@ export const api = {
     }
     return data as User
   },
+  listMeChatBgImages: () =>
+    request<{ images: ChatBgImage[] }>('/api/me/chat-bg/images'),
+  deleteMeChatBgImage: (id: string) =>
+    request<User>(`/api/me/chat-bg/images/${id}`, { method: 'DELETE' }),
   markRead: (id: string) =>
     request<{ message: string }>(`/api/conversations/${id}/read`, { method: 'POST' }),
   listMessages: (
@@ -588,6 +660,19 @@ export const api = {
     request<Message>(`/api/conversations/${conversationId}/messages/${messageId}/recall`, {
       method: 'POST',
     }),
+  startCall: (conversationId: string, kind: CallKind) =>
+    request<CallRoom>(`/api/conversations/${conversationId}/calls`, {
+      method: 'POST',
+      body: JSON.stringify({ kind }),
+    }),
+  getCall: (callId: string) => request<CallRoom>(`/api/calls/${callId}`),
+  acceptCall: (callId: string) =>
+    request<CallRoom>(`/api/calls/${callId}/accept`, { method: 'POST' }),
+  rejectCall: (callId: string) =>
+    request<{ ok: boolean }>(`/api/calls/${callId}/reject`, { method: 'POST' }),
+  hangupCall: (callId: string) =>
+    request<{ ok: boolean }>(`/api/calls/${callId}/hangup`, { method: 'POST' }),
+  getCallIce: () => request<{ iceServers: CallIceServer[] }>('/api/calls/ice'),
   qqStatus: () => request<QQStatus>('/api/me/qq-bot'),
   qqBindCode: () =>
     request<{ code: string; expiresAt: string; botAddHint: string }>(
@@ -662,6 +747,28 @@ export type AdminUser = {
   createdAt: string
   qqBound?: boolean
   qqOpenId?: string | null
+  fellowshipId?: string | null
+  fellowshipCode?: string | null
+  fellowshipName?: string | null
+  domainId?: string | null
+  domainName?: string | null
+}
+
+export type AdminDomain = {
+  id: string
+  name: string
+  createdAt: string
+  fellowshipCount: number
+}
+
+export type AdminFellowship = {
+  id: string
+  code: string
+  name: string
+  domainId: string
+  domainName: string
+  createdAt: string
+  userCount: number
 }
 
 export type AdminConversation = {
@@ -687,6 +794,11 @@ export const adminApi = {
   listUsers: () => adminRequest<{ users: AdminUser[] }>('/api/admin/users'),
   deleteUser: (id: string) =>
     adminRequest<{ message: string }>(`/api/admin/users/${id}`, { method: 'DELETE' }),
+  setUserFellowship: (id: string, fellowshipId: string) =>
+    adminRequest<{ message: string }>(`/api/admin/users/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ fellowshipId }),
+    }),
   listConversations: () =>
     adminRequest<{ conversations: AdminConversation[] }>('/api/admin/conversations'),
   deleteConversation: (id: string) =>
@@ -706,6 +818,38 @@ export const adminApi = {
     ),
   unbindQQ: (userId: string) =>
     adminRequest<{ message: string }>(`/api/admin/users/${userId}/qq-bot`, {
+      method: 'DELETE',
+    }),
+  listDomains: () => adminRequest<{ domains: AdminDomain[] }>('/api/admin/domains'),
+  createDomain: (name: string) =>
+    adminRequest<AdminDomain>('/api/admin/domains', {
+      method: 'POST',
+      body: JSON.stringify({ name }),
+    }),
+  updateDomain: (id: string, name: string) =>
+    adminRequest<AdminDomain>(`/api/admin/domains/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ name }),
+    }),
+  deleteDomain: (id: string) =>
+    adminRequest<{ message: string }>(`/api/admin/domains/${id}`, { method: 'DELETE' }),
+  listFellowships: () =>
+    adminRequest<{ fellowships: AdminFellowship[] }>('/api/admin/fellowships'),
+  createFellowship: (payload: { code: string; name: string; domainId: string }) =>
+    adminRequest<AdminFellowship>('/api/admin/fellowships', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  updateFellowship: (
+    id: string,
+    payload: { code: string; name: string; domainId: string },
+  ) =>
+    adminRequest<AdminFellowship>(`/api/admin/fellowships/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    }),
+  deleteFellowship: (id: string) =>
+    adminRequest<{ message: string }>(`/api/admin/fellowships/${id}`, {
       method: 'DELETE',
     }),
 }

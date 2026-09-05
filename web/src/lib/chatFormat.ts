@@ -128,6 +128,50 @@ export function parseVoiceBody(body: string): VoicePayload | null {
   return null
 }
 
+export type CallPayload = {
+  kind: string
+  status: string
+  durationSec?: number
+}
+
+export function parseCallBody(body: string): CallPayload | null {
+  try {
+    const o = JSON.parse(body) as Partial<CallPayload>
+    if (o && typeof o.kind === 'string' && typeof o.status === 'string') {
+      return {
+        kind: o.kind,
+        status: o.status,
+        durationSec: typeof o.durationSec === 'number' ? o.durationSec : undefined,
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+  return null
+}
+
+export function formatCallMessage(c: CallPayload): string {
+  const isVideo = c.kind === 'video'
+  const label = isVideo ? '视频通话' : '语音通话'
+  switch (c.status) {
+    case 'missed':
+      return `未接${label}`
+    case 'rejected':
+      return `已拒绝${label}`
+    case 'cancelled':
+      return `已取消${label}`
+    case 'ended': {
+      const sec = Math.max(0, c.durationSec || 0)
+      if (sec <= 0) return `${label}已结束`
+      const m = Math.floor(sec / 60)
+      const r = sec % 60
+      return `${label} ${m}:${String(r).padStart(2, '0')}`
+    }
+    default:
+      return label
+  }
+}
+
 export function formatVoiceDuration(sec: number): string {
   const s = Math.max(1, Math.round(sec))
   const m = Math.floor(s / 60)
@@ -194,6 +238,10 @@ export function messageCopyText(m: {
   if (m.type === 'voice') {
     const v = parseVoiceBody(m.body)
     return v ? `[语音] ${formatVoiceDuration(v.duration)}` : '[语音]'
+  }
+  if (m.type === 'call') {
+    const c = parseCallBody(m.body)
+    return c ? formatCallMessage(c) : '[通话]'
   }
   if (m.type === 'forward') {
     const fwd = parseForwardBody(m.body)

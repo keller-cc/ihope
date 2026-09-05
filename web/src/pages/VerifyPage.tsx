@@ -35,33 +35,36 @@ export function VerifyPage() {
           />
           <h1 className="im-auth__title">IHope</h1>
         </header>
-        {status === 'loading' && <Loading text="正在验证邮箱…" />}
-        {status === 'ok' && (
-          <>
-            <h2 className="im-auth__title" style={{ fontSize: '1.2rem' }}>
-              邮箱已验证
-            </h2>
-            <p className="im-muted">现在可以登录使用 IHope。</p>
-            <Link to="/">
-              <Button theme="primary" size="large" block>
-                去登录
-              </Button>
-            </Link>
-          </>
-        )}
-        {status === 'fail' && (
-          <>
-            <h2 className="im-auth__title" style={{ fontSize: '1.2rem' }}>
-              验证失败
-            </h2>
-            <p className="im-muted">链接无效或已过期，请重新发送验证邮件。</p>
-            <Link to="/">
-              <Button theme="primary" size="large" block>
-                返回
-              </Button>
-            </Link>
-          </>
-        )}
+
+        <div className="im-auth__panel">
+          {status === 'loading' && (
+            <div className="im-auth__loading">
+              <Loading text="正在验证邮箱…" />
+            </div>
+          )}
+          {status === 'ok' && (
+            <>
+              <h2 className="im-auth__heading">邮箱已验证</h2>
+              <p className="im-auth__lead">现在可以登录使用 IHope。</p>
+              <Link className="im-auth__link-btn" to="/">
+                <Button theme="primary" size="large" block>
+                  去登录
+                </Button>
+              </Link>
+            </>
+          )}
+          {status === 'fail' && (
+            <>
+              <h2 className="im-auth__heading">验证失败</h2>
+              <p className="im-auth__lead">链接无效或已过期，请重新发送验证邮件。</p>
+              <Link className="im-auth__link-btn" to="/">
+                <Button theme="primary" size="large" block>
+                  返回
+                </Button>
+              </Link>
+            </>
+          )}
+        </div>
       </div>
     </div>
   )

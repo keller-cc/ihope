@@ -1,4 +1,4 @@
-import { SoundMute1Icon } from 'tdesign-icons-react'
+import { ChatOffIcon, PinFilledIcon } from 'tdesign-icons-react'
 import { Dropdown } from 'tdesign-react'
 import type { Conversation } from '../api'
 import { conversationTitle, formatMessageTime } from '../lib/chatFormat'
@@ -65,14 +65,13 @@ export function SessionList({
               <span className="im-list-item__row">
                 <span className="im-list-item__title">
                   <span className="im-list-item__title-text">
-                    {c.pinned ? <span className="im-pin-mark">↑</span> : null}
+                    {c.pinned ? (
+                      <PinFilledIcon className="im-pin-mark" size="14px" />
+                    ) : null}
                     {conversationTitle(c)}
                   </span>
                   {c.muted ? (
-                    <SoundMute1Icon
-                      className="im-mute-mark"
-                      size="14px"
-                    />
+                    <ChatOffIcon className="im-mute-mark" size="14px" />
                   ) : null}
                 </span>
                 <span className="im-list-item__time">
@@ -93,7 +92,7 @@ export function SessionList({
                   </span>
                 ) : c.muted ? (
                   <span className="im-mute-mark im-mute-mark--trail" title="消息免打扰">
-                    <SoundMute1Icon size="16px" />
+                    <ChatOffIcon size="16px" />
                   </span>
                 ) : null}
               </span>

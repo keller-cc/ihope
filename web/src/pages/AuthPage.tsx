@@ -206,7 +206,7 @@ export function AuthPage({ onAuthed }: Props) {
               />
               <Input
                 size="large"
-                placeholder="团契码"
+                placeholder="团契码（组织码）"
                 clearable
                 value={fellowshipCode}
                 onChange={(v) => setFellowshipCode(String(v))}
@@ -225,11 +225,9 @@ export function AuthPage({ onAuthed }: Props) {
         )}
 
         {mode === 'pending' && (
-          <>
-            <h2 className="im-auth__title" style={{ fontSize: '1.2rem', marginBottom: 12 }}>
-              验证邮箱
-            </h2>
-            <p className="im-muted">
+          <div className="im-auth__panel">
+            <h2 className="im-auth__heading">验证邮箱</h2>
+            <p className="im-auth__lead">
               已向 <strong>{pendingEmail || '你的邮箱'}</strong> 发送验证链接，完成后即可登录。
             </p>
             <div className="im-auth-fields">
@@ -246,11 +244,12 @@ export function AuthPage({ onAuthed }: Props) {
               </Button>
               {devToken && (
                 <div className="im-dev-verify">
-                  <p>开发环境验证码</p>
-                  <code>{devToken}</code>
+                  <p className="im-dev-verify__label">开发环境验证码</p>
+                  <code className="im-dev-verify__token">{devToken}</code>
                   <Button
                     size="small"
                     variant="outline"
+                    block
                     loading={busy}
                     onClick={() => void onDevVerify()}
                   >
@@ -262,7 +261,7 @@ export function AuthPage({ onAuthed }: Props) {
                 返回登录
               </Button>
             </div>
-          </>
+          </div>
         )}
       </div>
     </div>

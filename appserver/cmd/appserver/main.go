@@ -6,11 +6,13 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/keller-cc/ihope/appserver/internal/admin"
 	"github.com/keller-cc/ihope/appserver/internal/auth"
+	"github.com/keller-cc/ihope/appserver/internal/call"
 	"github.com/keller-cc/ihope/appserver/internal/chat"
 	"github.com/keller-cc/ihope/appserver/internal/config"
 	"github.com/keller-cc/ihope/appserver/internal/db"
@@ -53,12 +55,38 @@ func main() {
 		Mailer:         mailer,
 		FellowshipCode: cfg.FellowshipCode,
 	})
+	if err := authSvc.EnsureFellowshipsBootstrapped(ctx); err != nil {
+		log.Fatalf("fellowship bootstrap: %v", err)
+	}
 	chatSvc := chat.NewService(pool, cfg.MessageEncryptionKey)
 	if err := chatSvc.BackfillGroupNos(ctx); err != nil {
 		log.Printf("backfill group nos: %v", err)
 	}
 	adminSvc := admin.NewService(pool)
 	h := hub.New()
+
+	var ice []call.ICEServer
+	if urls := strings.TrimSpace(cfg.CallTurnURLs); urls != "" {
+		parts := strings.Split(urls, ",")
+		list := make([]string, 0, len(parts))
+		for _, p := range parts {
+			p = strings.TrimSpace(p)
+			if p != "" {
+				list = append(list, p)
+			}
+		}
+		if len(list) > 0 {
+			ice = append(ice, call.ICEServer{
+				URLs:       list,
+				Username:   cfg.CallTurnUsername,
+				Credential: cfg.CallTurnCredential,
+			})
+		}
+	}
+	ice = append(ice, call.ICEServer{
+		URLs: []string{"stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"},
+	})
+	callSvc := call.New(h, call.ChatMembership{Chat: chatSvc, Hub: h}, ice)
 
 	var qqSvc *qqbot.Service
 	if cfg.QQBotEnabled {
@@ -67,7 +95,7 @@ func main() {
 		log.Println("qq bot enabled")
 	}
 
-	srv := httpserver.New(authSvc, chatSvc, adminSvc, h, qqSvc, cfg.CORSOrigin, cfg.QQWebhookPath, cfg.AdminToken, "data/uploads", cfg.QQQuotesFilePath)
+	srv := httpserver.New(authSvc, chatSvc, adminSvc, h, callSvc, qqSvc, cfg.CORSOrigin, cfg.QQWebhookPath, cfg.AdminToken, "data/uploads", cfg.QQQuotesFilePath)
 	_ = os.MkdirAll("data/uploads/avatars", 0o755)
 	_ = os.MkdirAll("data/uploads/groups", 0o755)
 	_ = os.MkdirAll("data/uploads/chat", 0o755)

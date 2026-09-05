@@ -36,8 +36,9 @@ export function FriendProfile({
   }, [profile.id, profile.remark])
 
   const displayName = profile.remark?.trim() || profile.username
+  const remarkTrimmed = profile.remark?.trim() || ''
   const showOriginalName =
-    !!profile.username && profile.remark?.trim() !== '' && profile.remark.trim() !== profile.username
+    !!profile.username && remarkTrimmed !== '' && remarkTrimmed !== profile.username
 
   return (
     <section className="im-pane im-pane--settings">

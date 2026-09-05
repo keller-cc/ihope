@@ -36,6 +36,9 @@ type Config struct {
 	QQQuotesFilePath      string
 	FellowshipCode        string
 	AdminToken            string
+	CallTurnURLs          string
+	CallTurnUsername      string
+	CallTurnCredential    string
 }
 
 func Load() Config {
@@ -80,6 +83,9 @@ func Load() Config {
 		QQQuotesFilePath:      env("QQ_QUOTES_FILE_PATH", ""),
 		FellowshipCode:        env("FELLOWSHIP_CODE", "盼望之地"),
 		AdminToken:            env("ADMIN_TOKEN", "dev-admin-token-change-me"),
+		CallTurnURLs:          env("CALL_TURN_URLS", ""),
+		CallTurnUsername:      env("CALL_TURN_USERNAME", ""),
+		CallTurnCredential:    env("CALL_TURN_CREDENTIAL", ""),
 	}
 }
 

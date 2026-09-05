@@ -1,13 +1,15 @@
 import { useEffect, useRef, useState } from 'react'
 import {
+  CallIcon,
+  ChatOffIcon,
   ChatSettingIcon,
   FolderOpenIcon,
   ImageIcon,
   KeyboardIcon,
-  MicrophoneIcon,
+  Microphone1Icon,
   SearchIcon,
   SmileIcon,
-  SoundMute1Icon,
+  VideoCamera1Icon,
 } from 'tdesign-icons-react'
 import { Button, Dialog, MessagePlugin, Popup, Textarea } from 'tdesign-react'
 import type { Conversation, Message, User } from '../api'
@@ -16,15 +18,17 @@ import {
   formatFileSize,
   formatMessageTimeDivider,
   formatVoiceDuration,
+  formatCallMessage,
   messageCopyText,
   parseFileBody,
   parseForwardBody,
   parseImageBody,
   parseVoiceBody,
+  parseCallBody,
   shouldShowMessageTimeDivider,
 } from '../lib/chatFormat'
 import { CHAT_EMOJIS } from '../lib/emojis'
-import { chatBgStyle } from '../lib/chatBg'
+import { chatBgStyle, resolveUserTheme } from '../lib/chatBg'
 import { Avatar } from './Avatar'
 import { ImageViewer } from './ImageViewer'
 
@@ -47,6 +51,8 @@ type Props = {
   onLoadMore?: () => void
   onBack: () => void
   onOpenProfile?: () => void
+  onVoiceCall?: () => void
+  onVideoCall?: () => void
   listRef: React.RefObject<HTMLDivElement | null>
   showBack: boolean
   focusMessageId?: string | null
@@ -142,6 +148,8 @@ export function ChatPane({
   onLoadMore,
   onBack,
   onOpenProfile,
+  onVoiceCall,
+  onVideoCall,
   listRef,
   showBack,
   focusMessageId,
@@ -152,6 +160,8 @@ export function ChatPane({
 }: Props) {
   const imageRef = useRef<HTMLInputElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
+  const theme = resolveUserTheme(user)
+  const texture = theme?.texture && theme.texture !== 'none' ? theme.texture : null
   const pressTimer = useRef<number | null>(null)
   const ignoreClickUntil = useRef(0)
   const [viewer, setViewer] = useState<{ thumb: string; url: string } | null>(null)
@@ -503,7 +513,7 @@ export function ChatPane({
                   {conversation ? conversationTitle(conversation) : '会话'}
                 </span>
                 {conversation?.muted ? (
-                  <SoundMute1Icon
+                  <ChatOffIcon
                     className="im-mute-mark im-mute-mark--head"
                     size="16px"
                   />
@@ -522,6 +532,28 @@ export function ChatPane({
                 <SearchIcon size="20px" />
               </button>
             )}
+            {onVoiceCall && (
+              <button
+                type="button"
+                className="im-head-icon-btn"
+                title="语音通话"
+                aria-label="语音通话"
+                onClick={onVoiceCall}
+              >
+                <CallIcon size="20px" />
+              </button>
+            )}
+            {onVideoCall && (
+              <button
+                type="button"
+                className="im-head-icon-btn"
+                title="视频通话"
+                aria-label="视频通话"
+                onClick={onVideoCall}
+              >
+                <VideoCamera1Icon size="20px" />
+              </button>
+            )}
             {onOpenProfile && (
               <button
                 type="button"
@@ -537,7 +569,18 @@ export function ChatPane({
         )}
       </header>
 
-      <div className="im-messages" ref={listRef} style={chatBgStyle(user.chatBg)}>
+      <div
+        className="im-messages"
+        ref={listRef}
+        style={
+          theme?.background && theme.background.kind !== 'default'
+            ? undefined
+            : chatBgStyle(theme?.background || user.chatBg)
+        }
+      >
+        {texture && !(theme?.background && theme.background.kind !== 'default') && (
+          <div className={`im-messages__texture im-messages__texture--${texture}`} aria-hidden />
+        )}
         {hasMore && (
           <button
             type="button"
@@ -563,8 +606,9 @@ export function ChatPane({
           const img = !m.recalled && m.type === 'image' ? parseImageBody(m.body) : null
           const file = !m.recalled && m.type === 'file' ? parseFileBody(m.body) : null
           const voice = !m.recalled && m.type === 'voice' ? parseVoiceBody(m.body) : null
+          const callInfo = !m.recalled && m.type === 'call' ? parseCallBody(m.body) : null
           const fwd = !m.recalled && m.type === 'forward' ? parseForwardBody(m.body) : null
-          const press = m.recalled || selectMode ? null : bindPressHandlers(m)
+          const press = m.recalled || selectMode || callInfo ? null : bindPressHandlers(m)
           const showMeta = isGroup
           const showTime = shouldShowMessageTimeDivider(
             messages[i - 1]?.createdAt,
@@ -582,6 +626,16 @@ export function ChatPane({
               {showTime && (
                 <div className="im-msg-time">{formatMessageTimeDivider(m.createdAt)}</div>
               )}
+              {callInfo ? (
+                <div className="im-msg-call">
+                  {callInfo.kind === 'video' ? (
+                    <VideoCamera1Icon size="14px" />
+                  ) : (
+                    <CallIcon size="14px" />
+                  )}
+                  <span>{formatCallMessage(callInfo)}</span>
+                </div>
+              ) : (
               <div
                 className={
                   selectMode
@@ -736,6 +790,7 @@ export function ChatPane({
                 </div>
                 </div>
               </div>
+              )}
             </div>
           )
         })}
@@ -806,7 +861,7 @@ export function ChatPane({
                 setVoiceMode((v) => !v)
               }}
             >
-              {voiceMode ? <KeyboardIcon size="22px" /> : <MicrophoneIcon size="22px" />}
+              {voiceMode ? <KeyboardIcon size="22px" /> : <Microphone1Icon size="22px" />}
             </button>
             <input
               ref={imageRef}

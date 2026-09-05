@@ -23,20 +23,20 @@ var (
 	ErrEmailNotVerified      = errors.New("email not verified")
 	ErrInvalidVerifyToken    = errors.New("invalid verify token")
 	ErrInvalidFellowshipCode = errors.New("invalid fellowship code")
-	ErrInvalidHopeID         = errors.New("invalid hope id")
-	ErrHopeIDTaken           = errors.New("hope id taken")
-	ErrHopeIDCooldown         = errors.New("hope id cooldown")
+	ErrInvalidHopeID = errors.New("invalid hope id")
+	ErrHopeIDTaken   = errors.New("hope id taken")
 )
 
 type User struct {
-	ID              string  `json:"id"`
-	Email           string  `json:"email"`
-	Username        string  `json:"username"`
-	EmailVerified   bool    `json:"emailVerified"`
-	HopeID          *string `json:"hopeId,omitempty"`
-	HopeIDChangedAt *string `json:"hopeIdChangedAt,omitempty"`
-	AvatarURL       *string `json:"avatarUrl,omitempty"`
-	ChatBg          *ChatBg `json:"chatBg,omitempty"`
+	ID            string  `json:"id"`
+	Email         string  `json:"email"`
+	Username      string  `json:"username"`
+	EmailVerified bool    `json:"emailVerified"`
+	HopeID        *string `json:"hopeId,omitempty"`
+	AvatarURL     *string    `json:"avatarUrl,omitempty"`
+	ChatTheme     *ChatTheme `json:"chatTheme,omitempty"`
+	// ChatBg is derived from ChatTheme.Background for older clients.
+	ChatBg *ChatBg `json:"chatBg,omitempty"`
 }
 
 type RegisterResult struct {
@@ -67,9 +67,9 @@ func NewService(pool *pgxpool.Pool, opt Options) *Service {
 func (s *Service) Register(ctx context.Context, email, username, password, fellowshipCode string) (*RegisterResult, error) {
 	email = NormalizeEmail(email)
 	username = strings.TrimSpace(username)
-	fellowshipCode = strings.TrimSpace(fellowshipCode)
-	if fellowshipCode == "" || fellowshipCode != strings.TrimSpace(s.opt.FellowshipCode) {
-		return nil, ErrInvalidFellowshipCode
+	fellowshipID, err := s.lookupFellowshipID(ctx, fellowshipCode)
+	if err != nil {
+		return nil, err
 	}
 	if !ValidateEmail(email) {
 		return nil, errors.New("invalid email")
@@ -86,10 +86,10 @@ func (s *Service) Register(ctx context.Context, email, username, password, fello
 	}
 	var u User
 	err = s.pool.QueryRow(ctx, `
-		INSERT INTO users (email, username, password_hash, email_verified)
-		VALUES ($1, $2, $3, FALSE)
-		RETURNING id::text, email, username, email_verified, hope_id, hope_id_changed_at::text, avatar_url
-	`, email, username, hash).Scan(&u.ID, &u.Email, &u.Username, &u.EmailVerified, &u.HopeID, &u.HopeIDChangedAt, &u.AvatarURL)
+		INSERT INTO users (email, username, password_hash, email_verified, fellowship_id)
+		VALUES ($1, $2, $3, FALSE, $4::uuid)
+		RETURNING id::text, email, username, email_verified, hope_id, avatar_url
+	`, email, username, hash, fellowshipID).Scan(&u.ID, &u.Email, &u.Username, &u.EmailVerified, &u.HopeID, &u.AvatarURL)
 	if err != nil {
 		msg := err.Error()
 		if strings.Contains(msg, "users_email_key") {
@@ -100,13 +100,11 @@ func (s *Service) Register(ctx context.Context, email, username, password, fello
 		}
 		return nil, err
 	}
-	hopeID, err := s.assignHopeID(ctx, u.ID, false)
+	hopeID, err := s.assignHopeID(ctx, u.ID)
 	if err != nil {
 		return nil, err
 	}
 	u.HopeID = &hopeID
-	now := time.Now().UTC().Format(time.RFC3339Nano)
-	u.HopeIDChangedAt = &now
 	devToken, err := s.sendEmailVerification(ctx, u.ID, u.Email)
 	if err != nil {
 		return nil, err
@@ -215,17 +213,17 @@ func (s *Service) Login(ctx context.Context, login, password string) (*User, str
 	var err error
 	if LooksLikeHopeID(login) {
 		err = s.pool.QueryRow(ctx, `
-			SELECT id::text, email, username, email_verified, hope_id, hope_id_changed_at::text, avatar_url, password_hash
+			SELECT id::text, email, username, email_verified, hope_id, avatar_url, password_hash
 			FROM users WHERE hope_id = $1
 			LIMIT 1
-		`, login).Scan(&u.ID, &u.Email, &u.Username, &u.EmailVerified, &u.HopeID, &u.HopeIDChangedAt, &u.AvatarURL, &hash)
+		`, login).Scan(&u.ID, &u.Email, &u.Username, &u.EmailVerified, &u.HopeID, &u.AvatarURL, &hash)
 	} else {
 		err = s.pool.QueryRow(ctx, `
-			SELECT id::text, email, username, email_verified, hope_id, hope_id_changed_at::text, avatar_url, password_hash
+			SELECT id::text, email, username, email_verified, hope_id, avatar_url, password_hash
 			FROM users
 			WHERE email = lower($1) OR username = $1
 			LIMIT 1
-		`, login).Scan(&u.ID, &u.Email, &u.Username, &u.EmailVerified, &u.HopeID, &u.HopeIDChangedAt, &u.AvatarURL, &hash)
+		`, login).Scan(&u.ID, &u.Email, &u.Username, &u.EmailVerified, &u.HopeID, &u.AvatarURL, &hash)
 	}
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -254,13 +252,16 @@ func (s *Service) UserByID(ctx context.Context, id string) (*User, error) {
 	var u User
 	var chatBgRaw string
 	err := s.pool.QueryRow(ctx, `
-		SELECT id::text, email, username, email_verified, hope_id, hope_id_changed_at::text, avatar_url, COALESCE(chat_bg, '')
+		SELECT id::text, email, username, email_verified, hope_id, avatar_url, COALESCE(chat_bg, '')
 		FROM users WHERE id = $1
-	`, id).Scan(&u.ID, &u.Email, &u.Username, &u.EmailVerified, &u.HopeID, &u.HopeIDChangedAt, &u.AvatarURL, &chatBgRaw)
+	`, id).Scan(&u.ID, &u.Email, &u.Username, &u.EmailVerified, &u.HopeID, &u.AvatarURL, &chatBgRaw)
 	if err != nil {
 		return nil, err
 	}
-	u.ChatBg = ParseChatBg(chatBgRaw)
+	u.ChatTheme = ParseChatTheme(chatBgRaw)
+	if u.ChatTheme != nil {
+		u.ChatBg = u.ChatTheme.Background
+	}
 	return &u, nil
 }
 
@@ -280,8 +281,13 @@ func (s *Service) SetUsername(ctx context.Context, userID, username string) (*Us
 	return s.UserByID(ctx, userID)
 }
 
-func (s *Service) SetChatBg(ctx context.Context, userID string, bg *ChatBg) (*User, error) {
-	raw, err := EncodeChatBg(bg)
+func (s *Service) SetChatTheme(ctx context.Context, userID string, patch *ChatTheme) (*User, error) {
+	u, err := s.UserByID(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	merged := MergeChatTheme(u.ChatTheme, patch)
+	raw, err := EncodeChatTheme(merged)
 	if err != nil {
 		return nil, err
 	}
@@ -292,6 +298,11 @@ func (s *Service) SetChatBg(ctx context.Context, userID string, bg *ChatBg) (*Us
 	return s.UserByID(ctx, userID)
 }
 
+// SetChatBg updates only the wallpaper layer (legacy / upload helper).
+func (s *Service) SetChatBg(ctx context.Context, userID string, bg *ChatBg) (*User, error) {
+	return s.SetChatTheme(ctx, userID, &ChatTheme{Background: bg})
+}
+
 func (s *Service) SetAvatarURL(ctx context.Context, userID, url string) (*User, error) {
 	_, err := s.pool.Exec(ctx, `UPDATE users SET avatar_url = $1 WHERE id = $2`, url, userID)
 	if err != nil {
@@ -300,27 +311,17 @@ func (s *Service) SetAvatarURL(ctx context.Context, userID, url string) (*User, 
 	return s.UserByID(ctx, userID)
 }
 
-const hopeIDCooldown = 30 * 24 * time.Hour
-
 // assignHopeID generates a unique system IHope number (8–10 digits).
-// If enforceCooldown and hope_id_changed_at is within 30 days, returns ErrHopeIDCooldown.
-func (s *Service) assignHopeID(ctx context.Context, userID string, enforceCooldown bool) (string, error) {
+func (s *Service) assignHopeID(ctx context.Context, userID string) (string, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return "", err
 	}
 	defer tx.Rollback(ctx)
 
-	var current *string
-	var changedAt *time.Time
-	err = tx.QueryRow(ctx, `
-		SELECT hope_id, hope_id_changed_at FROM users WHERE id = $1 FOR UPDATE
-	`, userID).Scan(&current, &changedAt)
-	if err != nil {
+	var lockedID string
+	if err := tx.QueryRow(ctx, `SELECT id::text FROM users WHERE id = $1 FOR UPDATE`, userID).Scan(&lockedID); err != nil {
 		return "", err
-	}
-	if enforceCooldown && current != nil && *current != "" && changedAt != nil && time.Since(*changedAt) < hopeIDCooldown {
-		return "", ErrHopeIDCooldown
 	}
 
 	var hopeID string
@@ -344,7 +345,7 @@ func (s *Service) assignHopeID(ctx context.Context, userID string, enforceCooldo
 		return "", errors.New("failed to allocate hope id")
 	}
 	_, err = tx.Exec(ctx, `
-		UPDATE users SET hope_id = $1, hope_id_changed_at = now() WHERE id = $2
+		UPDATE users SET hope_id = $1 WHERE id = $2
 	`, hopeID, userID)
 	if err != nil {
 		return "", err
@@ -373,9 +374,9 @@ func randomHopeID() (string, error) {
 	return n.String(), nil
 }
 
-// RefreshHopeID regenerates a system IHope number (30-day cooldown).
+// RefreshHopeID regenerates a system IHope number.
 func (s *Service) RefreshHopeID(ctx context.Context, userID string) (*User, error) {
-	if _, err := s.assignHopeID(ctx, userID, true); err != nil {
+	if _, err := s.assignHopeID(ctx, userID); err != nil {
 		return nil, err
 	}
 	return s.UserByID(ctx, userID)
@@ -390,7 +391,7 @@ func (s *Service) EnsureHopeID(ctx context.Context, userID string) (*User, error
 	if u.HopeID != nil && *u.HopeID != "" {
 		return u, nil
 	}
-	if _, err := s.assignHopeID(ctx, userID, false); err != nil {
+	if _, err := s.assignHopeID(ctx, userID); err != nil {
 		return nil, err
 	}
 	return s.UserByID(ctx, userID)

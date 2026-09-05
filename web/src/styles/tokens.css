@@ -2,7 +2,11 @@
 :root {
   --im-color-primary: #12b7f5;
   --im-color-primary-deep: #0099cc;
+  --im-color-primary-soft: #e8f7fd;
   --im-color-success: #95ec69;
+  --im-theme-panel-opacity: 1;
+  --im-theme-blur: 10px;
+  --im-theme-saturate: 1.15;
   --im-color-danger: #fa5151;
   --im-color-ink: #000000;
   --im-color-muted: #999999;
@@ -18,10 +22,28 @@
   --im-radius-lg: 10px;
   --im-font: 'PingFang SC', 'Microsoft YaHei UI', 'Noto Sans SC', system-ui, sans-serif;
   --im-shadow-frame: 0 8px 28px rgba(0, 0, 0, 0.12);
-  --td-brand-color: #12b7f5;
-  --td-brand-color-hover: #33c2f7;
-  --td-brand-color-active: #0099cc;
-  --td-brand-color-focus: rgba(18, 183, 245, 0.2);
+
+  /* TDesign brand 色板（默认霁青系，随心调主题色会整板覆盖） */
+  --td-brand-color-1: #e8f7fd;
+  --td-brand-color-2: #d0effc;
+  --td-brand-color-3: #a8e0f8;
+  --td-brand-color-4: #7ad0f5;
+  --td-brand-color-5: #4cc2f5;
+  --td-brand-color-6: #33c2f7;
+  --td-brand-color-7: #12b7f5;
+  --td-brand-color-8: #0099cc;
+  --td-brand-color-9: #007aa3;
+  --td-brand-color-10: #005c7a;
+  --td-brand-color: var(--td-brand-color-7);
+  --td-brand-color-hover: var(--td-brand-color-6);
+  --td-brand-color-focus: var(--td-brand-color-2);
+  --td-brand-color-active: var(--td-brand-color-8);
+  --td-brand-color-disabled: var(--td-brand-color-3);
+  --td-brand-color-light: var(--td-brand-color-1);
+  --td-brand-color-light-hover: var(--td-brand-color-2);
+  --td-text-color-brand: var(--td-brand-color-7);
+  --td-text-color-link: var(--td-brand-color-8);
+
   --mobile-bp: 860px;
 }
 
@@ -38,6 +60,7 @@ body,
   font-family: var(--im-font);
   color: var(--im-color-ink);
   background: var(--im-color-bg);
+  transition: background-color 0.2s ease;
 }
 
 button,

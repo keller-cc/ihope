@@ -8,14 +8,19 @@ import (
 )
 
 type UserRow struct {
-	ID            string  `json:"id"`
-	Email         string  `json:"email"`
-	Username      string  `json:"username"`
-	HopeID        *string `json:"hopeId,omitempty"`
-	EmailVerified bool    `json:"emailVerified"`
-	CreatedAt     string  `json:"createdAt"`
-	QQBound       bool    `json:"qqBound"`
-	QQOpenID      *string `json:"qqOpenId,omitempty"`
+	ID             string  `json:"id"`
+	Email          string  `json:"email"`
+	Username       string  `json:"username"`
+	HopeID         *string `json:"hopeId,omitempty"`
+	EmailVerified  bool    `json:"emailVerified"`
+	CreatedAt      string  `json:"createdAt"`
+	QQBound        bool    `json:"qqBound"`
+	QQOpenID       *string `json:"qqOpenId,omitempty"`
+	FellowshipID   *string `json:"fellowshipId,omitempty"`
+	FellowshipCode *string `json:"fellowshipCode,omitempty"`
+	FellowshipName *string `json:"fellowshipName,omitempty"`
+	DomainID       *string `json:"domainId,omitempty"`
+	DomainName     *string `json:"domainName,omitempty"`
 }
 
 type ConversationRow struct {
@@ -38,9 +43,12 @@ func NewService(pool *pgxpool.Pool) *Service {
 func (s *Service) ListUsers(ctx context.Context) ([]UserRow, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT u.id::text, u.email, u.username, u.hope_id, u.email_verified, u.created_at::text,
-			(q.user_id IS NOT NULL), q.qq_openid
+			(q.user_id IS NOT NULL), q.qq_openid,
+			u.fellowship_id::text, f.code, f.name, d.id::text, d.name
 		FROM users u
 		LEFT JOIN user_qq_bindings q ON q.user_id = u.id
+		LEFT JOIN fellowships f ON f.id = u.fellowship_id
+		LEFT JOIN autonomous_domains d ON d.id = f.domain_id
 		ORDER BY u.created_at DESC
 	`)
 	if err != nil {
@@ -54,6 +62,7 @@ func (s *Service) ListUsers(ctx context.Context) ([]UserRow, error) {
 		if err := rows.Scan(
 			&u.ID, &u.Email, &u.Username, &u.HopeID, &u.EmailVerified, &u.CreatedAt,
 			&u.QQBound, &openID,
+			&u.FellowshipID, &u.FellowshipCode, &u.FellowshipName, &u.DomainID, &u.DomainName,
 		); err != nil {
 			return nil, err
 		}

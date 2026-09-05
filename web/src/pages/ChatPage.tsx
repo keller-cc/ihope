@@ -6,6 +6,7 @@ import {
   apiErrorMessage,
   getToken,
   setToken,
+  type CallKind,
   type Contact,
   type Conversation,
   type FriendRequest,
@@ -15,11 +16,14 @@ import {
 } from '../api'
 import { AddContactDialog } from '../components/AddContactDialog'
 import { Avatar } from '../components/Avatar'
-import { ChatBackgroundDialog } from '../components/ChatBackgroundDialog'
+import { CallOverlay, IncomingCallModal } from '../components/CallOverlay'
+import { CallSetupDialog, type CallSetupResult } from '../components/CallSetupDialog'
+import { ChatThemeDialog } from '../components/ChatBackgroundDialog'
 import { ChatPane } from '../components/ChatPane'
 import { ContactList } from '../components/ContactList'
 import { ForwardDialog } from '../components/ForwardDialog'
 import { FriendProfile } from '../components/FriendProfile'
+import { FriendRequestsPane } from '../components/FriendRequestsPane'
 import { GroupProfile } from '../components/GroupProfile'
 import {
   ChatHistoryPanel,
@@ -30,8 +34,9 @@ import { PlusMenu } from '../components/PlusMenu'
 import { SessionList } from '../components/SessionList'
 import { UserDrawer } from '../components/UserDrawer'
 import { useIsMobile } from '../hooks/useIsMobile'
-import { chatBgSummary } from '../lib/chatBg'
-import { initialOf } from '../lib/chatFormat'
+import { chatBgStyle, chatThemeSummary, chatThemeVars, resolveUserTheme, usesFrameWallpaper } from '../lib/chatBg'
+import { callController } from '../lib/call/CallController'
+import { conversationTitle, initialOf } from '../lib/chatFormat'
 
 type Props = {
   user: User
@@ -40,7 +45,7 @@ type Props = {
 }
 
 type ListNav = 'messages' | 'contacts'
-type ContactSection = 'friends' | 'groups' | 'requests'
+type ContactSection = 'friends' | 'groups'
 /** Right pane surface — independent of listNav so switching tabs keeps chat. */
 type RightSurface =
   | { kind: 'empty' }
@@ -48,17 +53,26 @@ type RightSurface =
   | { kind: 'history' }
   | { kind: 'friendProfile'; profile: Contact }
   | { kind: 'groupProfile'; group: Conversation }
+  | { kind: 'friendRequests' }
   | { kind: 'settings' }
 
 export function ChatPage({ user, onUserChange, onLogout }: Props) {
   const isMobile = useIsMobile()
   const [listNav, setListNav] = useState<ListNav>('messages')
+
+  useEffect(() => {
+    callController.setUserId(user.id)
+    callController.start()
+    return () => callController.stop()
+  }, [user.id])
   const [contactSection, setContactSection] = useState<ContactSection>('friends')
   const [right, setRight] = useState<RightSurface>({ kind: 'empty' })
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [friends, setFriends] = useState<Contact[]>([])
   const [groups, setGroups] = useState<Conversation[]>([])
   const [incoming, setIncoming] = useState<FriendRequest[]>([])
+  const [outgoing, setOutgoing] = useState<FriendRequest[]>([])
+  const [reqBusyId, setReqBusyId] = useState<string | null>(null)
   const [activeId, setActiveId] = useState<string | null>(null)
   const [messages, setMessages] = useState<Message[]>([])
   const [draft, setDraft] = useState('')
@@ -87,6 +101,10 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
   const [selectedMessageIds, setSelectedMessageIds] = useState<string[]>([])
   const [forwardOpen, setForwardOpen] = useState(false)
   const [forwardIds, setForwardIds] = useState<string[]>([])
+  const [callSetup, setCallSetup] = useState<{ kind: CallKind; conversationId: string } | null>(
+    null,
+  )
+  const [callSetupBusy, setCallSetupBusy] = useState(false)
   const listRef = useRef<HTMLDivElement>(null)
   const wsRef = useRef<WebSocket | null>(null)
 
@@ -108,7 +126,8 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
       ])
       setFriends(f.friends)
       setGroups(g.groups)
-      setIncoming(req.incoming)
+      setIncoming(req.incoming || [])
+      setOutgoing(req.outgoing || [])
     } catch (e) {
       MessagePlugin.error(apiErrorMessage(e, '加载联系人失败'))
     }
@@ -162,15 +181,29 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
 
   useEffect(() => {
     void loadConversations()
-  }, [loadConversations])
-
-  useEffect(() => {
-    if (listNav === 'contacts') void loadContacts()
-  }, [listNav, loadContacts])
+    void loadContacts()
+  }, [loadConversations, loadContacts])
 
   useEffect(() => {
     if (right.kind === 'settings') void loadQQ()
   }, [right.kind, loadQQ])
+
+  // 主题 CSS 变量同步到 :root，使 Drawer / Dialog 等 portal 也吃到随心调
+  useEffect(() => {
+    const theme = resolveUserTheme(user)
+    const frameWallpaper = usesFrameWallpaper(theme)
+    const vars = chatThemeVars(theme, { frameWallpaper }) as Record<string, string>
+    const root = document.documentElement
+    const keys: string[] = []
+    for (const [k, v] of Object.entries(vars)) {
+      if (typeof v !== 'string') continue
+      root.style.setProperty(k, v)
+      keys.push(k)
+    }
+    return () => {
+      for (const k of keys) root.style.removeProperty(k)
+    }
+  }, [user.chatTheme, user.chatBg])
 
   useEffect(() => {
     if (!activeId || right.kind !== 'chat') return
@@ -189,11 +222,39 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
           message?: Message
         }
         if (data.type === 'message' && data.message) {
+          const msg = data.message
           setMessages((prev) => {
-            if (prev.some((m) => m.id === data.message!.id)) return prev
-            return [...prev, data.message!]
+            if (prev.some((m) => m.id === msg.id)) return prev
+            return [...prev, msg]
           })
-          void loadConversations()
+          // 正在看该会话：标已读，避免通话摘要等把未读刷出来
+          void api.markRead(activeId).then(() => {
+            setConversations((prev) =>
+              prev.map((c) =>
+                c.id === activeId
+                  ? {
+                      ...c,
+                      unreadCount: 0,
+                      lastMessage:
+                        msg.type === 'call'
+                          ? '[通话]'
+                          : msg.type === 'image'
+                            ? '[图片]'
+                            : msg.type === 'voice'
+                              ? '[语音]'
+                              : msg.type === 'file'
+                                ? '[文件]'
+                                : msg.recalled
+                                  ? '[消息已撤回]'
+                                  : msg.body || c.lastMessage,
+                      lastMessageAt: msg.createdAt || c.lastMessageAt,
+                    }
+                  : c,
+              ),
+            )
+          }).catch(() => {
+            void loadConversations()
+          })
         }
         if (data.type === 'message_recalled' && data.message) {
           setMessages((prev) =>
@@ -434,13 +495,18 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
     setListNav('contacts')
     if (isMobile) {
       setMobileDetail(false)
+    } else if (right.kind === 'settings') {
+      setRight({ kind: 'empty' })
     }
   }
+
+  const navActive = (id: ListNav) => right.kind !== 'settings' && listNav === id
 
   const navBtn = (id: ListNav, label: string, ico: string, badge?: number) => (
     <button
       type="button"
-      className={listNav === id ? 'im-nav-btn is-active' : 'im-nav-btn'}
+      className={navActive(id) ? 'im-nav-btn is-active' : 'im-nav-btn'}
+      aria-current={navActive(id) ? 'page' : undefined}
       onClick={() => (id === 'messages' ? goMessages() : goContacts())}
     >
       <span className={`im-ico im-ico--${ico}`} />
@@ -452,10 +518,49 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
   )
 
   const friendNamesById = Object.fromEntries(friends.map((f) => [f.id, f.username]))
+  const theme = resolveUserTheme(user)
+  const hasWallpaper = !!(theme?.background && theme.background.kind !== 'default')
+  const frameWallpaper = usesFrameWallpaper(theme)
+  const themed = !!(
+    theme?.accent ||
+    hasWallpaper ||
+    theme?.bubbleMine ||
+    theme?.bubblePeer ||
+    theme?.texture ||
+    (theme?.opacity != null && theme.opacity < 1) ||
+    theme?.blur != null
+  )
 
   return (
-    <div className={isMobile ? 'im-shell im-shell--mobile' : 'im-shell'}>
+    <div
+      className={[
+        isMobile ? 'im-shell im-shell--mobile' : 'im-shell',
+        themed ? 'im-shell--themed' : '',
+        frameWallpaper ? 'im-shell--wallpaper' : '',
+      ]
+        .filter(Boolean)
+        .join(' ')}
+      style={chatThemeVars(theme, { frameWallpaper })}
+    >
       <div className={frameClass}>
+        {frameWallpaper && theme?.background && (
+          <div
+            className={[
+              'im-frame__wallpaper',
+              !isMobile ? 'im-frame__wallpaper--skip-rail' : '',
+            ]
+              .filter(Boolean)
+              .join(' ')}
+            style={chatBgStyle(theme.background)}
+            aria-hidden
+          >
+            {theme.texture && theme.texture !== 'none' ? (
+              <div
+                className={`im-messages__texture im-messages__texture--${theme.texture}`}
+              />
+            ) : null}
+          </div>
+        )}
         {!isMobile && (
           <aside className="im-rail" aria-label="主导航">
             <button
@@ -471,10 +576,11 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
               )}
             </button>
             {navBtn('messages', '消息', 'msg', totalUnread)}
-            {navBtn('contacts', '联系人', 'contacts')}
+            {navBtn('contacts', '联系人', 'contacts', incoming.length)}
             <button
               type="button"
               className={right.kind === 'settings' ? 'im-nav-btn is-active' : 'im-nav-btn'}
+              aria-current={right.kind === 'settings' ? 'page' : undefined}
               onClick={() => {
                 setRight({ kind: 'settings' })
                 setMobileDetail(true)
@@ -543,6 +649,21 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
                 activeId={activeId}
                 filter={filter}
                 onOpen={(id) => {
+                  // PC：再次点击当前会话 → 取消挂载右侧聊天
+                  if (
+                    !isMobile &&
+                    activeId === id &&
+                    (right.kind === 'chat' || right.kind === 'history')
+                  ) {
+                    setActiveId(null)
+                    setRight({ kind: 'empty' })
+                    setMessages([])
+                    setSelectMode(false)
+                    setSelectedMessageIds([])
+                    setFocusMessageId(null)
+                    setReturnToHistory(false)
+                    return
+                  }
                   setActiveId(id)
                   setRight({ kind: 'chat' })
                   setMobileDetail(true)
@@ -585,7 +706,7 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
                 onSection={setContactSection}
                 friends={friends}
                 groups={groups}
-                incoming={incoming}
+                incomingCount={incoming.length}
                 filter={filter}
                 selectedFriendId={
                   right.kind === 'friendProfile' ? right.profile.id : null
@@ -593,6 +714,7 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
                 selectedGroupId={
                   right.kind === 'groupProfile' ? right.group.id : null
                 }
+                requestsOpen={right.kind === 'friendRequests'}
                 onSelectFriend={(f) => {
                   setRight({ kind: 'friendProfile', profile: f })
                   setMobileDetail(true)
@@ -600,26 +722,10 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
                 }}
                 onSelectGroup={(g) => void openGroupProfile(g)}
                 onOpenRequests={() => {
-                  setContactSection('requests')
-                  setMobileDetail(false)
-                  setRight({ kind: 'empty' })
-                }}
-                onAccept={async (id) => {
-                  try {
-                    await api.acceptFriendRequest(id)
-                    MessagePlugin.success('已添加好友')
-                    await loadContacts()
-                  } catch (e) {
-                    MessagePlugin.error(apiErrorMessage(e, '操作失败'))
-                  }
-                }}
-                onReject={async (id) => {
-                  try {
-                    await api.rejectFriendRequest(id)
-                    await loadContacts()
-                  } catch (e) {
-                    MessagePlugin.error(apiErrorMessage(e, '操作失败'))
-                  }
+                  setContactSection('friends')
+                  setRight({ kind: 'friendRequests' })
+                  setMobileDetail(true)
+                  void loadContacts()
                 }}
               />
             )}
@@ -726,8 +832,10 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
                   className="im-set-cell"
                   onClick={() => setBgOpen(true)}
                 >
-                  <span className="im-set-cell__label">聊天背景</span>
-                  <span className="im-set-cell__value">{chatBgSummary(user.chatBg)}</span>
+                  <span className="im-set-cell__label">随心调</span>
+                  <span className="im-set-cell__value">
+                    {chatThemeSummary(resolveUserTheme(user))}
+                  </span>
                   <ChevronRightIcon size="16px" className="im-set-cell__arrow" />
                 </button>
               </div>
@@ -1008,13 +1116,68 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
           </section>
         )}
 
-        {right.kind === 'empty' && !isMobile && listNav === 'contacts' && contactSection !== 'requests' && (
+        {right.kind === 'empty' && !isMobile && listNav === 'contacts' && (
           <section className="im-pane">
             <div className="im-empty">
               <div className="im-logo-mark">IHope</div>
               <p>选择好友查看资料，或打开群资料</p>
             </div>
           </section>
+        )}
+
+        {right.kind === 'friendRequests' && (
+          <FriendRequestsPane
+            incoming={incoming}
+            outgoing={outgoing}
+            busyId={reqBusyId}
+            onBack={
+              isMobile
+                ? () => {
+                    setRight({ kind: 'empty' })
+                    setMobileDetail(false)
+                  }
+                : undefined
+            }
+            onAccept={async (id) => {
+              const req = incoming.find((r) => r.id === id)
+              setReqBusyId(id)
+              try {
+                const friend = await api.acceptFriendRequest(id)
+                MessagePlugin.success('已添加好友')
+                await loadContacts()
+                const name = friend.username || req?.fromUser?.username
+                if (name) await startDM(name)
+              } catch (e) {
+                MessagePlugin.error(apiErrorMessage(e, '操作失败'))
+              } finally {
+                setReqBusyId(null)
+              }
+            }}
+            onReject={async (id) => {
+              setReqBusyId(id)
+              try {
+                await api.rejectFriendRequest(id)
+                MessagePlugin.success('已拒绝')
+                await loadContacts()
+              } catch (e) {
+                MessagePlugin.error(apiErrorMessage(e, '操作失败'))
+              } finally {
+                setReqBusyId(null)
+              }
+            }}
+            onCancel={async (id) => {
+              setReqBusyId(id)
+              try {
+                await api.cancelFriendRequest(id)
+                MessagePlugin.success('已撤回申请')
+                await loadContacts()
+              } catch (e) {
+                MessagePlugin.error(apiErrorMessage(e, '操作失败'))
+              } finally {
+                setReqBusyId(null)
+              }
+            }}
+          />
         )}
 
         {right.kind === 'history' && activeId && active && (
@@ -1098,6 +1261,16 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
                     }
                   : undefined
             }
+            onVoiceCall={
+              activeId
+                ? () => setCallSetup({ kind: 'voice', conversationId: activeId })
+                : undefined
+            }
+            onVideoCall={
+              activeId
+                ? () => setCallSetup({ kind: 'video', conversationId: activeId })
+                : undefined
+            }
             listRef={listRef}
             showBack={isMobile}
             focusMessageId={focusMessageId}
@@ -1119,7 +1292,7 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
         {isMobile && (
           <nav className="im-tabbar" aria-label="底部导航">
             {navBtn('messages', '消息', 'msg', totalUnread)}
-            {navBtn('contacts', '联系人', 'contacts')}
+            {navBtn('contacts', '联系人', 'contacts', incoming.length)}
           </nav>
         )}
       </div>
@@ -1139,7 +1312,13 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
       <AddContactDialog
         visible={addOpen}
         onClose={() => setAddOpen(false)}
-        onRequestSent={() => void loadContacts()}
+        onRequestSent={() => {
+          void loadContacts()
+          setListNav('contacts')
+          setContactSection('friends')
+          setRight({ kind: 'friendRequests' })
+          setMobileDetail(true)
+        }}
         onMessage={(username) => void startDM(username)}
         onJoined={(id) => {
           void loadContacts()
@@ -1153,11 +1332,65 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
         }}
       />
 
-      <ChatBackgroundDialog
+      <ChatThemeDialog
         visible={bgOpen}
-        value={user.chatBg}
+        value={resolveUserTheme(user)}
         onClose={() => setBgOpen(false)}
         onChanged={(u) => onUserChange?.(u)}
+      />
+
+      <IncomingCallModal
+        onOpenChat={(id) => {
+          openChat(id)
+        }}
+      />
+      <CallSetupDialog
+        visible={!!callSetup}
+        kind={callSetup?.kind || 'voice'}
+        title={
+          active && callSetup?.conversationId === active.id
+            ? conversationTitle(active)
+            : '会话'
+        }
+        selfName={user.username}
+        selfAvatar={user.avatarUrl}
+        busy={callSetupBusy}
+        onCancel={() => {
+          if (callSetupBusy) return
+          setCallSetup(null)
+        }}
+        onConfirm={(result: CallSetupResult) => {
+          if (!callSetup) return
+          const { conversationId } = callSetup
+          setCallSetupBusy(true)
+          void callController
+            .startCall(conversationId, result.kind, {
+              muted: result.muted,
+              cameraOff: result.cameraOff,
+              stream: result.stream,
+            })
+            .then(() => {
+              setCallSetup(null)
+            })
+            .catch((e) => {
+              MessagePlugin.error(
+                apiErrorMessage(
+                  e,
+                  result.kind === 'video' ? '无法发起视频通话' : '无法发起语音通话',
+                ),
+              )
+            })
+            .finally(() => setCallSetupBusy(false))
+        }}
+      />
+      <CallOverlay
+        selfName={user.username}
+        selfAvatar={user.avatarUrl}
+        resolveTitle={(id) => {
+          const c =
+            conversations.find((x) => x.id === id) || groups.find((x) => x.id === id)
+          return c ? conversationTitle(c) : undefined
+        }}
       />
 
       <Dialog

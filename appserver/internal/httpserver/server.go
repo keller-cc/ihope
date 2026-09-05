@@ -16,6 +16,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/keller-cc/ihope/appserver/internal/admin"
 	"github.com/keller-cc/ihope/appserver/internal/auth"
+	"github.com/keller-cc/ihope/appserver/internal/call"
 	"github.com/keller-cc/ihope/appserver/internal/chat"
 	"github.com/keller-cc/ihope/appserver/internal/hub"
 	"github.com/keller-cc/ihope/appserver/internal/qqbot"
@@ -28,6 +29,7 @@ type Server struct {
 	chat       *chat.Service
 	admin      *admin.Service
 	hub        *hub.Hub
+	calls      *call.Service
 	qq         *qqbot.Service
 	cors       string
 	qqPath     string
@@ -42,6 +44,7 @@ func New(
 	chatSvc *chat.Service,
 	adminSvc *admin.Service,
 	h *hub.Hub,
+	callSvc *call.Service,
 	qq *qqbot.Service,
 	corsOrigin, qqWebhookPath, adminToken, uploadDir, quotesPath string,
 ) *Server {
@@ -50,6 +53,7 @@ func New(
 		chat:       chatSvc,
 		admin:      adminSvc,
 		hub:        h,
+		calls:      callSvc,
 		qq:         qq,
 		cors:       corsOrigin,
 		qqPath:     qqWebhookPath,
@@ -77,8 +81,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PATCH /api/me", s.withAuth(s.handlePatchMe))
 	mux.HandleFunc("POST /api/me/hope-id/refresh", s.withAuth(s.handleRefreshHopeID))
 	mux.HandleFunc("POST /api/me/avatar", s.withAuth(s.handleUploadAvatar))
-	mux.HandleFunc("PATCH /api/me/chat-bg", s.withAuth(s.handlePatchChatBg))
+	mux.HandleFunc("PATCH /api/me/chat-bg", s.withAuth(s.handlePatchChatTheme))
+	mux.HandleFunc("PATCH /api/me/chat-theme", s.withAuth(s.handlePatchChatTheme))
 	mux.HandleFunc("POST /api/me/chat-bg", s.withAuth(s.handleUploadChatBg))
+	mux.HandleFunc("GET /api/me/chat-bg/images", s.withAuth(s.handleListChatBgImages))
+	mux.HandleFunc("DELETE /api/me/chat-bg/images/{id}", s.withAuth(s.handleDeleteChatBgImage))
 	mux.HandleFunc("GET /api/quotes/today", s.withAuth(s.handleTodayQuote))
 	mux.HandleFunc("GET /api/search/users", s.withAuth(s.handleSearchUsers))
 	mux.HandleFunc("GET /api/search/groups", s.withAuth(s.handleSearchGroups))
@@ -107,12 +114,19 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/conversations/{id}/messages/voice", s.withAuth(s.handleSendVoice))
 	mux.HandleFunc("POST /api/conversations/{id}/messages/forward", s.withAuth(s.handleForwardMessages))
 	mux.HandleFunc("POST /api/conversations/{id}/messages/{mid}/recall", s.withAuth(s.handleRecallMessage))
+	mux.HandleFunc("POST /api/conversations/{id}/calls", s.withAuth(s.handleStartCall))
+	mux.HandleFunc("GET /api/calls/ice", s.withAuth(s.handleCallICE))
+	mux.HandleFunc("GET /api/calls/{id}", s.withAuth(s.handleGetCall))
+	mux.HandleFunc("POST /api/calls/{id}/accept", s.withAuth(s.handleAcceptCall))
+	mux.HandleFunc("POST /api/calls/{id}/reject", s.withAuth(s.handleRejectCall))
+	mux.HandleFunc("POST /api/calls/{id}/hangup", s.withAuth(s.handleHangupCall))
 	mux.HandleFunc("GET /api/contacts/friends", s.withAuth(s.handleListFriends))
 	mux.HandleFunc("POST /api/contacts/friends", s.withAuth(s.handleAddFriend))
 	mux.HandleFunc("PATCH /api/contacts/friends/{id}", s.withAuth(s.handleSetFriendRemark))
 	mux.HandleFunc("GET /api/contacts/friend-requests", s.withAuth(s.handleListFriendRequests))
 	mux.HandleFunc("POST /api/contacts/friend-requests/{id}/accept", s.withAuth(s.handleAcceptFriendRequest))
 	mux.HandleFunc("POST /api/contacts/friend-requests/{id}/reject", s.withAuth(s.handleRejectFriendRequest))
+	mux.HandleFunc("POST /api/contacts/friend-requests/{id}/cancel", s.withAuth(s.handleCancelFriendRequest))
 	mux.HandleFunc("GET /api/contacts/groups", s.withAuth(s.handleListGroups))
 	mux.Handle("/uploads/", s.withUploadCache(http.StripPrefix("/uploads/", http.FileServer(http.Dir(s.uploadDir)))))
 	mux.HandleFunc("GET /api/me/qq-bot", s.withAuth(s.handleQQStatus))
@@ -121,15 +135,25 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/me/qq-bot", s.withAuth(s.handleQQUnbind))
 	mux.HandleFunc("GET /api/admin/users", s.withAdmin(s.handleAdminListUsers))
 	mux.HandleFunc("DELETE /api/admin/users/{id}", s.withAdmin(s.handleAdminDeleteUser))
+	mux.HandleFunc("PATCH /api/admin/users/{id}", s.withAdmin(s.handleAdminPatchUser))
 	mux.HandleFunc("POST /api/admin/users/{id}/qq-bind-code", s.withAdmin(s.handleAdminQQBindCode))
 	mux.HandleFunc("DELETE /api/admin/users/{id}/qq-bot", s.withAdmin(s.handleAdminQQUnbind))
 	mux.HandleFunc("GET /api/admin/qq-bindings", s.withAdmin(s.handleAdminListQQBindings))
 	mux.HandleFunc("GET /api/admin/conversations", s.withAdmin(s.handleAdminListConversations))
 	mux.HandleFunc("DELETE /api/admin/conversations/{id}", s.withAdmin(s.handleAdminDeleteConversation))
+	mux.HandleFunc("GET /api/admin/domains", s.withAdmin(s.handleAdminListDomains))
+	mux.HandleFunc("POST /api/admin/domains", s.withAdmin(s.handleAdminCreateDomain))
+	mux.HandleFunc("PATCH /api/admin/domains/{id}", s.withAdmin(s.handleAdminPatchDomain))
+	mux.HandleFunc("DELETE /api/admin/domains/{id}", s.withAdmin(s.handleAdminDeleteDomain))
+	mux.HandleFunc("GET /api/admin/fellowships", s.withAdmin(s.handleAdminListFellowships))
+	mux.HandleFunc("POST /api/admin/fellowships", s.withAdmin(s.handleAdminCreateFellowship))
+	mux.HandleFunc("PATCH /api/admin/fellowships/{id}", s.withAdmin(s.handleAdminPatchFellowship))
+	mux.HandleFunc("DELETE /api/admin/fellowships/{id}", s.withAdmin(s.handleAdminDeleteFellowship))
 	if s.qqPath != "" {
 		mux.HandleFunc("POST "+s.qqPath, s.handleQQWebhook)
 	}
 	mux.HandleFunc("GET /ws", s.handleWS)
+	mux.HandleFunc("GET /ws/user", s.handleUserWS)
 	return s.corsMiddleware(mux)
 }
 
@@ -307,12 +331,7 @@ func (s *Server) handlePatchMe(w http.ResponseWriter, r *http.Request, userID st
 func (s *Server) handleRefreshHopeID(w http.ResponseWriter, r *http.Request, userID string) {
 	u, err := s.auth.RefreshHopeID(r.Context(), userID)
 	if err != nil {
-		switch {
-		case errors.Is(err, auth.ErrHopeIDCooldown):
-			writeErr(w, http.StatusTooManyRequests, "hope id cooldown")
-		default:
-			writeErr(w, http.StatusInternalServerError, "refresh hope id failed")
-		}
+		writeErr(w, http.StatusInternalServerError, "refresh hope id failed")
 		return
 	}
 	writeJSON(w, http.StatusOK, u)
@@ -684,6 +703,15 @@ func (s *Server) handleRejectFriendRequest(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, map[string]string{"message": "rejected"})
 }
 
+func (s *Server) handleCancelFriendRequest(w http.ResponseWriter, r *http.Request, userID string) {
+	id := r.PathValue("id")
+	if err := s.chat.CancelFriendRequest(r.Context(), userID, id); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"message": "cancelled"})
+}
+
 func (s *Server) handlePatchMember(w http.ResponseWriter, r *http.Request, userID string) {
 	id := r.PathValue("id")
 	var body struct {
@@ -706,13 +734,36 @@ func (s *Server) handlePatchMember(w http.ResponseWriter, r *http.Request, userI
 	writeJSON(w, http.StatusOK, map[string]string{"message": "ok"})
 }
 
-func (s *Server) handlePatchChatBg(w http.ResponseWriter, r *http.Request, userID string) {
-	var body auth.ChatBg
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+func (s *Server) handlePatchChatTheme(w http.ResponseWriter, r *http.Request, userID string) {
+	var raw map[string]json.RawMessage
+	if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid json")
 		return
 	}
-	u, err := s.auth.SetChatBg(r.Context(), userID, &body)
+	b, _ := json.Marshal(raw)
+	// Legacy wallpaper-only: {"kind":"gradient","id":"..."}
+	if _, hasKind := raw["kind"]; hasKind {
+		if _, hasBg := raw["background"]; !hasBg {
+			var bg auth.ChatBg
+			if err := json.Unmarshal(b, &bg); err != nil {
+				writeErr(w, http.StatusBadRequest, "invalid json")
+				return
+			}
+			u, err := s.auth.SetChatTheme(r.Context(), userID, &auth.ChatTheme{Background: &bg})
+			if err != nil {
+				writeErr(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			writeJSON(w, http.StatusOK, u)
+			return
+		}
+	}
+	var body auth.ChatTheme
+	if err := json.Unmarshal(b, &body); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	u, err := s.auth.SetChatTheme(r.Context(), userID, &body)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
@@ -746,9 +797,36 @@ func (s *Server) handleUploadChatBg(w http.ResponseWriter, r *http.Request, user
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if _, err := s.auth.AddChatBackground(r.Context(), userID, url, s.uploadDir); err != nil {
+		writeErr(w, http.StatusInternalServerError, "save library failed")
+		return
+	}
 	u, err := s.auth.SetChatBg(r.Context(), userID, &auth.ChatBg{Kind: "image", URL: url})
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "save failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, u)
+}
+
+func (s *Server) handleListChatBgImages(w http.ResponseWriter, r *http.Request, userID string) {
+	list, err := s.auth.ListChatBackgrounds(r.Context(), userID)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "list failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"images": list})
+}
+
+func (s *Server) handleDeleteChatBgImage(w http.ResponseWriter, r *http.Request, userID string) {
+	id := r.PathValue("id")
+	u, err := s.auth.DeleteChatBackground(r.Context(), userID, id, s.uploadDir)
+	if err != nil {
+		if err.Error() == "not found" {
+			writeErr(w, http.StatusNotFound, "not found")
+			return
+		}
+		writeErr(w, http.StatusInternalServerError, "delete failed")
 		return
 	}
 	writeJSON(w, http.StatusOK, u)
@@ -1305,6 +1383,173 @@ func (s *Server) handleAdminDeleteUser(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeErr(w, http.StatusInternalServerError, "delete failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"message": "deleted"})
+}
+
+func (s *Server) handleAdminPatchUser(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var body struct {
+		FellowshipID string `json:"fellowshipId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	if err := s.admin.SetUserFellowship(r.Context(), id, body.FellowshipID); err != nil {
+		switch err.Error() {
+		case "user not found":
+			writeErr(w, http.StatusNotFound, "user not found")
+		case "fellowship not found", "fellowship required":
+			writeErr(w, http.StatusBadRequest, err.Error())
+		default:
+			writeErr(w, http.StatusInternalServerError, "update failed")
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"message": "updated"})
+}
+
+func (s *Server) handleAdminListDomains(w http.ResponseWriter, r *http.Request) {
+	list, err := s.admin.ListDomains(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "list failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"domains": list})
+}
+
+func (s *Server) handleAdminCreateDomain(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	d, err := s.admin.CreateDomain(r.Context(), body.Name)
+	if err != nil {
+		switch err.Error() {
+		case "name required", "domain name taken":
+			writeErr(w, http.StatusBadRequest, err.Error())
+		default:
+			writeErr(w, http.StatusInternalServerError, "create failed")
+		}
+		return
+	}
+	writeJSON(w, http.StatusCreated, d)
+}
+
+func (s *Server) handleAdminPatchDomain(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var body struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	d, err := s.admin.UpdateDomain(r.Context(), id, body.Name)
+	if err != nil {
+		switch err.Error() {
+		case "domain not found":
+			writeErr(w, http.StatusNotFound, "domain not found")
+		case "name required", "domain name taken":
+			writeErr(w, http.StatusBadRequest, err.Error())
+		default:
+			writeErr(w, http.StatusInternalServerError, "update failed")
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, d)
+}
+
+func (s *Server) handleAdminDeleteDomain(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if err := s.admin.DeleteDomain(r.Context(), id); err != nil {
+		switch err.Error() {
+		case "domain not found":
+			writeErr(w, http.StatusNotFound, "domain not found")
+		case "domain has fellowships":
+			writeErr(w, http.StatusConflict, "domain has fellowships")
+		default:
+			writeErr(w, http.StatusInternalServerError, "delete failed")
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"message": "deleted"})
+}
+
+func (s *Server) handleAdminListFellowships(w http.ResponseWriter, r *http.Request) {
+	list, err := s.admin.ListFellowships(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "list failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"fellowships": list})
+}
+
+func (s *Server) handleAdminCreateFellowship(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Code     string `json:"code"`
+		Name     string `json:"name"`
+		DomainID string `json:"domainId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	f, err := s.admin.CreateFellowship(r.Context(), body.Code, body.Name, body.DomainID)
+	if err != nil {
+		switch err.Error() {
+		case "code required", "domain required", "domain not found", "fellowship code taken":
+			writeErr(w, http.StatusBadRequest, err.Error())
+		default:
+			writeErr(w, http.StatusInternalServerError, "create failed")
+		}
+		return
+	}
+	writeJSON(w, http.StatusCreated, f)
+}
+
+func (s *Server) handleAdminPatchFellowship(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var body struct {
+		Code     string `json:"code"`
+		Name     string `json:"name"`
+		DomainID string `json:"domainId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	f, err := s.admin.UpdateFellowship(r.Context(), id, body.Code, body.Name, body.DomainID)
+	if err != nil {
+		switch err.Error() {
+		case "fellowship not found":
+			writeErr(w, http.StatusNotFound, "fellowship not found")
+		case "code required", "domain required", "domain not found", "fellowship code taken":
+			writeErr(w, http.StatusBadRequest, err.Error())
+		default:
+			writeErr(w, http.StatusInternalServerError, "update failed")
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, f)
+}
+
+func (s *Server) handleAdminDeleteFellowship(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if err := s.admin.DeleteFellowship(r.Context(), id); err != nil {
+		switch err.Error() {
+		case "fellowship not found":
+			writeErr(w, http.StatusNotFound, "fellowship not found")
+		case "fellowship has users":
+			writeErr(w, http.StatusConflict, "fellowship has users")
+		default:
+			writeErr(w, http.StatusInternalServerError, "delete failed")
+		}
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"message": "deleted"})
