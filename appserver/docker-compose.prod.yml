@@ -37,6 +37,7 @@ services:
     volumes:
       - ./data/uploads:/data/uploads
       - ${QQ_QUOTES_HOST_DIR:-../deploy/quotes}:/opt/ihope/quotes:ro
+      - ${QQ_POETRY_FONT_HOST_DIR:-../deploy/fonts}:/opt/ihope/fonts:ro
     depends_on:
       postgres:
         condition: service_healthy

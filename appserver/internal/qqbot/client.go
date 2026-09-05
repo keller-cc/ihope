@@ -3,6 +3,7 @@ package qqbot
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -97,11 +98,38 @@ func parseExpiresIn(raw json.RawMessage) int {
 	return n
 }
 
-func (c *Client) SendText(ctx context.Context, openID, content, msgID string, msgSeq int) error {
+func (c *Client) doJSON(ctx context.Context, method, path string, payload any) ([]byte, error) {
 	token, err := c.accessToken(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
+	var body io.Reader
+	if payload != nil {
+		raw, err := json.Marshal(payload)
+		if err != nil {
+			return nil, err
+		}
+		body = bytes.NewReader(raw)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, apiBaseURL+path, body)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "QQBot "+token)
+	req.Header.Set("Content-Type", "application/json")
+	res, err := c.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer res.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(res.Body, 1<<20))
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		return nil, fmt.Errorf("qq api %s: http %d: %s", path, res.StatusCode, string(raw))
+	}
+	return raw, nil
+}
+
+func (c *Client) SendText(ctx context.Context, openID, content, msgID string, msgSeq int) error {
 	payload := map[string]any{
 		"content":  content,
 		"msg_type": 0,
@@ -112,24 +140,68 @@ func (c *Client) SendText(ctx context.Context, openID, content, msgID string, ms
 			payload["msg_seq"] = msgSeq
 		}
 	}
-	raw, err := json.Marshal(payload)
+	_, err := c.doJSON(ctx, http.MethodPost, "/v2/users/"+openID+"/messages", payload)
+	return err
+}
+
+func (c *Client) SendImagePNG(ctx context.Context, openID string, png []byte, publicURL, msgID string, msgSeq int) error {
+	fileInfo, err := c.uploadImage(ctx, openID, png, publicURL)
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiBaseURL+"/v2/users/"+openID+"/messages", bytes.NewReader(raw))
+	payload := map[string]any{
+		"msg_type": 7,
+		"media": map[string]any{
+			"file_info": fileInfo,
+		},
+	}
+	if msgID != "" {
+		payload["msg_id"] = msgID
+		if msgSeq > 0 {
+			payload["msg_seq"] = msgSeq
+		}
+	}
+	_, err = c.doJSON(ctx, http.MethodPost, "/v2/users/"+openID+"/messages", payload)
+	return err
+}
+
+func (c *Client) uploadImage(ctx context.Context, openID string, png []byte, publicURL string) (string, error) {
+	if len(png) > 0 {
+		payload := map[string]any{
+			"file_type":    1,
+			"file_data":    base64.StdEncoding.EncodeToString(png),
+			"srv_send_msg": false,
+		}
+		raw, err := c.doJSON(ctx, http.MethodPost, "/v2/users/"+openID+"/files", payload)
+		if err == nil {
+			var parsed struct {
+				FileInfo string `json:"file_info"`
+			}
+			if json.Unmarshal(raw, &parsed) == nil && parsed.FileInfo != "" {
+				return parsed.FileInfo, nil
+			}
+		}
+	}
+	if publicURL == "" {
+		return "", fmt.Errorf("qq upload: no public url and base64 failed")
+	}
+	payload := map[string]any{
+		"file_type":    1,
+		"url":          publicURL,
+		"srv_send_msg": false,
+	}
+	raw, err := c.doJSON(ctx, http.MethodPost, "/v2/users/"+openID+"/files", payload)
 	if err != nil {
-		return err
+		return "", err
 	}
-	req.Header.Set("Authorization", "QQBot "+token)
-	req.Header.Set("Content-Type", "application/json")
-	res, err := c.http.Do(req)
-	if err != nil {
-		return err
+	var parsed struct {
+		FileInfo string `json:"file_info"`
 	}
-	defer res.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(res.Body, 1<<20))
-	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		return fmt.Errorf("qq send: http %d: %s", res.StatusCode, string(body))
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		return "", err
 	}
-	return nil
+	if parsed.FileInfo == "" {
+		return "", fmt.Errorf("qq upload: empty file_info")
+	}
+	return parsed.FileInfo, nil
 }

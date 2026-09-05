@@ -3,7 +3,9 @@ package qqbot
 import (
 	"context"
 	"crypto/rand"
+	"encoding/hex"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -207,6 +209,38 @@ func (s *Store) TouchDoorbell(ctx context.Context, userID string) error {
 	return err
 }
 
+func (s *Store) ListPoetrySubscribers(ctx context.Context) ([]Binding, error) {
+	return s.listByFlag(ctx, `poetry_enabled`)
+}
+
+func (s *Store) ListQuoteSubscribers(ctx context.Context) ([]Binding, error) {
+	return s.listByFlag(ctx, `quotes_enabled`)
+}
+
+func (s *Store) ListNewsSubscribers(ctx context.Context) ([]Binding, error) {
+	return s.listByFlag(ctx, `news_enabled`)
+}
+
+func (s *Store) listByFlag(ctx context.Context, col string) ([]Binding, error) {
+	q := fmt.Sprintf(`
+		SELECT user_id::text, qq_openid, doorbell_enabled, poetry_enabled, quotes_enabled, news_enabled, last_doorbell_at, bound_at
+		FROM user_qq_bindings WHERE %s = TRUE`, col)
+	rows, err := s.pool.Query(ctx, q)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Binding
+	for rows.Next() {
+		var b Binding
+		if err := rows.Scan(&b.UserID, &b.QQOpenID, &b.DoorbellEnabled, &b.PoetryEnabled, &b.QuotesEnabled, &b.NewsEnabled, &b.LastDoorbellAt, &b.BoundAt); err != nil {
+			return nil, err
+		}
+		out = append(out, b)
+	}
+	return out, rows.Err()
+}
+
 func randomDigits(n int) (string, error) {
 	buf := make([]byte, n)
 	if _, err := rand.Read(buf); err != nil {
@@ -217,4 +251,12 @@ func randomDigits(n int) (string, error) {
 		b.WriteByte('0' + (x % 10))
 	}
 	return b.String(), nil
+}
+
+func randomHex(nBytes int) (string, error) {
+	buf := make([]byte, nBytes)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(buf), nil
 }

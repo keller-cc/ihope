@@ -34,13 +34,18 @@ type Config struct {
 	QQBotAddHint          string
 	QQDoorbellCooldownSec int
 	QQQuotesFilePath      string
+	QQPoetryAPIURL        string
+	QQPoetryFontPath      string
+	QQNews60sAPIURL       string
+	QQDailyPoetryHHMM     string
+	QQDailyQuotesHHMM     string
+	QQDailyNewsHHMM       string
 	FellowshipCode        string
 	AdminToken            string
 	CallTurnURLs          string
 	CallTurnUsername      string
 	CallTurnCredential    string
-	// WEB_DIST：生产托管 web/dist；空则只提供 API（开发用 Vite）
-	WebDist string
+	WebDist               string
 }
 
 func Load() Config {
@@ -83,6 +88,12 @@ func Load() Config {
 		QQBotAddHint:          env("QQ_BOT_ADD_HINT", "请在 QQ 中添加 IHope 机器人，并将绑定码发送给它"),
 		QQDoorbellCooldownSec: envInt("QQ_DOORBELL_COOLDOWN_SEC", 600),
 		QQQuotesFilePath:      env("QQ_QUOTES_FILE_PATH", ""),
+		QQPoetryAPIURL:        env("QQ_POETRY_API_URL", "https://v1.hitokoto.cn/?c=i"),
+		QQPoetryFontPath:      env("QQ_POETRY_FONT_PATH", ""),
+		QQNews60sAPIURL:       env("QQ_NEWS_60S_API_URL", "https://60s.viki.moe/v2/60s?encoding=image-proxy"),
+		QQDailyPoetryHHMM:     env("QQ_DAILY_POETRY_HHMM", "08:00"),
+		QQDailyQuotesHHMM:     env("QQ_DAILY_QUOTES_HHMM", "08:02"),
+		QQDailyNewsHHMM:       env("QQ_DAILY_NEWS_HHMM", "08:05"),
 		FellowshipCode:        env("FELLOWSHIP_CODE", "盼望之地"),
 		AdminToken:            env("ADMIN_TOKEN", "dev-admin-token-change-me"),
 		CallTurnURLs:          env("CALL_TURN_URLS", ""),

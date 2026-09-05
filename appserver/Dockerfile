@@ -1,20 +1,24 @@
-FROM node:22-alpine AS web
+FROM node:22-bookworm-slim AS web
 WORKDIR /src/web
+ENV CI=true
+ENV PNPM_HOME=/pnpm
+ENV PATH=$PNPM_HOME:$PATH
+RUN npm install -g pnpm@10.32.0
 COPY web/package.json web/pnpm-lock.yaml ./
-RUN corepack enable && pnpm install --frozen-lockfile
+RUN pnpm install --frozen-lockfile
 COPY web/ .
 RUN pnpm run build
 
-FROM golang:1.25-alpine AS builder
-RUN apk add --no-cache ca-certificates
+FROM golang:1.25-bookworm AS builder
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
 WORKDIR /src/appserver
 COPY appserver/go.mod appserver/go.sum ./
 RUN go mod download
 COPY appserver/ .
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /appserver ./cmd/appserver
 
-FROM alpine:3.20
-RUN apk add --no-cache ca-certificates tzdata
+FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates tzdata && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=builder /appserver /app/appserver
 COPY --from=web /src/web/dist /app/web

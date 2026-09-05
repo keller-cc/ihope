@@ -156,6 +156,7 @@ func (s *Server) Handler() http.Handler {
 	if s.qqPath != "" {
 		mux.HandleFunc("POST "+s.qqPath, s.handleQQWebhook)
 	}
+	mux.HandleFunc("GET /api/public/qq-media/{name}", s.handleQQPublicMedia)
 	mux.HandleFunc("GET /ws", s.handleWS)
 	mux.HandleFunc("GET /ws/user", s.handleUserWS)
 	if s.webDist != "" {
@@ -1306,6 +1307,22 @@ func (s *Server) handleQQWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.qq.HandleWebhook(w, r)
+}
+
+func (s *Server) handleQQPublicMedia(w http.ResponseWriter, r *http.Request) {
+	if s.qq == nil || s.qq.Media() == nil {
+		http.NotFound(w, r)
+		return
+	}
+	name := r.PathValue("name")
+	raw, err := s.qq.Media().Read(name)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "image/png")
+	w.Header().Set("Cache-Control", "public, max-age=300")
+	_, _ = w.Write(raw)
 }
 
 func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {

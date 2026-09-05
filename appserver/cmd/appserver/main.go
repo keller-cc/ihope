@@ -90,16 +90,20 @@ func main() {
 	callSvc := call.New(h, call.ChatMembership{Chat: chatSvc, Hub: h}, ice)
 
 	var qqSvc *qqbot.Service
-	if cfg.QQBotEnabled {
-		client := qqbot.NewClient(cfg.QQBotAppID, cfg.QQBotAppSecret)
-		qqSvc = qqbot.NewService(cfg, qqbot.NewStore(pool), client, h)
-		log.Println("qq bot enabled")
-	}
-
+	var qqSched *qqbot.Scheduler
 	uploadDir := cfg.UploadDir
 	if uploadDir == "" {
 		uploadDir = "data/uploads"
 	}
+	if cfg.QQBotEnabled {
+		client := qqbot.NewClient(cfg.QQBotAppID, cfg.QQBotAppSecret)
+		media := qqbot.NewMediaHost(uploadDir, cfg.AppPublicURL)
+		qqSvc = qqbot.NewService(cfg, qqbot.NewStore(pool), client, media, h)
+		qqSched = qqbot.NewScheduler(qqSvc, cfg.QQDailyPoetryHHMM, cfg.QQDailyQuotesHHMM, cfg.QQDailyNewsHHMM)
+		qqSched.Start()
+		log.Println("qq bot enabled")
+	}
+
 	srv := httpserver.New(authSvc, chatSvc, adminSvc, h, callSvc, qqSvc, cfg.CORSOrigin, cfg.QQWebhookPath, cfg.AdminToken, uploadDir, cfg.QQQuotesFilePath, cfg.WebDist)
 	_ = os.MkdirAll(filepath.Join(uploadDir, "avatars"), 0o755)
 	_ = os.MkdirAll(filepath.Join(uploadDir, "groups"), 0o755)
@@ -127,6 +131,9 @@ func main() {
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
 	<-stop
 
+	if qqSched != nil {
+		qqSched.Stop()
+	}
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	_ = httpSrv.Shutdown(shutdownCtx)
