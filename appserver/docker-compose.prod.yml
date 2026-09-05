@@ -5,7 +5,8 @@ name: ihope-web
 
 services:
   postgres:
-    image: postgres:16-alpine
+    # 与旧 deploy 一致：CentOS 7 / 内核 3.10 勿用更新的 alpine
+    image: postgres:12-alpine
     container_name: ihope-web-postgres
     environment:
       POSTGRES_USER: ${WEB_DB_USER:-ihope_web}
@@ -18,7 +19,8 @@ services:
       test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 5s
       timeout: 5s
-      retries: 10
+      retries: 20
+      start_period: 15s
     restart: unless-stopped
     networks: [ihope_web_net]
 
