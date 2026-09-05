@@ -733,30 +733,124 @@
 
 .im-composer__hold {
   border: 0;
-  border-radius: 8px;
-  background: #f0f0f0;
-  padding: 18px 16px;
+  border-radius: 6px;
+  background: #f5f5f5;
+  padding: 14px 16px;
   font: inherit;
   font-size: 0.95rem;
   font-weight: 600;
-  color: #333;
+  color: #222;
   cursor: pointer;
   user-select: none;
   touch-action: none;
+  transition: background 0.12s ease, color 0.12s ease;
 }
 
 .im-composer__hold:hover:not(:disabled) {
-  background: #e8e8e8;
+  background: #ebebeb;
 }
 
 .im-composer__hold.is-rec {
-  background: #ffe8e8;
-  color: #c0392b;
+  background: #12b7f5;
+  color: #fff;
+}
+
+.im-composer__hold.is-rec.is-cancel {
+  background: #e74c3c;
+  color: #fff;
 }
 
 .im-composer__hold:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.im-voice-hud {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+  background: rgba(0, 0, 0, 0.18);
+}
+
+.im-voice-hud__card {
+  min-width: 168px;
+  padding: 20px 28px 16px;
+  border-radius: 12px;
+  background: rgba(40, 40, 40, 0.92);
+  color: #fff;
+  text-align: center;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.25);
+}
+
+.im-voice-hud.is-cancel .im-voice-hud__card {
+  background: rgba(192, 57, 43, 0.95);
+}
+
+.im-voice-hud__waves {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 4px;
+  height: 36px;
+  margin-bottom: 10px;
+}
+
+.im-voice-hud__waves i {
+  display: block;
+  width: 4px;
+  border-radius: 2px;
+  background: #12b7f5;
+  animation: im-voice-wave 0.9s ease-in-out infinite;
+}
+
+.im-voice-hud.is-cancel .im-voice-hud__waves i {
+  background: #fff;
+}
+
+.im-voice-hud__waves i:nth-child(1) {
+  height: 10px;
+  animation-delay: 0s;
+}
+.im-voice-hud__waves i:nth-child(2) {
+  height: 18px;
+  animation-delay: 0.12s;
+}
+.im-voice-hud__waves i:nth-child(3) {
+  height: 28px;
+  animation-delay: 0.24s;
+}
+.im-voice-hud__waves i:nth-child(4) {
+  height: 18px;
+  animation-delay: 0.36s;
+}
+.im-voice-hud__waves i:nth-child(5) {
+  height: 10px;
+  animation-delay: 0.48s;
+}
+
+@keyframes im-voice-wave {
+  0%,
+  100% {
+    transform: scaleY(0.55);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}
+
+.im-voice-hud__sec {
+  font-size: 1.1rem;
+  font-weight: 600;
+  margin-bottom: 8px;
+  font-variant-numeric: tabular-nums;
+}
+
+.im-voice-hud__hint {
+  font-size: 0.78rem;
+  opacity: 0.9;
 }
 
 .im-msg__voice {

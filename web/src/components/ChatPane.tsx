@@ -3,6 +3,7 @@ import {
   ChatSettingIcon,
   FolderOpenIcon,
   ImageIcon,
+  KeyboardIcon,
   MicrophoneIcon,
   SearchIcon,
   SmileIcon,
@@ -159,6 +160,7 @@ export function ChatPane({
   const [forwardDetail, setForwardDetail] = useState<Message | null>(null)
   const [voiceMode, setVoiceMode] = useState(false)
   const [recording, setRecording] = useState(false)
+  const [willCancel, setWillCancel] = useState(false)
   const [recSec, setRecSec] = useState(0)
   const mediaRec = useRef<MediaRecorder | null>(null)
   const recChunks = useRef<Blob[]>([])
@@ -166,6 +168,9 @@ export function ChatPane({
   const recTimer = useRef<number | null>(null)
   const recMime = useRef('audio/webm')
   const recStream = useRef<MediaStream | null>(null)
+  const pressActive = useRef(false)
+  const pressStartY = useRef(0)
+  const recCancelRef = useRef(false)
 
   useEffect(() => {
     if (!focusMessageId || !listRef.current) return
@@ -231,6 +236,10 @@ export function ChatPane({
     if (recording || sendingMedia || !conversation) return
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      if (!pressActive.current) {
+        stream.getTracks().forEach((t) => t.stop())
+        return
+      }
       recStream.current = stream
       const candidates = [
         'audio/webm;codecs=opus',
@@ -250,7 +259,9 @@ export function ChatPane({
       }
       rec.onstop = () => {
         clearRecTimer()
+        const cancelled = recCancelRef.current
         setRecording(false)
+        setWillCancel(false)
         setRecSec(0)
         const elapsed = (Date.now() - recStartedAt.current) / 1000
         stopRecTracks()
@@ -259,6 +270,8 @@ export function ChatPane({
         })
         recChunks.current = []
         mediaRec.current = null
+        recCancelRef.current = false
+        if (cancelled) return
         if (elapsed < 0.5 || blob.size < 200) {
           MessagePlugin.warning('说话时间太短')
           return
@@ -274,6 +287,8 @@ export function ChatPane({
         const s = (Date.now() - recStartedAt.current) / 1000
         setRecSec(s)
         if (s >= 60) {
+          recCancelRef.current = false
+          setWillCancel(false)
           try {
             rec.stop()
           } catch {
@@ -283,14 +298,19 @@ export function ChatPane({
       }, 200)
     } catch {
       MessagePlugin.error('无法使用麦克风，请检查权限')
+      pressActive.current = false
+      setRecording(false)
+      setWillCancel(false)
       stopRecTracks()
     }
   }
 
   const endVoiceRecord = () => {
+    pressActive.current = false
     const rec = mediaRec.current
     if (!rec || rec.state === 'inactive') {
       setRecording(false)
+      setWillCancel(false)
       clearRecTimer()
       stopRecTracks()
       return
@@ -299,35 +319,62 @@ export function ChatPane({
       rec.stop()
     } catch {
       setRecording(false)
+      setWillCancel(false)
       clearRecTimer()
       stopRecTracks()
     }
   }
 
   const cancelVoiceRecord = () => {
+    pressActive.current = false
+    recCancelRef.current = true
+    setWillCancel(true)
     const rec = mediaRec.current
     if (rec) {
-      rec.ondataavailable = null
-      rec.onstop = () => {
-        clearRecTimer()
-        setRecording(false)
-        setRecSec(0)
-        stopRecTracks()
-        recChunks.current = []
-        mediaRec.current = null
-      }
       try {
         rec.stop()
       } catch {
         clearRecTimer()
         setRecording(false)
+        setWillCancel(false)
         stopRecTracks()
+        recChunks.current = []
+        mediaRec.current = null
+        recCancelRef.current = false
       }
     } else {
       clearRecTimer()
       setRecording(false)
+      setWillCancel(false)
       stopRecTracks()
+      recCancelRef.current = false
     }
+  }
+
+  const onHoldPointerDown = (e: React.PointerEvent<HTMLButtonElement>) => {
+    if (sendingMedia || !conversation) return
+    e.preventDefault()
+    e.currentTarget.setPointerCapture(e.pointerId)
+    pressActive.current = true
+    recCancelRef.current = false
+    setWillCancel(false)
+    pressStartY.current = e.clientY
+    void startVoiceRecord()
+  }
+
+  const onHoldPointerMove = (e: React.PointerEvent<HTMLButtonElement>) => {
+    if (!pressActive.current) return
+    const up = pressStartY.current - e.clientY
+    const cancel = up > 56
+    if (cancel !== recCancelRef.current) {
+      recCancelRef.current = cancel
+      setWillCancel(cancel)
+    }
+  }
+
+  const onHoldPointerUp = () => {
+    if (recCancelRef.current) cancelVoiceRecord()
+    else endVoiceRecord()
   }
 
   const openMenuFor = (m: Message, clientX: number, clientY: number) => {
@@ -414,6 +461,28 @@ export function ChatPane({
 
   return (
     <section className="im-pane">
+      {recording && (
+        <div
+          className={willCancel ? 'im-voice-hud is-cancel' : 'im-voice-hud'}
+          aria-live="polite"
+        >
+          <div className="im-voice-hud__card">
+            <div className="im-voice-hud__waves" aria-hidden>
+              <i />
+              <i />
+              <i />
+              <i />
+              <i />
+            </div>
+            <div className="im-voice-hud__sec">
+              {Math.min(60, Math.ceil(recSec))}″
+            </div>
+            <div className="im-voice-hud__hint">
+              {willCancel ? '松开手指，取消发送' : '手指上滑，取消发送'}
+            </div>
+          </div>
+        </div>
+      )}
       <header className="im-chat-head">
         {showBack && !selectMode && (
           <button type="button" className="im-back" onClick={onBack}>
@@ -729,15 +798,15 @@ export function ChatPane({
                   ? 'im-composer__tool im-composer__tool--on'
                   : 'im-composer__tool'
               }
-              title={voiceMode ? '切换键盘' : '语音消息'}
-              aria-label={voiceMode ? '切换键盘' : '语音消息'}
+              title={voiceMode ? '切换到键盘' : '切换到语音'}
+              aria-label={voiceMode ? '切换到键盘' : '切换到语音'}
               disabled={sendingMedia || !conversation}
               onClick={() => {
                 if (recording) cancelVoiceRecord()
                 setVoiceMode((v) => !v)
               }}
             >
-              <MicrophoneIcon size="22px" />
+              {voiceMode ? <KeyboardIcon size="22px" /> : <MicrophoneIcon size="22px" />}
             </button>
             <input
               ref={imageRef}
@@ -766,26 +835,29 @@ export function ChatPane({
             <div className="im-composer__voice">
               <button
                 type="button"
-                className={
-                  recording
-                    ? 'im-composer__hold is-rec'
-                    : 'im-composer__hold'
-                }
+                className={[
+                  'im-composer__hold',
+                  recording ? 'is-rec' : '',
+                  recording && willCancel ? 'is-cancel' : '',
+                ]
+                  .filter(Boolean)
+                  .join(' ')}
                 disabled={sendingMedia || !conversation}
-                onPointerDown={(e) => {
-                  e.preventDefault()
-                  e.currentTarget.setPointerCapture(e.pointerId)
-                  void startVoiceRecord()
-                }}
-                onPointerUp={() => endVoiceRecord()}
+                onPointerDown={onHoldPointerDown}
+                onPointerMove={onHoldPointerMove}
+                onPointerUp={onHoldPointerUp}
                 onPointerCancel={() => cancelVoiceRecord()}
+                onLostPointerCapture={() => {
+                  if (pressActive.current) onHoldPointerUp()
+                }}
                 onContextMenu={(e) => e.preventDefault()}
               >
-                {recording
-                  ? `松开发送 ${Math.min(60, Math.ceil(recSec))}″`
-                  : '按住 说话'}
+                {!recording
+                  ? '按住 说话'
+                  : willCancel
+                    ? '松开 取消'
+                    : `松开发送 ${Math.min(60, Math.ceil(recSec))}″`}
               </button>
-              <p className="im-composer__tip">最长 60 秒 · 上滑取消请松开后点麦克风切回</p>
             </div>
           ) : (
             <>
