@@ -1,10 +1,13 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import {
+  AdjustmentIcon,
   CallIcon,
   CallOffIcon,
   CameraOffIcon,
   Microphone1Icon,
+  SoundHighIcon,
   SoundMute1Icon,
+  SoundMuteIcon,
   VideoCamera1Icon,
 } from 'tdesign-icons-react'
 import { Button } from 'tdesign-react'
@@ -24,6 +27,7 @@ function useCallState(): CallUIState {
 function VideoTile({
   stream,
   muted,
+  volume = 1,
   label,
   mirror,
   className = '',
@@ -31,6 +35,7 @@ function VideoTile({
 }: {
   stream: MediaStream | null
   muted?: boolean
+  volume?: number
   label?: string
   mirror?: boolean
   className?: string
@@ -42,6 +47,11 @@ function VideoTile({
     if (!el) return
     el.srcObject = stream
   }, [stream])
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    el.volume = muted ? 0 : Math.max(0, Math.min(1, volume))
+  }, [muted, volume])
   return (
     <div className={['im-call-tile', className].filter(Boolean).join(' ')}>
       {stream ? (
@@ -151,13 +161,27 @@ function DraggablePip({
   )
 }
 
-function RemoteAudio({ stream }: { stream: MediaStream }) {
+function RemoteAudio({
+  stream,
+  volume,
+  muted,
+}: {
+  stream: MediaStream
+  volume: number
+  muted?: boolean
+}) {
   const ref = useRef<HTMLAudioElement>(null)
   useEffect(() => {
     const el = ref.current
     if (!el) return
     el.srcObject = stream
   }, [stream])
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    el.volume = muted ? 0 : Math.max(0, Math.min(1, volume))
+    el.muted = !!muted
+  }, [volume, muted])
   return <audio ref={ref} autoPlay playsInline />
 }
 
@@ -181,11 +205,13 @@ function AudioAvatar({
 function PipVideoBody({
   stream,
   muted,
+  volume = 1,
   label,
   mirror,
 }: {
   stream: MediaStream | null
   muted?: boolean
+  volume?: number
   label: string
   mirror?: boolean
 }) {
@@ -195,6 +221,11 @@ function PipVideoBody({
     if (!el) return
     el.srcObject = stream
   }, [stream])
+  useEffect(() => {
+    const el = ref.current
+    if (!el || muted) return
+    el.volume = Math.max(0, Math.min(1, volume))
+  }, [muted, volume])
   return (
     <>
       {stream ? (
@@ -225,14 +256,17 @@ export function CallOverlay({ selfName, selfAvatar, resolveTitle }: Props) {
   /** false = 对方大屏、自己小窗；true = 自己大屏、对方小窗 */
   const [selfOnMain, setSelfOnMain] = useState(false)
   const [focusRemoteId, setFocusRemoteId] = useState<string | null>(null)
+  const [volumeOpen, setVolumeOpen] = useState(false)
   const room = state.active
   const isVideo = room?.kind === 'video'
   const ringing = room?.status === 'ringing'
   const hasRemote = state.remotes.length > 0
+  const outVolume = state.speakerMuted ? 0 : state.speakerVolume
 
   useEffect(() => {
     setSelfOnMain(false)
     setFocusRemoteId(null)
+    setVolumeOpen(false)
   }, [room?.id])
 
   useEffect(() => {
@@ -318,6 +352,8 @@ export function CallOverlay({ selfName, selfAvatar, resolveTitle }: Props) {
                         <PipVideoBody
                           stream={focusedRemote.stream}
                           label={focusedRemote.username || '对方'}
+                          volume={outVolume}
+                          muted={state.speakerMuted}
                         />
                       </div>
                     )}
@@ -328,7 +364,12 @@ export function CallOverlay({ selfName, selfAvatar, resolveTitle }: Props) {
                         className="im-call-tile im-call-tile--main im-call-tile--pick"
                         onClick={() => setFocusRemoteId(r.userId)}
                       >
-                        <PipVideoBody stream={r.stream} label={r.username || '对方'} />
+                        <PipVideoBody
+                          stream={r.stream}
+                          label={r.username || '对方'}
+                          volume={outVolume}
+                          muted={state.speakerMuted}
+                        />
                       </button>
                     ))}
                   </>
@@ -338,6 +379,8 @@ export function CallOverlay({ selfName, selfAvatar, resolveTitle }: Props) {
                       stream={focusedRemote.stream}
                       label={focusedRemote.username || '对方'}
                       className="im-call-tile--main"
+                      volume={outVolume}
+                      muted={state.speakerMuted}
                     />
                   )
                 )}
@@ -347,6 +390,8 @@ export function CallOverlay({ selfName, selfAvatar, resolveTitle }: Props) {
                   <PipVideoBody
                     stream={focusedRemote.stream}
                     label={focusedRemote.username || '对方'}
+                    volume={outVolume}
+                    muted={state.speakerMuted}
                   />
                 ) : (
                   <PipVideoBody
@@ -376,7 +421,12 @@ export function CallOverlay({ selfName, selfAvatar, resolveTitle }: Props) {
         ) : (
           <div className="im-call-overlay__voices">
             {state.remotes.map((r) => (
-              <RemoteAudio key={r.userId} stream={r.stream} />
+              <RemoteAudio
+                key={r.userId}
+                stream={r.stream}
+                volume={state.speakerVolume}
+                muted={state.speakerMuted}
+              />
             ))}
             {ringing ? (
               <>
@@ -406,18 +456,62 @@ export function CallOverlay({ selfName, selfAvatar, resolveTitle }: Props) {
       </div>
 
       <div className="im-call-overlay__bar">
+        {volumeOpen && (
+          <div className="im-call-volume" role="dialog" aria-label="音量调节">
+            <label className="im-call-volume__row">
+              <span>麦克风</span>
+              <input
+                type="range"
+                min={0}
+                max={100}
+                value={Math.round(state.micVolume * 100)}
+                disabled={state.muted}
+                onChange={(e) => callController.setMicVolume(Number(e.target.value) / 100)}
+              />
+              <em>{Math.round(state.micVolume * 100)}%</em>
+            </label>
+            <label className="im-call-volume__row">
+              <span>扬声器</span>
+              <input
+                type="range"
+                min={0}
+                max={100}
+                value={Math.round(state.speakerVolume * 100)}
+                disabled={state.speakerMuted}
+                onChange={(e) => callController.setSpeakerVolume(Number(e.target.value) / 100)}
+              />
+              <em>{Math.round(state.speakerVolume * 100)}%</em>
+            </label>
+          </div>
+        )}
         <button
           type="button"
-          className="im-call-ctrl"
+          className={state.muted ? 'im-call-ctrl is-off' : 'im-call-ctrl'}
           title={state.muted ? '取消静音' : '静音'}
           onClick={() => void callController.toggleMute()}
         >
           {state.muted ? <SoundMute1Icon size="22px" /> : <Microphone1Icon size="22px" />}
         </button>
+        <button
+          type="button"
+          className={state.speakerMuted ? 'im-call-ctrl is-off' : 'im-call-ctrl'}
+          title={state.speakerMuted ? '取消扬声器静音' : '扬声器静音'}
+          onClick={() => callController.toggleSpeaker()}
+        >
+          {state.speakerMuted ? <SoundMuteIcon size="22px" /> : <SoundHighIcon size="22px" />}
+        </button>
+        <button
+          type="button"
+          className={volumeOpen ? 'im-call-ctrl is-active' : 'im-call-ctrl'}
+          title="调节麦克风与扬声器音量"
+          onClick={() => setVolumeOpen((v) => !v)}
+        >
+          <AdjustmentIcon size="22px" />
+        </button>
         {isVideo && (
           <button
             type="button"
-            className="im-call-ctrl"
+            className={state.cameraOff ? 'im-call-ctrl is-off' : 'im-call-ctrl'}
             title={state.cameraOff ? '打开摄像头' : '关闭摄像头'}
             onClick={() => void callController.toggleCamera()}
           >

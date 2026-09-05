@@ -34,6 +34,7 @@ import { PlusMenu } from '../components/PlusMenu'
 import { SessionList } from '../components/SessionList'
 import { UserDrawer } from '../components/UserDrawer'
 import { useIsMobile } from '../hooks/useIsMobile'
+import { useVisualViewportLock } from '../hooks/useVisualViewportLock'
 import { chatBgStyle, chatThemeSummary, chatThemeVars, resolveUserTheme, usesFrameWallpaper } from '../lib/chatBg'
 import { callController } from '../lib/call/CallController'
 import { conversationTitle, initialOf } from '../lib/chatFormat'
@@ -58,6 +59,7 @@ type RightSurface =
 
 export function ChatPage({ user, onUserChange, onLogout }: Props) {
   const isMobile = useIsMobile()
+  useVisualViewportLock(isMobile)
   const [listNav, setListNav] = useState<ListNav>('messages')
 
   useEffect(() => {

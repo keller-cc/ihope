@@ -544,6 +544,7 @@ export const ChatBackgroundDialog = ChatThemeDialog
 
 function ThemePreview({ theme }: { theme: ChatTheme }) {
   const [device, setDevice] = useState<'pc' | 'mobile'>('pc')
+  const [phoneTab, setPhoneTab] = useState<'home' | 'chat' | 'drawer'>('chat')
   const texture = theme.texture && theme.texture !== 'none' ? theme.texture : null
   const accent = theme.accent || 'var(--im-color-primary, #12B7F5)'
   const isMobile = device === 'mobile'
@@ -685,89 +686,101 @@ function ThemePreview({ theme }: { theme: ChatTheme }) {
           </div>
         ) : (
           <div className="im-theme-preview__phones">
-            {/* 首页：会话列表 */}
-            <div className="im-theme-preview__phone">
-              <div className="im-theme-preview__phone-cap">首页</div>
-              <div className="im-theme-preview__frame im-theme-preview__frame--phone">
-                {renderFrameWallpaper()}
-                <div className="im-theme-preview__home">
-                  <div className="im-theme-preview__home-head">
-                    <i
-                      className="im-theme-preview__avatar im-theme-preview__avatar--sm"
-                      style={{ background: accent }}
-                    />
-                    <strong>消息</strong>
-                    <em>+</em>
-                  </div>
-                  <div className="im-theme-preview__side-item is-active">
-                    <i className="im-theme-preview__avatar im-theme-preview__avatar--sm" />
-                    <div className="im-theme-preview__side-meta">
-                      <strong>好友</strong>
-                      <em>你好呀</em>
-                    </div>
-                  </div>
-                  <div className="im-theme-preview__side-item">
-                    <i className="im-theme-preview__avatar im-theme-preview__avatar--sm" />
-                    <div className="im-theme-preview__side-meta">
-                      <strong>群聊</strong>
-                      <em>随心调预览</em>
-                    </div>
-                  </div>
-                </div>
-                {renderTabbar()}
-              </div>
+            <div className="im-theme-preview__phone-tabs" role="tablist" aria-label="手机预览页">
+              {(
+                [
+                  ['home', '首页'],
+                  ['chat', '会话'],
+                  ['drawer', '抽屉'],
+                ] as const
+              ).map(([id, label]) => (
+                <button
+                  key={id}
+                  type="button"
+                  role="tab"
+                  aria-selected={phoneTab === id}
+                  className={phoneTab === id ? 'is-active' : undefined}
+                  onClick={() => setPhoneTab(id)}
+                >
+                  {label}
+                </button>
+              ))}
             </div>
-
-            {/* 会话 */}
             <div className="im-theme-preview__phone">
-              <div className="im-theme-preview__phone-cap">会话</div>
               <div className="im-theme-preview__frame im-theme-preview__frame--phone">
                 {renderFrameWallpaper()}
-                <div className="im-theme-preview__chat">
-                  <div className="im-theme-preview__chat-head">好友</div>
-                  {renderChatStage()}
-                  <div className="im-theme-preview__composer">
-                    <span>输入消息…</span>
-                    <em className="im-theme-preview__send">发送</em>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* 抽屉 */}
-            <div className="im-theme-preview__phone">
-              <div className="im-theme-preview__phone-cap">抽屉</div>
-              <div className="im-theme-preview__frame im-theme-preview__frame--phone">
-                {renderFrameWallpaper()}
-                <div className="im-theme-preview__home im-theme-preview__home--dim">
-                  <div className="im-theme-preview__home-head">
-                    <i className="im-theme-preview__avatar im-theme-preview__avatar--sm" />
-                    <strong>消息</strong>
-                  </div>
-                  <div className="im-theme-preview__side-item">
-                    <i className="im-theme-preview__avatar im-theme-preview__avatar--sm" />
-                    <div className="im-theme-preview__side-meta">
-                      <strong>好友</strong>
-                      <em>你好呀</em>
+                {phoneTab === 'home' && (
+                  <>
+                    <div className="im-theme-preview__home">
+                      <div className="im-theme-preview__home-head">
+                        <i
+                          className="im-theme-preview__avatar im-theme-preview__avatar--sm"
+                          style={{ background: accent }}
+                        />
+                        <strong>消息</strong>
+                        <em>+</em>
+                      </div>
+                      <div className="im-theme-preview__side-item is-active">
+                        <i className="im-theme-preview__avatar im-theme-preview__avatar--sm" />
+                        <div className="im-theme-preview__side-meta">
+                          <strong>好友</strong>
+                          <em>你好呀</em>
+                        </div>
+                      </div>
+                      <div className="im-theme-preview__side-item">
+                        <i className="im-theme-preview__avatar im-theme-preview__avatar--sm" />
+                        <div className="im-theme-preview__side-meta">
+                          <strong>群聊</strong>
+                          <em>随心调预览</em>
+                        </div>
+                      </div>
+                    </div>
+                    {renderTabbar()}
+                  </>
+                )}
+                {phoneTab === 'chat' && (
+                  <div className="im-theme-preview__chat">
+                    <div className="im-theme-preview__chat-head">好友</div>
+                    {renderChatStage()}
+                    <div className="im-theme-preview__composer">
+                      <span>输入消息…</span>
+                      <em className="im-theme-preview__send">发送</em>
                     </div>
                   </div>
-                </div>
-                {renderTabbar()}
-                <aside className="im-theme-preview__drawer" aria-hidden>
-                  <div className="im-theme-preview__drawer-hero">
-                    <i
-                      className="im-theme-preview__avatar"
-                      style={{ background: accent, width: 28, height: 28, borderRadius: '50%' }}
-                    />
-                    <div>
-                      <strong>我</strong>
-                      <em>IHope 号</em>
+                )}
+                {phoneTab === 'drawer' && (
+                  <>
+                    <div className="im-theme-preview__home im-theme-preview__home--dim">
+                      <div className="im-theme-preview__home-head">
+                        <i className="im-theme-preview__avatar im-theme-preview__avatar--sm" />
+                        <strong>消息</strong>
+                      </div>
+                      <div className="im-theme-preview__side-item">
+                        <i className="im-theme-preview__avatar im-theme-preview__avatar--sm" />
+                        <div className="im-theme-preview__side-meta">
+                          <strong>好友</strong>
+                          <em>你好呀</em>
+                        </div>
+                      </div>
                     </div>
-                  </div>
-                  <div className="im-theme-preview__drawer-row">设置</div>
-                  <div className="im-theme-preview__drawer-row">随心调</div>
-                  <div className="im-theme-preview__drawer-row">退出登录</div>
-                </aside>
+                    {renderTabbar()}
+                    <aside className="im-theme-preview__drawer" aria-hidden>
+                      <div className="im-theme-preview__drawer-hero">
+                        <i
+                          className="im-theme-preview__avatar"
+                          style={{ background: accent, width: 28, height: 28, borderRadius: '50%' }}
+                        />
+                        <div>
+                          <strong>我</strong>
+                          <em>IHope 号</em>
+                        </div>
+                      </div>
+                      <div className="im-theme-preview__drawer-row">设置</div>
+                      <div className="im-theme-preview__drawer-row">随心调</div>
+                      <div className="im-theme-preview__drawer-row">退出登录</div>
+                    </aside>
+                  </>
+                )}
               </div>
             </div>
           </div>

@@ -14,6 +14,13 @@
   padding: 0;
   place-items: stretch;
   background: var(--im-color-bg);
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: var(--im-vv-offset, 0px);
+  height: var(--im-vv-height, 100dvh);
+  max-height: var(--im-vv-height, 100dvh);
+  overflow: hidden;
 }
 
 .im-frame {

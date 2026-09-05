@@ -18,6 +18,12 @@ export type CallUIState = {
   remotes: RemoteMedia[]
   muted: boolean
   cameraOff: boolean
+  /** 扬声器静音（不影响麦克风） */
+  speakerMuted: boolean
+  /** 麦克风增益 0–1 */
+  micVolume: number
+  /** 扬声器音量 0–1 */
+  speakerVolume: number
   error: string | null
   connecting: boolean
 }
@@ -29,6 +35,9 @@ const emptyState = (): CallUIState => ({
   remotes: [],
   muted: false,
   cameraOff: false,
+  speakerMuted: false,
+  micVolume: 1,
+  speakerVolume: 1,
   error: null,
   connecting: false,
 })
@@ -40,6 +49,9 @@ export class CallController {
   private remoteStreams = new Map<string, MediaStream>()
   private listeners = new Set<Listener>()
   private unsub: (() => void) | null = null
+  private audioCtx: AudioContext | null = null
+  private micGain: GainNode | null = null
+  private rawLocalStream: MediaStream | null = null
   state: CallUIState = emptyState()
 
   setUserId(id: string) {
@@ -141,7 +153,16 @@ export class CallController {
       }
     }
     await this.cleanupMedia()
-    this.setState({ active: null, remotes: [], localStream: null, muted: false, cameraOff: false })
+    this.setState({
+      active: null,
+      remotes: [],
+      localStream: null,
+      muted: false,
+      cameraOff: false,
+      speakerMuted: false,
+      micVolume: 1,
+      speakerVolume: 1,
+    })
   }
 
   async toggleMute() {
@@ -149,11 +170,30 @@ export class CallController {
     if (!stream) return
     const next = !this.state.muted
     for (const t of stream.getAudioTracks()) t.enabled = !next
+    if (this.micGain) {
+      this.micGain.gain.value = next ? 0 : this.state.micVolume
+    }
     this.setState({ muted: next })
     const callId = this.state.active?.id
     if (callId) {
       userSocket.send({ type: 'call.media', callId, audio: !next })
     }
+  }
+
+  toggleSpeaker() {
+    this.setState({ speakerMuted: !this.state.speakerMuted })
+  }
+
+  setMicVolume(v: number) {
+    const micVolume = Math.max(0, Math.min(1, v))
+    if (this.micGain && !this.state.muted) {
+      this.micGain.gain.value = micVolume
+    }
+    this.setState({ micVolume })
+  }
+
+  setSpeakerVolume(v: number) {
+    this.setState({ speakerVolume: Math.max(0, Math.min(1, v)) })
   }
 
   async toggleCamera() {
@@ -202,7 +242,46 @@ export class CallController {
     }
     for (const t of stream.getAudioTracks()) t.enabled = !muted
     for (const t of stream.getVideoTracks()) t.enabled = !cameraOff
-    this.setState({ localStream: stream, muted, cameraOff })
+    const micVolume = this.state.micVolume
+    const outbound = await this.withMicGain(stream, muted ? 0 : micVolume)
+    this.setState({ localStream: outbound, muted, cameraOff })
+  }
+
+  /** 用 GainNode 调节上行麦克风音量，视频轨原样保留 */
+  private async withMicGain(stream: MediaStream, gainValue: number): Promise<MediaStream> {
+    const audioTracks = stream.getAudioTracks()
+    if (!audioTracks.length) return stream
+    this.rawLocalStream = stream
+    await this.closeAudioGraph()
+    const ctx = new AudioContext()
+    this.audioCtx = ctx
+    if (ctx.state === 'suspended') {
+      try {
+        await ctx.resume()
+      } catch {
+        /* ignore */
+      }
+    }
+    const source = ctx.createMediaStreamSource(new MediaStream(audioTracks))
+    const gain = ctx.createGain()
+    gain.gain.value = Math.max(0, Math.min(1, gainValue))
+    this.micGain = gain
+    const dest = ctx.createMediaStreamDestination()
+    source.connect(gain)
+    gain.connect(dest)
+    return new MediaStream([...dest.stream.getAudioTracks(), ...stream.getVideoTracks()])
+  }
+
+  private async closeAudioGraph() {
+    this.micGain = null
+    if (this.audioCtx) {
+      try {
+        await this.audioCtx.close()
+      } catch {
+        /* ignore */
+      }
+      this.audioCtx = null
+    }
   }
 
   private async offerToJoinedPeers(room: CallRoom) {
@@ -299,6 +378,9 @@ export class CallController {
     this.peers.clear()
     this.remoteStreams.clear()
     this.state.localStream?.getTracks().forEach((t) => t.stop())
+    this.rawLocalStream?.getTracks().forEach((t) => t.stop())
+    this.rawLocalStream = null
+    await this.closeAudioGraph()
   }
 
   private async flushIce(peerId: string) {
@@ -357,6 +439,9 @@ export class CallController {
           localStream: null,
           muted: false,
           cameraOff: false,
+          speakerMuted: false,
+          micVolume: 1,
+          speakerVolume: 1,
         })
         break
       }
