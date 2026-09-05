@@ -1,0 +1,34 @@
+# =============================================================================
+# IHope Web IM — 本地 Postgres（与旧 deploy/ 完全隔离）
+# =============================================================================
+# 用法（在 appserver 目录）：
+#   copy .env.example .env          # 首次
+#   docker compose up -d            # 启动
+#   docker compose down             # 停止
+#   docker compose ps
+#
+# 勿与 deploy/docker-compose*.yml 混用：
+#   - 旧栈：容器 ihope-postgres-dev，端口 5433，库 ihope，卷 deploy/data/postgres
+#   - 本栈：容器 ihope-web-postgres，端口 5434，库 ihope_web，卷 appserver/data/postgres
+# =============================================================================
+
+name: ihope-web
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: ihope-web-postgres
+    environment:
+      POSTGRES_USER: ${WEB_DB_USER:-ihope_web}
+      POSTGRES_PASSWORD: ${WEB_DB_PASSWORD:-webdevpassword}
+      POSTGRES_DB: ${WEB_DB_NAME:-ihope_web}
+    ports:
+      - "${WEB_DB_PORT:-5434}:5432"
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped

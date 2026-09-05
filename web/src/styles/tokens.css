@@ -1,0 +1,81 @@
+/* Design tokens — IHope IM（对齐 QQ 设置/主页灰阶） */
+:root {
+  --im-color-primary: #12b7f5;
+  --im-color-primary-deep: #0099cc;
+  --im-color-success: #95ec69;
+  --im-color-danger: #fa5151;
+  --im-color-ink: #000000;
+  --im-color-muted: #999999;
+  --im-color-line: #e5e5e5;
+  --im-color-rail: #2c2c2c;
+  /* QQ 桌面外框 / 设置页灰底 */
+  --im-color-bg: #e6e6e6;
+  --im-color-surface: #ffffff;
+  --im-color-chat: #f5f5f5;
+  --im-color-drawer-bg: #ededed;
+  --im-color-list-bg: #ffffff;
+  --im-radius: 6px;
+  --im-radius-lg: 10px;
+  --im-font: 'PingFang SC', 'Microsoft YaHei UI', 'Noto Sans SC', system-ui, sans-serif;
+  --im-shadow-frame: 0 8px 28px rgba(0, 0, 0, 0.12);
+  --td-brand-color: #12b7f5;
+  --td-brand-color-hover: #33c2f7;
+  --td-brand-color-active: #0099cc;
+  --td-brand-color-focus: rgba(18, 183, 245, 0.2);
+  --mobile-bp: 860px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  height: 100%;
+  min-height: 100%;
+  font-family: var(--im-font);
+  color: var(--im-color-ink);
+  background: var(--im-color-bg);
+}
+
+button,
+input,
+textarea {
+  font-family: inherit;
+}
+
+.im-muted {
+  color: var(--im-color-muted);
+  line-height: 1.5;
+  margin: 0 0 10px;
+}
+
+.im-linkish {
+  border: 0;
+  background: none;
+  color: var(--im-color-primary);
+  cursor: pointer;
+  padding: 0;
+  font: inherit;
+}
+
+.im-boot {
+  min-height: 100%;
+  display: grid;
+  place-items: center;
+}
+
+.im-slot-badge {
+  position: fixed;
+  top: 8px;
+  right: 8px;
+  z-index: 9999;
+  background: rgba(18, 40, 70, 0.85);
+  color: #fff;
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  pointer-events: none;
+}

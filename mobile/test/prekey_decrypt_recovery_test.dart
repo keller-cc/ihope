@@ -18,12 +18,12 @@ ChatMessage _peerText(String id, String ciphertext) {
 void main() {
   test('decryptMessagesLocal keeps cached plaintext after decrypt failure', () async {
     final auth = AuthService();
-    auth.currentUser = User(
+    auth.setCurrentUserForTest(User(
       id: 'me',
       email: 'a@test.com',
       username: 'a',
       identityPublicKey: 'k',
-    );
+    ));
     final conv = ConversationItem(
       id: 'c1',
       type: 'private',

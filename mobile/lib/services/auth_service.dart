@@ -81,6 +81,10 @@ class AuthService {
     _currentUser = user;
   }
 
+  /// 仅单测注入登录用户（无 public setter）。
+  @visibleForTesting
+  void setCurrentUserForTest(User? user) => _setCurrentUser(user);
+
   final _sessionEndedController = StreamController<void>.broadcast();
 
   /// 会话被服务端吊销或 refresh 失败时发出（含内部 logout）。

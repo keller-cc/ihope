@@ -23,12 +23,12 @@ void main() {
 
     setUp(() {
       auth = AuthService();
-      auth.currentUser = User(
+      auth.setCurrentUserForTest(User(
         id: 'me',
         email: 'a@test.com',
         username: 'a',
         identityPublicKey: 'k',
-      );
+      ));
       conv = ConversationItem(
         id: 'c1',
         type: 'private',
