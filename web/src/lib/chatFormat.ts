@@ -109,6 +109,33 @@ export function parseFileBody(body: string): FilePayload | null {
   return null
 }
 
+export type VoicePayload = {
+  url: string
+  duration: number
+  size?: number
+  mime?: string
+}
+
+export function parseVoiceBody(body: string): VoicePayload | null {
+  try {
+    const o = JSON.parse(body) as Partial<VoicePayload>
+    if (o && typeof o.url === 'string' && typeof o.duration === 'number' && o.duration > 0) {
+      return { url: o.url, duration: o.duration, size: o.size, mime: o.mime }
+    }
+  } catch {
+    /* ignore */
+  }
+  return null
+}
+
+export function formatVoiceDuration(sec: number): string {
+  const s = Math.max(1, Math.round(sec))
+  const m = Math.floor(s / 60)
+  const r = s % 60
+  if (m <= 0) return `${r}"`
+  return `${m}'${String(r).padStart(2, '0')}"`
+}
+
 export function formatFileSize(n?: number): string {
   if (n == null || n < 0) return ''
   if (n < 1024) return `${n} B`
@@ -127,6 +154,7 @@ export type ForwardPayload = {
     url?: string
     name?: string
     size?: number
+    duration?: number
     createdAt: string
   }>
 }
@@ -163,6 +191,10 @@ export function messageCopyText(m: {
     const img = parseImageBody(m.body)
     return img?.url || img?.thumbUrl || ''
   }
+  if (m.type === 'voice') {
+    const v = parseVoiceBody(m.body)
+    return v ? `[语音] ${formatVoiceDuration(v.duration)}` : '[语音]'
+  }
   if (m.type === 'forward') {
     const fwd = parseForwardBody(m.body)
     if (!fwd) return ''
@@ -172,7 +204,9 @@ export function messageCopyText(m: {
           ? '[图片]'
           : it.type === 'file'
             ? `[文件]${it.name || ''}`
-            : it.body || ''
+            : it.type === 'voice'
+              ? `[语音]${it.duration != null ? formatVoiceDuration(it.duration) : ''}`
+              : it.body || ''
       return `${it.senderName}：${content}`
     })
     return `${fwd.fromTitle}的聊天记录\n${lines.join('\n')}`

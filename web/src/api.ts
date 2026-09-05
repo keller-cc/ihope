@@ -1,6 +1,7 @@
 export type ChatBg = {
-  kind: 'default' | 'gradient' | 'image'
+  kind: 'default' | 'gradient' | 'color' | 'image'
   id?: string
+  hex?: string
   url?: string
 }
 
@@ -155,24 +156,44 @@ export function setToken(token: string | null) {
   else localStorage.removeItem(key)
 }
 
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const headers = new Headers(init.headers)
-  if (!headers.has('Content-Type') && init.body) {
-    headers.set('Content-Type', 'application/json')
-  }
-  const token = getToken()
-  if (token) headers.set('Authorization', `Bearer ${token}`)
+/** 合并进行中的相同 GET，避免 StrictMode / 重复 effect 打出双份请求。 */
+const inflightGets = new Map<string, Promise<unknown>>()
 
-  const res = await fetch(path, { ...init, headers })
-  const data = await res.json().catch(() => ({}))
-  if (!res.ok) {
-    const err = new Error((data as { error?: string }).error || res.statusText) as Error & {
-      code?: string
-    }
-    err.code = (data as { error?: string }).error
-    throw err
+async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const method = (init.method || 'GET').toUpperCase()
+  const dedupe = method === 'GET' && init.body == null
+  if (dedupe) {
+    const hit = inflightGets.get(path)
+    if (hit) return hit as Promise<T>
   }
-  return data as T
+
+  const run = (async () => {
+    const headers = new Headers(init.headers)
+    if (!headers.has('Content-Type') && init.body) {
+      headers.set('Content-Type', 'application/json')
+    }
+    const token = getToken()
+    if (token) headers.set('Authorization', `Bearer ${token}`)
+
+    const res = await fetch(path, { ...init, headers })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) {
+      const err = new Error((data as { error?: string }).error || res.statusText) as Error & {
+        code?: string
+      }
+      err.code = (data as { error?: string }).error
+      throw err
+    }
+    return data as T
+  })()
+
+  if (dedupe) {
+    inflightGets.set(path, run)
+    void run.finally(() => {
+      if (inflightGets.get(path) === run) inflightGets.delete(path)
+    })
+  }
+  return run
 }
 
 /** Map API error codes to Chinese UI messages. */
@@ -234,7 +255,7 @@ export function apiErrorMessage(e: unknown, fallback: string): string {
     'member not found': '成员不在群中',
     'invalid file': '文件无效',
     'title too long': '头衔最多 12 字',
-    'recall expired': '超过 2 分钟，无法撤回',
+    'recall expired': '超过 5 分钟，无法撤回',
     'message not found': '消息不存在',
   }
   if (code && map[code]) return map[code]
@@ -413,21 +434,35 @@ export const api = {
     request<{ message: string }>(`/api/conversations/${id}/read`, { method: 'POST' }),
   listMessages: (
     id: string,
-    opts?: { before?: string; type?: string; senderId?: string; day?: string },
+    opts?: {
+      before?: string
+      type?: string
+      senderId?: string
+      senderIds?: string[]
+      day?: string
+    },
   ) => {
     const p = new URLSearchParams()
     if (opts?.before) p.set('before', opts.before)
     if (opts?.type) p.set('type', opts.type)
     if (opts?.senderId) p.set('senderId', opts.senderId)
+    if (opts?.senderIds?.length) p.set('senderIds', opts.senderIds.join(','))
     if (opts?.day) p.set('day', opts.day)
     const q = p.toString() ? `?${p}` : ''
     return request<{ messages: Message[]; hasMore: boolean }>(
       `/api/conversations/${id}/messages${q}`,
     )
   },
-  searchMessages: (id: string, query: string, before?: string) => {
+  searchMessages: (
+    id: string,
+    query: string,
+    before?: string,
+    opts?: { day?: string; senderIds?: string[] },
+  ) => {
     const p = new URLSearchParams({ q: query })
     if (before) p.set('before', before)
+    if (opts?.day) p.set('day', opts.day)
+    if (opts?.senderIds?.length) p.set('senderIds', opts.senderIds.join(','))
     return request<{ messages: Message[]; hasMore: boolean }>(
       `/api/conversations/${id}/messages/search?${p}`,
     )
@@ -497,6 +532,36 @@ export const api = {
     }
     return data as Message
   },
+  sendVoice: async (id: string, file: Blob, duration: number, mime?: string) => {
+    const fd = new FormData()
+    const ext = mime?.includes('ogg')
+      ? 'ogg'
+      : mime?.includes('mp4') || mime?.includes('m4a')
+        ? 'm4a'
+        : mime?.includes('mpeg') || mime?.includes('mp3')
+          ? 'mp3'
+          : 'webm'
+    fd.append('file', file, `voice.${ext}`)
+    fd.append('duration', String(duration))
+    if (mime) fd.append('mime', mime)
+    const headers = new Headers()
+    const token = getToken()
+    if (token) headers.set('Authorization', `Bearer ${token}`)
+    const res = await fetch(`/api/conversations/${id}/messages/voice`, {
+      method: 'POST',
+      headers,
+      body: fd,
+    })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) {
+      const err = new Error((data as { error?: string }).error || res.statusText) as Error & {
+        code?: string
+      }
+      err.code = (data as { error?: string }).error
+      throw err
+    }
+    return data as Message
+  },
   inviteGroupMembers: (id: string, memberIds: string[]) =>
     request<Conversation>(`/api/conversations/${id}/invite`, {
       method: 'POST',
@@ -549,23 +614,43 @@ export function setAdminToken(token: string | null) {
   else sessionStorage.removeItem(ADMIN_TOKEN_KEY)
 }
 
+/** 合并进行中的相同 GET（含管理端）。 */
+const inflightAdminGets = new Map<string, Promise<unknown>>()
+
 async function adminRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const headers = new Headers(init.headers)
-  if (!headers.has('Content-Type') && init.body) {
-    headers.set('Content-Type', 'application/json')
+  const method = (init.method || 'GET').toUpperCase()
+  const dedupe = method === 'GET' && init.body == null
+  if (dedupe) {
+    const hit = inflightAdminGets.get(path)
+    if (hit) return hit as Promise<T>
   }
-  const token = getAdminToken()
-  if (token) headers.set('Authorization', `Bearer ${token}`)
-  const res = await fetch(path, { ...init, headers })
-  const data = await res.json().catch(() => ({}))
-  if (!res.ok) {
-    const err = new Error((data as { error?: string }).error || res.statusText) as Error & {
-      code?: string
+
+  const run = (async () => {
+    const headers = new Headers(init.headers)
+    if (!headers.has('Content-Type') && init.body) {
+      headers.set('Content-Type', 'application/json')
     }
-    err.code = (data as { error?: string }).error
-    throw err
+    const token = getAdminToken()
+    if (token) headers.set('Authorization', `Bearer ${token}`)
+    const res = await fetch(path, { ...init, headers })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) {
+      const err = new Error((data as { error?: string }).error || res.statusText) as Error & {
+        code?: string
+      }
+      err.code = (data as { error?: string }).error
+      throw err
+    }
+    return data as T
+  })()
+
+  if (dedupe) {
+    inflightAdminGets.set(path, run)
+    void run.finally(() => {
+      if (inflightAdminGets.get(path) === run) inflightAdminGets.delete(path)
+    })
   }
-  return data as T
+  return run
 }
 
 export type AdminUser = {

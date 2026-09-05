@@ -8,6 +8,7 @@ import (
 	"html"
 	"net/http"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -103,6 +104,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/conversations/{id}/messages", s.withAuth(s.handleSendMessage))
 	mux.HandleFunc("POST /api/conversations/{id}/messages/image", s.withAuth(s.handleSendImage))
 	mux.HandleFunc("POST /api/conversations/{id}/messages/file", s.withAuth(s.handleSendFile))
+	mux.HandleFunc("POST /api/conversations/{id}/messages/voice", s.withAuth(s.handleSendVoice))
 	mux.HandleFunc("POST /api/conversations/{id}/messages/forward", s.withAuth(s.handleForwardMessages))
 	mux.HandleFunc("POST /api/conversations/{id}/messages/{mid}/recall", s.withAuth(s.handleRecallMessage))
 	mux.HandleFunc("GET /api/contacts/friends", s.withAuth(s.handleListFriends))
@@ -779,11 +781,12 @@ func (s *Server) handleListMessages(w http.ResponseWriter, r *http.Request, user
 	q := r.URL.Query()
 	before := q.Get("before")
 	opts := chat.ListMessagesOpts{
-		Limit:    50,
-		Before:   before,
-		Type:     q.Get("type"),
-		SenderID: q.Get("senderId"),
-		Day:      q.Get("day"),
+		Limit:     50,
+		Before:    before,
+		Type:      q.Get("type"),
+		SenderID:  q.Get("senderId"),
+		SenderIDs: splitCSV(q.Get("senderIds")),
+		Day:       q.Get("day"),
 	}
 	list, hasMore, err := s.chat.ListMessagesFiltered(r.Context(), id, userID, opts)
 	if err != nil {
@@ -798,7 +801,7 @@ func (s *Server) handleListMessages(w http.ResponseWriter, r *http.Request, user
 		writeErr(w, http.StatusInternalServerError, "list failed")
 		return
 	}
-	if before == "" && opts.Type == "" && opts.SenderID == "" && opts.Day == "" {
+	if before == "" && opts.Type == "" && opts.SenderID == "" && len(opts.SenderIDs) == 0 && opts.Day == "" {
 		_ = s.chat.MarkRead(r.Context(), id, userID)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"messages": list, "hasMore": hasMore})
@@ -807,12 +810,19 @@ func (s *Server) handleListMessages(w http.ResponseWriter, r *http.Request, user
 func (s *Server) handleSearchMessages(w http.ResponseWriter, r *http.Request, userID string) {
 	id := r.PathValue("id")
 	q := r.URL.Query()
-	list, hasMore, err := s.chat.SearchMessages(r.Context(), id, userID, q.Get("q"), 30, q.Get("before"))
+	opts := chat.ListMessagesOpts{
+		Limit:     30,
+		Before:    q.Get("before"),
+		Day:       q.Get("day"),
+		SenderID:  q.Get("senderId"),
+		SenderIDs: splitCSV(q.Get("senderIds")),
+	}
+	list, hasMore, err := s.chat.SearchMessages(r.Context(), id, userID, opts, q.Get("q"))
 	if err != nil {
 		switch err.Error() {
 		case "forbidden":
 			writeErr(w, http.StatusForbidden, "forbidden")
-		case "query required", "query too long":
+		case "query required", "query too long", "invalid day":
 			writeErr(w, http.StatusBadRequest, err.Error())
 		default:
 			writeErr(w, http.StatusInternalServerError, "search failed")
@@ -820,6 +830,22 @@ func (s *Server) handleSearchMessages(w http.ResponseWriter, r *http.Request, us
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"messages": list, "hasMore": hasMore})
+}
+
+func splitCSV(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 func (s *Server) handleListMessageDays(w http.ResponseWriter, r *http.Request, userID string) {
@@ -976,6 +1002,58 @@ func (s *Server) handleSendFile(w http.ResponseWriter, r *http.Request, userID s
 		Name: saved.Name,
 		Size: saved.Size,
 		Mime: saved.Mime,
+	})
+	if err != nil {
+		if err.Error() == "forbidden" {
+			writeErr(w, http.StatusForbidden, "forbidden")
+			return
+		}
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	s.afterMessage(id, userID, m)
+	writeJSON(w, http.StatusCreated, m)
+}
+
+func (s *Server) handleSendVoice(w http.ResponseWriter, r *http.Request, userID string) {
+	id := r.PathValue("id")
+	if err := r.ParseMultipartForm(upload.MaxChatVoiceBytes + (1 << 20)); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid form")
+		return
+	}
+	file, hdr, err := r.FormFile("file")
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "file required")
+		return
+	}
+	defer file.Close()
+	dur, err := strconv.ParseFloat(strings.TrimSpace(r.FormValue("duration")), 64)
+	if err != nil || dur < 0.3 {
+		writeErr(w, http.StatusBadRequest, "invalid duration")
+		return
+	}
+	if dur > float64(upload.MaxChatVoiceSec)+0.5 {
+		writeErr(w, http.StatusBadRequest, "voice too long")
+		return
+	}
+	mime := ""
+	if hdr != nil {
+		mime = hdr.Header.Get("Content-Type")
+	}
+	if mime == "" {
+		mime = r.FormValue("mime")
+	}
+	fileID := uuid.NewString()
+	saved, err := upload.SaveChatVoice(filepath.Join(s.uploadDir, "chat"), fileID, mime, file)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	m, err := s.chat.SendVoice(r.Context(), id, userID, chat.VoiceBody{
+		URL:      saved.URL,
+		Duration: dur,
+		Size:     saved.Size,
+		Mime:     saved.Mime,
 	})
 	if err != nil {
 		if err.Error() == "forbidden" {

@@ -3,6 +3,7 @@ import {
   ChatSettingIcon,
   FolderOpenIcon,
   ImageIcon,
+  MicrophoneIcon,
   SearchIcon,
   SmileIcon,
   SoundMute1Icon,
@@ -13,10 +14,12 @@ import {
   conversationTitle,
   formatFileSize,
   formatMessageTimeDivider,
+  formatVoiceDuration,
   messageCopyText,
   parseFileBody,
   parseForwardBody,
   parseImageBody,
+  parseVoiceBody,
   shouldShowMessageTimeDivider,
 } from '../lib/chatFormat'
 import { CHAT_EMOJIS } from '../lib/emojis'
@@ -33,6 +36,7 @@ type Props = {
   onSend: () => void
   onSendImage: (file: File) => void
   onSendFile: (file: File) => void
+  onSendVoice: (blob: Blob, duration: number, mime: string) => void
   onRecall: (messageId: string) => void
   onForward?: (messageIds: string[]) => void
   onOpenHistory?: () => void
@@ -64,7 +68,7 @@ type MsgMenu = {
 
 function canForwardMessage(m: Message): boolean {
   if (m.recalled) return false
-  return m.type === 'text' || m.type === 'image' || m.type === 'file'
+  return m.type === 'text' || m.type === 'image' || m.type === 'file' || m.type === 'voice'
 }
 
 function canRecallMessage(
@@ -73,24 +77,14 @@ function canRecallMessage(
   conversation: Conversation | undefined,
 ): boolean {
   if (m.recalled) return false
+  const isGroupAdmin =
+    conversation?.type === 'group' && (conversation.isOwner || conversation.isAdmin)
+  // 群主/管理员可随时撤回任意消息（含自己超时的）
+  if (isGroupAdmin) return true
+  // 私聊与普通成员：仅本人消息，且 5 分钟内
+  if (m.senderId !== user.id) return false
   const ageMs = Date.now() - new Date(m.createdAt).getTime()
-  if (m.senderId === user.id && ageMs <= 2 * 60 * 1000) return true
-  if (conversation?.type === 'group' && (conversation.isOwner || conversation.isAdmin)) {
-    return true
-  }
-  return false
-}
-
-function recallMenuLabel(
-  m: Message,
-  user: User,
-  conversation: Conversation | undefined,
-): string {
-  if (m.senderId === user.id) return '撤回'
-  if (conversation?.type === 'group' && (conversation.isOwner || conversation.isAdmin)) {
-    return '撤回（管理员）'
-  }
-  return '撤回'
+  return ageMs <= 5 * 60 * 1000
 }
 
 function recalledHint(m: Message, user: User): string {
@@ -137,6 +131,7 @@ export function ChatPane({
   onSend,
   onSendImage,
   onSendFile,
+  onSendVoice,
   onRecall,
   onForward,
   onOpenHistory,
@@ -162,6 +157,15 @@ export function ChatPane({
   const [emojiOpen, setEmojiOpen] = useState(false)
   const [menu, setMenu] = useState<MsgMenu | null>(null)
   const [forwardDetail, setForwardDetail] = useState<Message | null>(null)
+  const [voiceMode, setVoiceMode] = useState(false)
+  const [recording, setRecording] = useState(false)
+  const [recSec, setRecSec] = useState(0)
+  const mediaRec = useRef<MediaRecorder | null>(null)
+  const recChunks = useRef<Blob[]>([])
+  const recStartedAt = useRef(0)
+  const recTimer = useRef<number | null>(null)
+  const recMime = useRef('audio/webm')
+  const recStream = useRef<MediaStream | null>(null)
 
   useEffect(() => {
     if (!focusMessageId || !listRef.current) return
@@ -198,6 +202,134 @@ export function ChatPane({
     }
   }
 
+  const stopRecTracks = () => {
+    recStream.current?.getTracks().forEach((t) => t.stop())
+    recStream.current = null
+  }
+
+  const clearRecTimer = () => {
+    if (recTimer.current != null) {
+      window.clearInterval(recTimer.current)
+      recTimer.current = null
+    }
+  }
+
+  useEffect(() => {
+    return () => {
+      clearRecTimer()
+      try {
+        mediaRec.current?.stop()
+      } catch {
+        /* ignore */
+      }
+      stopRecTracks()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const startVoiceRecord = async () => {
+    if (recording || sendingMedia || !conversation) return
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      recStream.current = stream
+      const candidates = [
+        'audio/webm;codecs=opus',
+        'audio/webm',
+        'audio/ogg;codecs=opus',
+        'audio/mp4',
+      ]
+      const mime =
+        candidates.find((c) => MediaRecorder.isTypeSupported(c)) || ''
+      recMime.current = mime || 'audio/webm'
+      const rec = mime
+        ? new MediaRecorder(stream, { mimeType: mime })
+        : new MediaRecorder(stream)
+      recChunks.current = []
+      rec.ondataavailable = (e) => {
+        if (e.data.size > 0) recChunks.current.push(e.data)
+      }
+      rec.onstop = () => {
+        clearRecTimer()
+        setRecording(false)
+        setRecSec(0)
+        const elapsed = (Date.now() - recStartedAt.current) / 1000
+        stopRecTracks()
+        const blob = new Blob(recChunks.current, {
+          type: recMime.current || 'audio/webm',
+        })
+        recChunks.current = []
+        mediaRec.current = null
+        if (elapsed < 0.5 || blob.size < 200) {
+          MessagePlugin.warning('说话时间太短')
+          return
+        }
+        onSendVoice(blob, Math.min(60, elapsed), recMime.current || blob.type || 'audio/webm')
+      }
+      mediaRec.current = rec
+      recStartedAt.current = Date.now()
+      setRecSec(0)
+      setRecording(true)
+      rec.start(200)
+      recTimer.current = window.setInterval(() => {
+        const s = (Date.now() - recStartedAt.current) / 1000
+        setRecSec(s)
+        if (s >= 60) {
+          try {
+            rec.stop()
+          } catch {
+            /* ignore */
+          }
+        }
+      }, 200)
+    } catch {
+      MessagePlugin.error('无法使用麦克风，请检查权限')
+      stopRecTracks()
+    }
+  }
+
+  const endVoiceRecord = () => {
+    const rec = mediaRec.current
+    if (!rec || rec.state === 'inactive') {
+      setRecording(false)
+      clearRecTimer()
+      stopRecTracks()
+      return
+    }
+    try {
+      rec.stop()
+    } catch {
+      setRecording(false)
+      clearRecTimer()
+      stopRecTracks()
+    }
+  }
+
+  const cancelVoiceRecord = () => {
+    const rec = mediaRec.current
+    if (rec) {
+      rec.ondataavailable = null
+      rec.onstop = () => {
+        clearRecTimer()
+        setRecording(false)
+        setRecSec(0)
+        stopRecTracks()
+        recChunks.current = []
+        mediaRec.current = null
+      }
+      try {
+        rec.stop()
+      } catch {
+        clearRecTimer()
+        setRecording(false)
+        stopRecTracks()
+      }
+    } else {
+      clearRecTimer()
+      setRecording(false)
+      stopRecTracks()
+    }
+  }
+
   const openMenuFor = (m: Message, clientX: number, clientY: number) => {
     if (selectMode) return
     const copyText = messageCopyText(m)
@@ -214,7 +346,7 @@ export function ChatPane({
       canCopy,
       canForward,
       copyText,
-      recallLabel: recallMenuLabel(m, user, conversation),
+      recallLabel: '撤回',
     })
   }
 
@@ -361,6 +493,7 @@ export function ChatPane({
           const avatarSrc = mine ? user.avatarUrl : m.senderAvatarUrl
           const img = !m.recalled && m.type === 'image' ? parseImageBody(m.body) : null
           const file = !m.recalled && m.type === 'file' ? parseFileBody(m.body) : null
+          const voice = !m.recalled && m.type === 'voice' ? parseVoiceBody(m.body) : null
           const fwd = !m.recalled && m.type === 'forward' ? parseForwardBody(m.body) : null
           const press = m.recalled || selectMode ? null : bindPressHandlers(m)
           const showMeta = isGroup
@@ -486,6 +619,15 @@ export function ChatPane({
                         <span className="im-muted">{formatFileSize(file.size)}</span>
                       </span>
                     </a>
+                  ) : voice ? (
+                    <VoiceBubble
+                      url={voice.url}
+                      duration={voice.duration}
+                      mine={mine}
+                      press={press}
+                      selectMode={!!selectMode}
+                      ignoreClickUntil={ignoreClickUntil}
+                    />
                   ) : fwd ? (
                     <button
                       type="button"
@@ -507,7 +649,9 @@ export function ChatPane({
                               ? '[图片]'
                               : it.type === 'file'
                                 ? `[文件]${it.name || ''}`
-                                : it.body || ''}
+                                : it.type === 'voice'
+                                  ? `[语音]${it.duration != null ? formatVoiceDuration(it.duration) : ''}`
+                                  : it.body || ''}
                           </div>
                         ))}
                         {fwd.items.length > 4 && (
@@ -578,6 +722,23 @@ export function ChatPane({
             >
               <FolderOpenIcon size="22px" />
             </button>
+            <button
+              type="button"
+              className={
+                voiceMode
+                  ? 'im-composer__tool im-composer__tool--on'
+                  : 'im-composer__tool'
+              }
+              title={voiceMode ? '切换键盘' : '语音消息'}
+              aria-label={voiceMode ? '切换键盘' : '语音消息'}
+              disabled={sendingMedia || !conversation}
+              onClick={() => {
+                if (recording) cancelVoiceRecord()
+                setVoiceMode((v) => !v)
+              }}
+            >
+              <MicrophoneIcon size="22px" />
+            </button>
             <input
               ref={imageRef}
               type="file"
@@ -601,32 +762,61 @@ export function ChatPane({
             />
           </div>
 
-          <Textarea
-            className="im-composer__input"
-            value={draft}
-            onChange={(v) => onDraft(String(v))}
-            placeholder="输入消息"
-            autosize={{ minRows: 3, maxRows: 8 }}
-            onKeydown={(_value, { e }) => {
-              if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault()
-                onSend()
-              }
-            }}
-          />
+          {voiceMode ? (
+            <div className="im-composer__voice">
+              <button
+                type="button"
+                className={
+                  recording
+                    ? 'im-composer__hold is-rec'
+                    : 'im-composer__hold'
+                }
+                disabled={sendingMedia || !conversation}
+                onPointerDown={(e) => {
+                  e.preventDefault()
+                  e.currentTarget.setPointerCapture(e.pointerId)
+                  void startVoiceRecord()
+                }}
+                onPointerUp={() => endVoiceRecord()}
+                onPointerCancel={() => cancelVoiceRecord()}
+                onContextMenu={(e) => e.preventDefault()}
+              >
+                {recording
+                  ? `松开发送 ${Math.min(60, Math.ceil(recSec))}″`
+                  : '按住 说话'}
+              </button>
+              <p className="im-composer__tip">最长 60 秒 · 上滑取消请松开后点麦克风切回</p>
+            </div>
+          ) : (
+            <>
+              <Textarea
+                className="im-composer__input"
+                value={draft}
+                onChange={(v) => onDraft(String(v))}
+                placeholder="输入消息"
+                autosize={{ minRows: 3, maxRows: 8 }}
+                onKeydown={(_value, { e }) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault()
+                    onSend()
+                  }
+                }}
+              />
 
-          <div className="im-composer__bar">
-            <span className="im-composer__tip">Enter 发送 · 可粘贴图片/文件</span>
-            <Button
-              className="im-composer__send"
-              theme="primary"
-              size="small"
-              disabled={!draft.trim()}
-              onClick={onSend}
-            >
-              发送(S)
-            </Button>
-          </div>
+              <div className="im-composer__bar">
+                <span className="im-composer__tip">Enter 发送 · 可粘贴图片/文件</span>
+                <Button
+                  className="im-composer__send"
+                  theme="primary"
+                  size="small"
+                  disabled={!draft.trim()}
+                  onClick={onSend}
+                >
+                  发送(S)
+                </Button>
+              </div>
+            </>
+          )}
         </footer>
       )}
 
@@ -771,6 +961,14 @@ export function ChatPane({
                         <a href={it.url} target="_blank" rel="noreferrer">
                           {it.name || '文件'}
                         </a>
+                      ) : it.type === 'voice' && it.url ? (
+                        <VoiceBubble
+                          url={it.url}
+                          duration={it.duration || 1}
+                          mine={false}
+                          selectMode={false}
+                          ignoreClickUntil={{ current: 0 }}
+                        />
                       ) : (
                         it.body
                       )}
@@ -782,5 +980,73 @@ export function ChatPane({
           })()}
       </Dialog>
     </section>
+  )
+}
+
+function VoiceBubble({
+  url,
+  duration,
+  mine,
+  press,
+  selectMode,
+  ignoreClickUntil,
+}: {
+  url: string
+  duration: number
+  mine: boolean
+  press?: Record<string, unknown> | null
+  selectMode: boolean
+  ignoreClickUntil: { current: number }
+}) {
+  const audioRef = useRef<HTMLAudioElement | null>(null)
+  const [playing, setPlaying] = useState(false)
+  const width = Math.min(220, Math.max(72, 56 + duration * 8))
+
+  useEffect(() => {
+    return () => {
+      audioRef.current?.pause()
+      audioRef.current = null
+    }
+  }, [])
+
+  const toggle = () => {
+    if (selectMode) return
+    if (Date.now() < ignoreClickUntil.current) return
+    let a = audioRef.current
+    if (!a) {
+      a = new Audio(url)
+      audioRef.current = a
+      a.onended = () => setPlaying(false)
+      a.onpause = () => setPlaying(false)
+      a.onplay = () => setPlaying(true)
+    }
+    if (a.paused) {
+      void a.play().catch(() => MessagePlugin.error('无法播放语音'))
+    } else {
+      a.pause()
+      a.currentTime = 0
+      setPlaying(false)
+    }
+  }
+
+  return (
+    <button
+      type="button"
+      className={mine ? 'im-msg__voice im-msg__voice--mine' : 'im-msg__voice'}
+      style={{ width }}
+      {...(press || {})}
+      onClick={(e) => {
+        if (selectMode) return
+        const p = press as { onClick?: (ev: unknown) => void } | null | undefined
+        p?.onClick?.(e)
+        toggle()
+      }}
+    >
+      <span className="im-msg__voice-ico" aria-hidden>
+        {playing ? '❚❚' : '▶'}
+      </span>
+      <span className="im-msg__voice-wave" aria-hidden />
+      <span className="im-msg__voice-dur">{formatVoiceDuration(duration)}</span>
+    </button>
   )
 }

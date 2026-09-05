@@ -219,6 +219,8 @@ func (s *Service) ListConversations(ctx context.Context, userID string) ([]Conve
 				c.LastMessage = "[图片]"
 			} else if lastType == "file" {
 				c.LastMessage = "[文件]"
+			} else if lastType == "voice" {
+				c.LastMessage = "[语音]"
 			} else if lastType == "forward" {
 				c.LastMessage = "[聊天记录]"
 			} else {
@@ -1222,9 +1224,10 @@ func (s *Service) canManageGroup(ctx context.Context, conversationID, userID str
 	return role == "admin", nil
 }
 
-const recallOwnWindow = 2 * time.Minute
+const recallOwnWindow = 5 * time.Minute
 
-// RecallMessage: sender within 2 minutes; in groups, owner/admin may recall any message.
+// RecallMessage: DM / ordinary members — own message within 5 minutes.
+// Group owner/admin may recall any message at any time (including their own after the window).
 func (s *Service) RecallMessage(ctx context.Context, conversationID, userID, messageID string) (*Message, error) {
 	ok, err := s.IsMember(ctx, conversationID, userID)
 	if err != nil {
@@ -1236,11 +1239,10 @@ func (s *Service) RecallMessage(ctx context.Context, conversationID, userID, mes
 	var senderID string
 	var createdAt time.Time
 	var recalledAt *time.Time
-	var typ string
 	err = s.pool.QueryRow(ctx, `
-		SELECT sender_id::text, created_at, recalled_at, type
+		SELECT sender_id::text, created_at, recalled_at
 		FROM messages WHERE id = $1 AND conversation_id = $2
-	`, messageID, conversationID).Scan(&senderID, &createdAt, &recalledAt, &typ)
+	`, messageID, conversationID).Scan(&senderID, &createdAt, &recalledAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, errors.New("message not found")
@@ -1251,32 +1253,28 @@ func (s *Service) RecallMessage(ctx context.Context, conversationID, userID, mes
 		return s.getMessage(ctx, conversationID, messageID)
 	}
 
-	allowed := false
-	if senderID == userID {
-		if time.Since(createdAt) <= recallOwnWindow {
-			allowed = true
-		} else {
-			return nil, errors.New("recall expired")
-		}
-	} else {
-		var convType string
-		err = s.pool.QueryRow(ctx, `SELECT type FROM conversations WHERE id = $1`, conversationID).Scan(&convType)
-		if err != nil {
-			return nil, err
-		}
-		if convType != "group" {
-			return nil, errors.New("forbidden")
-		}
+	var convType string
+	err = s.pool.QueryRow(ctx, `SELECT type FROM conversations WHERE id = $1`, conversationID).Scan(&convType)
+	if err != nil {
+		return nil, err
+	}
+
+	isGroupAdmin := false
+	if convType == "group" {
 		can, err := s.canManageGroup(ctx, conversationID, userID)
 		if err != nil {
 			return nil, err
 		}
-		if !can {
-			return nil, errors.New("forbidden")
-		}
-		allowed = true
+		isGroupAdmin = can
 	}
-	if !allowed {
+
+	if isGroupAdmin {
+		// owner/admin: no time limit
+	} else if senderID == userID {
+		if time.Since(createdAt) > recallOwnWindow {
+			return nil, errors.New("recall expired")
+		}
+	} else {
 		return nil, errors.New("forbidden")
 	}
 
@@ -1474,6 +1472,54 @@ func (s *Service) SendFile(ctx context.Context, conversationID, userID string, f
 	err = s.pool.QueryRow(ctx, `
 		INSERT INTO messages (conversation_id, sender_id, type, body_sealed)
 		VALUES ($1, $2, 'file', $3)
+		RETURNING id::text, conversation_id::text, sender_id::text, type, body_sealed, created_at::text
+	`, conversationID, userID, sealed).Scan(
+		&m.ID, &m.ConversationID, &m.SenderID, &m.Type, &sealedOut, &m.CreatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	m.Body = string(payload)
+	s.fillSenderMeta(ctx, &m, userID)
+	_, _ = s.pool.Exec(ctx, `
+		UPDATE conversation_members SET hidden_at = NULL
+		WHERE conversation_id = $1 AND hidden_at IS NOT NULL
+	`, conversationID)
+	return &m, nil
+}
+
+// VoiceBody is stored (sealed) for type=voice.
+type VoiceBody struct {
+	URL      string  `json:"url"`
+	Duration float64 `json:"duration"` // seconds
+	Size     int64   `json:"size,omitempty"`
+	Mime     string  `json:"mime,omitempty"`
+}
+
+func (s *Service) SendVoice(ctx context.Context, conversationID, userID string, v VoiceBody) (*Message, error) {
+	if strings.TrimSpace(v.URL) == "" || v.Duration < 0.3 || v.Duration > 60.5 {
+		return nil, errors.New("invalid voice")
+	}
+	ok, err := s.IsMember(ctx, conversationID, userID)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, errors.New("forbidden")
+	}
+	payload, err := json.Marshal(v)
+	if err != nil {
+		return nil, err
+	}
+	sealed, err := crypto.Seal(s.key, payload)
+	if err != nil {
+		return nil, err
+	}
+	var m Message
+	var sealedOut string
+	err = s.pool.QueryRow(ctx, `
+		INSERT INTO messages (conversation_id, sender_id, type, body_sealed)
+		VALUES ($1, $2, 'voice', $3)
 		RETURNING id::text, conversation_id::text, sender_id::text, type, body_sealed, created_at::text
 	`, conversationID, userID, sealed).Scan(
 		&m.ID, &m.ConversationID, &m.SenderID, &m.Type, &sealedOut, &m.CreatedAt,

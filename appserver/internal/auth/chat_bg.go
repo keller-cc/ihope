@@ -3,15 +3,19 @@ package auth
 import (
 	"encoding/json"
 	"errors"
+	"regexp"
 	"strings"
 )
 
 // ChatBg is the account-wide chat wallpaper preference.
 type ChatBg struct {
-	Kind string `json:"kind"`          // default | gradient | image
-	ID   string `json:"id,omitempty"`  // gradient preset id
+	Kind string `json:"kind"`          // default | gradient | color | image
+	ID   string `json:"id,omitempty"`  // gradient / chinese-color preset id
+	Hex  string `json:"hex,omitempty"` // #RRGGBB for kind=color
 	URL  string `json:"url,omitempty"` // image url
 }
+
+var hexColorRe = regexp.MustCompile(`(?i)^#[0-9a-f]{6}$`)
 
 func ParseChatBg(raw string) *ChatBg {
 	raw = strings.TrimSpace(raw)
@@ -26,10 +30,12 @@ func ParseChatBg(raw string) *ChatBg {
 	if bg.Kind == "" || bg.Kind == "default" {
 		return nil
 	}
-	if bg.Kind != "gradient" && bg.Kind != "image" {
+	switch bg.Kind {
+	case "gradient", "image", "color":
+		return &bg
+	default:
 		return nil
 	}
-	return &bg
 }
 
 func EncodeChatBg(bg *ChatBg) (string, error) {
@@ -44,6 +50,18 @@ func EncodeChatBg(bg *ChatBg) (string, error) {
 			return "", errors.New("gradient id required")
 		}
 		b, err := json.Marshal(ChatBg{Kind: "gradient", ID: id})
+		return string(b), err
+	case "color":
+		hex := strings.ToUpper(strings.TrimSpace(bg.Hex))
+		if !hexColorRe.MatchString(hex) {
+			return "", errors.New("invalid color")
+		}
+		id := strings.TrimSpace(bg.ID)
+		out := ChatBg{Kind: "color", Hex: hex}
+		if id != "" {
+			out.ID = id
+		}
+		b, err := json.Marshal(out)
 		return string(b), err
 	case "image":
 		url := strings.TrimSpace(bg.URL)

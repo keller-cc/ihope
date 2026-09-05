@@ -114,19 +114,19 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
     }
   }, [])
 
-  const loadMessages = useCallback(
-    async (id: string) => {
-      try {
-        const res = await api.listMessages(id)
-        setMessages(res.messages)
-        setHasMoreMessages(!!res.hasMore)
-        void loadConversations()
-      } catch (e) {
-        MessagePlugin.error(apiErrorMessage(e, '加载消息失败'))
-      }
-    },
-    [loadConversations],
-  )
+  const loadMessages = useCallback(async (id: string) => {
+    try {
+      const res = await api.listMessages(id)
+      setMessages(res.messages)
+      setHasMoreMessages(!!res.hasMore)
+      // listMessages 服务端已 MarkRead；本地清未读即可，避免再打 /conversations
+      setConversations((prev) =>
+        prev.map((c) => (c.id === id && c.unreadCount ? { ...c, unreadCount: 0 } : c)),
+      )
+    } catch (e) {
+      MessagePlugin.error(apiErrorMessage(e, '加载消息失败'))
+    }
+  }, [])
 
   const loadOlderMessages = async () => {
     if (!activeId || !messages.length || loadingMore) return
@@ -207,7 +207,7 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
     }
     wsRef.current = ws
     return () => ws.close()
-  }, [activeId, right.kind, loadMessages, loadConversations])
+  }, [activeId, right.kind, loadMessages])
 
   useEffect(() => {
     if (focusMessageId) return
@@ -218,7 +218,23 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
   const active =
     conversations.find((c) => c.id === activeId) || groups.find((c) => c.id === activeId)
 
-  const openChat = (id: string) => {
+  const openChat = (id: string, seed?: Conversation) => {
+    if (seed) {
+      setConversations((prev) => {
+        if (prev.some((c) => c.id === id)) {
+          return prev.map((c) => (c.id === id ? { ...c, ...seed, unreadCount: 0 } : c))
+        }
+        return [{ ...seed, unreadCount: 0 }, ...prev]
+      })
+      if (seed.type === 'group') {
+        setGroups((prev) => {
+          if (prev.some((c) => c.id === id)) {
+            return prev.map((c) => (c.id === id ? { ...c, ...seed } : c))
+          }
+          return [seed, ...prev]
+        })
+      }
+    }
     setListNav('messages')
     setActiveId(id)
     setRight({ kind: 'chat' })
@@ -227,7 +243,8 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
     setSelectedMessageIds([])
     setReturnToHistory(false)
     setFocusMessageId(null)
-    void loadConversations()
+    // 取消隐藏；不在这里拉消息/会话（由 chat effect 加载消息）
+    void api.patchConversationMember(id, { hidden: false }).catch(() => undefined)
   }
 
   const openHistory = (conversationId?: string) => {
@@ -323,6 +340,24 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
     }
   }
 
+  const sendVoice = async (blob: Blob, duration: number, mime: string) => {
+    if (!activeId) return
+    if (blob.size > 5 * 1024 * 1024) {
+      MessagePlugin.warning('语音过大')
+      return
+    }
+    setSendingMedia(true)
+    try {
+      const m = await api.sendVoice(activeId, blob, duration, mime)
+      setMessages((prev) => (prev.some((x) => x.id === m.id) ? prev : [...prev, m]))
+      void loadConversations()
+    } catch (e) {
+      MessagePlugin.error(apiErrorMessage(e, '发送语音失败'))
+    } finally {
+      setSendingMedia(false)
+    }
+  }
+
   const recall = async (messageId: string) => {
     if (!activeId) return
     try {
@@ -336,9 +371,15 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
 
   const startDM = async (username: string) => {
     try {
+      const existing = conversations.find(
+        (c) => c.type === 'dm' && c.peerUsername === username,
+      )
+      if (existing) {
+        openChat(existing.id, existing)
+        return
+      }
       const c = await api.createDM(username)
-      openChat(c.id)
-      MessagePlugin.success('已打开会话')
+      openChat(c.id, c)
     } catch (e) {
       MessagePlugin.error(apiErrorMessage(e, '打开会话失败'))
     }
@@ -845,6 +886,7 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
                 openHistory(right.group.id)
               })()
             }}
+            onEnterChat={() => openChat(right.group.id, right.group)}
             onLeave={async () => {
               try {
                 await api.leaveGroup(right.group.id)
@@ -883,7 +925,13 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
               setRight(activeId ? { kind: 'chat' } : { kind: 'empty' })
               setMobileDetail(false)
             }}
-            onMessage={() => void startDM(right.profile.username)}
+            onMessage={() => {
+              const conv = conversations.find(
+                (c) => c.type === 'dm' && c.peerUsername === right.profile.username,
+              )
+              if (conv) openChat(conv.id, conv)
+              else void startDM(right.profile.username)
+            }}
             onSaveRemark={async (remark) => {
               if (!right.profile.id) {
                 MessagePlugin.warning('请先添加好友后再设置备注')
@@ -1009,6 +1057,7 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
             onSend={() => void send()}
             onSendImage={(file) => void sendImage(file)}
             onSendFile={(file) => void sendFile(file)}
+            onSendVoice={(blob, duration, mime) => void sendVoice(blob, duration, mime)}
             onRecall={(id) => void recall(id)}
             onForward={(ids) => {
               setForwardIds(ids)
@@ -1095,9 +1144,13 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
         onJoined={(id) => {
           void loadContacts()
           void loadConversations()
-          openChat(id)
+          const g = groups.find((x) => x.id === id)
+          openChat(id, g)
         }}
-        onEnterGroup={(id) => openChat(id)}
+        onEnterGroup={(id) => {
+          const g = groups.find((x) => x.id === id)
+          openChat(id, g)
+        }}
       />
 
       <ChatBackgroundDialog
@@ -1177,7 +1230,7 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
             setGroupTitle('')
             setSelectedMemberIds([])
             await loadContacts()
-            openChat(c.id)
+            openChat(c.id, c)
           } catch (e) {
             MessagePlugin.error(apiErrorMessage(e, '创建失败'))
           }

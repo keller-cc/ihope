@@ -16,6 +16,7 @@ type Props = {
   onTogglePin?: () => void
   onToggleMute?: () => void
   onFindHistory?: () => void
+  onEnterChat?: () => void
   onLeave: () => void
   onDissolved: () => void
   onBack: () => void
@@ -34,6 +35,7 @@ export function GroupProfile({
   onTogglePin,
   onToggleMute,
   onFindHistory,
+  onEnterChat,
   onLeave,
   onDissolved,
   onBack,
@@ -348,6 +350,14 @@ export function GroupProfile({
             </button>
           )}
         </div>
+
+        {onEnterChat && (
+          <div className="im-set-actions">
+            <Button theme="primary" block onClick={onEnterChat}>
+              发消息
+            </Button>
+          </div>
+        )}
       </div>
 
       <Dialog

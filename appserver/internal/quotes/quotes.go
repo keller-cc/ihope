@@ -17,6 +17,7 @@ type QuoteEntry struct {
 var attributionLineRe = regexp.MustCompile(`^\s*(?:来自|来.{0,3})@(.+?)\s*$`)
 
 // ReadQuoteEntries 读取金句文件（--- 分隔块，或旧版「来自@」结尾格式）。
+// 正文原样保留（仅 TrimSpace）；字形与换行请在上传文件时自行整理。
 func ReadQuoteEntries(path string) ([]QuoteEntry, error) {
 	path = strings.TrimSpace(path)
 	if path == "" {
@@ -89,37 +90,11 @@ func entryFromBlock(block string) (QuoteEntry, bool) {
 		}
 		bodyLines = append(bodyLines, line)
 	}
-	body := collapseBodySoftBreaks(strings.Join(bodyLines, "\n"))
+	body := strings.TrimSpace(strings.Join(bodyLines, "\n"))
 	if body == "" {
 		return QuoteEntry{}, false
 	}
 	return QuoteEntry{Body: body, Author: author}, true
-}
-
-func collapseBodySoftBreaks(body string) string {
-	body = strings.TrimSpace(body)
-	if body == "" {
-		return ""
-	}
-	var paragraphs []string
-	var current strings.Builder
-	flush := func() {
-		if current.Len() == 0 {
-			return
-		}
-		paragraphs = append(paragraphs, strings.TrimSpace(current.String()))
-		current.Reset()
-	}
-	for _, line := range strings.Split(body, "\n") {
-		t := strings.TrimSpace(line)
-		if t == "" {
-			flush()
-			continue
-		}
-		current.WriteString(t)
-	}
-	flush()
-	return strings.Join(paragraphs, "\n\n")
 }
 
 func parseLegacyAttributionQuotes(text string) ([]QuoteEntry, error) {
@@ -129,7 +104,7 @@ func parseLegacyAttributionQuotes(text string) ([]QuoteEntry, error) {
 	var author string
 
 	flush := func() {
-		body := collapseBodySoftBreaks(strings.Join(bodyLines, "\n"))
+		body := strings.TrimSpace(strings.Join(bodyLines, "\n"))
 		if body == "" {
 			bodyLines = nil
 			author = ""

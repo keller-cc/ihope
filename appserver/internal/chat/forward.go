@@ -27,9 +27,10 @@ type ForwardItem struct {
 	Body       string `json:"body,omitempty"`
 	ThumbURL   string `json:"thumbUrl,omitempty"`
 	URL        string `json:"url,omitempty"`
-	Name       string `json:"name,omitempty"`
-	Size       int64  `json:"size,omitempty"`
-	CreatedAt  string `json:"createdAt"`
+	Name       string  `json:"name,omitempty"`
+	Size       int64   `json:"size,omitempty"`
+	Duration   float64 `json:"duration,omitempty"`
+	CreatedAt  string  `json:"createdAt"`
 }
 
 // ForwardBody is sealed JSON for type=forward.
@@ -186,7 +187,7 @@ func (s *Service) loadForwardSources(ctx context.Context, conversationID string,
 			return nil, errors.New("cannot forward recalled")
 		}
 		switch src.Type {
-		case "text", "image", "file":
+		case "text", "image", "file", "voice":
 		default:
 			return nil, errors.New("unsupported message type")
 		}
@@ -251,6 +252,14 @@ func forwardItemFrom(src forwardSource) (ForwardItem, error) {
 		item.Name = f.Name
 		item.Size = f.Size
 		item.URL = f.URL
+	case "voice":
+		var v VoiceBody
+		if err := json.Unmarshal([]byte(src.Body), &v); err != nil {
+			return item, errors.New("invalid voice body")
+		}
+		item.URL = v.URL
+		item.Duration = v.Duration
+		item.Size = v.Size
 	default:
 		return item, errors.New("unsupported message type")
 	}

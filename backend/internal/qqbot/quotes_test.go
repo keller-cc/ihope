@@ -98,15 +98,6 @@ func TestPickDailyQuoteSequentialNoRepeat(t *testing.T) {
 	}
 }
 
-func TestCollapseBodySoftBreaks(t *testing.T) {
-	in := "很少人究问人当怎样行才能上天堂，所有的人却都想知道天堂是怎样的。几乎所有人都\n懒惰且厌战，却同时梦想将来的得胜。\n\n第二段开头\n续行内容"
-	got := collapseBodySoftBreaks(in)
-	want := "很少人究问人当怎样行才能上天堂，所有的人却都想知道天堂是怎样的。几乎所有人都懒惰且厌战，却同时梦想将来的得胜。\n\n第二段开头续行内容"
-	if got != want {
-		t.Fatalf("got %q want %q", got, want)
-	}
-}
-
 func TestPoetryColumnsFromText(t *testing.T) {
 	cols := poetryColumnsFromText("床前明月光，疑是地上霜。举头望明月，低头思故乡。")
 	if len(cols) != 4 {

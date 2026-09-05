@@ -13,11 +13,12 @@ import (
 
 // ListMessagesOpts filters conversation history.
 type ListMessagesOpts struct {
-	Limit    int
-	Before   string // created_at timestamptz cursor (exclusive)
-	Type     string // image | file | text | forward
-	SenderID string
-	Day      string // YYYY-MM-DD
+	Limit     int
+	Before    string // created_at timestamptz cursor (exclusive)
+	Type      string // image | file | text | forward | voice
+	SenderID  string // single (legacy)
+	SenderIDs []string
+	Day       string // YYYY-MM-DD
 }
 
 // MessageDay is a day bucket for history browsing.
@@ -46,11 +47,11 @@ func (s *Service) ListMessagesFiltered(ctx context.Context, conversationID, user
 
 	msgType := strings.TrimSpace(opts.Type)
 	switch msgType {
-	case "", "image", "file", "text", "forward":
+	case "", "image", "file", "text", "forward", "voice":
 	default:
 		return nil, false, errors.New("invalid type")
 	}
-	senderID := strings.TrimSpace(opts.SenderID)
+	senderIDs := normalizeSenderIDs(opts.SenderIDs, opts.SenderID)
 	day := strings.TrimSpace(opts.Day)
 	if day != "" && len(day) != 10 {
 		return nil, false, errors.New("invalid day")
@@ -69,13 +70,17 @@ func (s *Service) ListMessagesFiltered(ctx context.Context, conversationID, user
 		args = append(args, msgType)
 		argN++
 	}
-	if senderID != "" {
+	if len(senderIDs) == 1 {
 		where = append(where, "m.sender_id = $"+strconv.Itoa(argN)+"::uuid")
-		args = append(args, senderID)
+		args = append(args, senderIDs[0])
+		argN++
+	} else if len(senderIDs) > 1 {
+		where = append(where, "m.sender_id = ANY($"+strconv.Itoa(argN)+"::uuid[])")
+		args = append(args, senderIDs)
 		argN++
 	}
 	if day != "" {
-		where = append(where, "(m.created_at AT TIME ZONE 'UTC')::date = $"+strconv.Itoa(argN)+"::date")
+		where = append(where, "(m.created_at AT TIME ZONE 'Asia/Shanghai')::date = $"+strconv.Itoa(argN)+"::date")
 		args = append(args, day)
 		argN++
 	}
@@ -130,7 +135,7 @@ func (s *Service) ListMessageDays(ctx context.Context, conversationID, userID st
 		return nil, errors.New("forbidden")
 	}
 	rows, err := s.pool.Query(ctx, `
-		SELECT to_char((created_at AT TIME ZONE 'UTC')::date, 'YYYY-MM-DD') AS day, COUNT(*)::int
+		SELECT to_char((created_at AT TIME ZONE 'Asia/Shanghai')::date, 'YYYY-MM-DD') AS day, COUNT(*)::int
 		FROM messages
 		WHERE conversation_id = $1 AND recalled_at IS NULL
 		GROUP BY 1
@@ -154,7 +159,7 @@ func (s *Service) ListMessageDays(ctx context.Context, conversationID, userID st
 	return out, rows.Err()
 }
 
-func (s *Service) SearchMessages(ctx context.Context, conversationID, userID, q string, limit int, before string) ([]Message, bool, error) {
+func (s *Service) SearchMessages(ctx context.Context, conversationID, userID string, opts ListMessagesOpts, q string) ([]Message, bool, error) {
 	ok, err := s.IsMember(ctx, conversationID, userID)
 	if err != nil {
 		return nil, false, err
@@ -169,9 +174,15 @@ func (s *Service) SearchMessages(ctx context.Context, conversationID, userID, q 
 	if utf8.RuneCountInString(q) > 64 {
 		return nil, false, errors.New("query too long")
 	}
+	limit := opts.Limit
 	if limit <= 0 || limit > 50 {
 		limit = 30
 	}
+	day := strings.TrimSpace(opts.Day)
+	if day != "" && len(day) != 10 {
+		return nil, false, errors.New("invalid day")
+	}
+	senderIDs := normalizeSenderIDs(opts.SenderIDs, opts.SenderID)
 
 	var ownerID *string
 	var convType string
@@ -180,40 +191,50 @@ func (s *Service) SearchMessages(ctx context.Context, conversationID, userID, q 
 
 	ql := strings.ToLower(q)
 	var matched []Message
-	cursor := strings.TrimSpace(before)
+	cursor := strings.TrimSpace(opts.Before)
 	const batch = 120
 	const maxBatches = 40
 
 	for batchN := 0; batchN < maxBatches && len(matched) <= limit; batchN++ {
-		var rows pgx.Rows
-		if cursor != "" {
-			rows, err = s.pool.Query(ctx, `
-				SELECT m.id::text, m.conversation_id::text, m.sender_id::text, m.type, m.body_sealed, m.created_at::text,
-					m.recalled_at::text, m.recalled_by::text, u.username, u.avatar_url,
-					COALESCE(cm.role, 'member'), COALESCE(cm.member_title, '')
-				FROM messages m
-				JOIN users u ON u.id = m.sender_id
-				LEFT JOIN conversation_members cm ON cm.conversation_id = m.conversation_id AND cm.user_id = m.sender_id
-				WHERE m.conversation_id = $1 AND m.recalled_at IS NULL
-				  AND m.type IN ('text', 'file')
-				  AND m.created_at < $2::timestamptz
-				ORDER BY m.created_at DESC
-				LIMIT $3
-			`, conversationID, cursor, batch)
-		} else {
-			rows, err = s.pool.Query(ctx, `
-				SELECT m.id::text, m.conversation_id::text, m.sender_id::text, m.type, m.body_sealed, m.created_at::text,
-					m.recalled_at::text, m.recalled_by::text, u.username, u.avatar_url,
-					COALESCE(cm.role, 'member'), COALESCE(cm.member_title, '')
-				FROM messages m
-				JOIN users u ON u.id = m.sender_id
-				LEFT JOIN conversation_members cm ON cm.conversation_id = m.conversation_id AND cm.user_id = m.sender_id
-				WHERE m.conversation_id = $1 AND m.recalled_at IS NULL
-				  AND m.type IN ('text', 'file')
-				ORDER BY m.created_at DESC
-				LIMIT $2
-			`, conversationID, batch)
+		args := []any{conversationID}
+		where := []string{
+			"m.conversation_id = $1",
+			"m.recalled_at IS NULL",
+			"m.type IN ('text', 'file')",
 		}
+		argN := 2
+		if day != "" {
+			where = append(where, "(m.created_at AT TIME ZONE 'Asia/Shanghai')::date = $"+strconv.Itoa(argN)+"::date")
+			args = append(args, day)
+			argN++
+		}
+		if len(senderIDs) == 1 {
+			where = append(where, "m.sender_id = $"+strconv.Itoa(argN)+"::uuid")
+			args = append(args, senderIDs[0])
+			argN++
+		} else if len(senderIDs) > 1 {
+			where = append(where, "m.sender_id = ANY($"+strconv.Itoa(argN)+"::uuid[])")
+			args = append(args, senderIDs)
+			argN++
+		}
+		if cursor != "" {
+			where = append(where, "m.created_at < $"+strconv.Itoa(argN)+"::timestamptz")
+			args = append(args, cursor)
+			argN++
+		}
+		args = append(args, batch)
+		limitPH := "$" + strconv.Itoa(argN)
+
+		rows, err := s.pool.Query(ctx, `
+			SELECT m.id::text, m.conversation_id::text, m.sender_id::text, m.type, m.body_sealed, m.created_at::text,
+				m.recalled_at::text, m.recalled_by::text, u.username, u.avatar_url,
+				COALESCE(cm.role, 'member'), COALESCE(cm.member_title, '')
+			FROM messages m
+			JOIN users u ON u.id = m.sender_id
+			LEFT JOIN conversation_members cm ON cm.conversation_id = m.conversation_id AND cm.user_id = m.sender_id
+			WHERE `+strings.Join(where, " AND ")+`
+			ORDER BY m.created_at DESC
+			LIMIT `+limitPH, args...)
 		if err != nil {
 			return nil, false, err
 		}
@@ -247,6 +268,27 @@ func (s *Service) SearchMessages(ctx context.Context, conversationID, userID, q 
 		matched = []Message{}
 	}
 	return matched, hasMore, nil
+}
+
+func normalizeSenderIDs(ids []string, single string) []string {
+	seen := map[string]struct{}{}
+	var out []string
+	add := func(raw string) {
+		id := strings.TrimSpace(raw)
+		if id == "" {
+			return
+		}
+		if _, ok := seen[id]; ok {
+			return
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	for _, id := range ids {
+		add(id)
+	}
+	add(single)
+	return out
 }
 
 func messageMatchesQuery(m Message, qLower string) bool {
