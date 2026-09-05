@@ -101,6 +101,7 @@ func main() {
 		qqSvc = qqbot.NewService(cfg, qqbot.NewStore(pool), client, media, h)
 		qqSched = qqbot.NewScheduler(qqSvc, cfg.QQDailyPoetryHHMM, cfg.QQDailyQuotesHHMM, cfg.QQDailyNewsHHMM)
 		qqSched.Start()
+		callSvc.SetDoorbell(qqSvc)
 		log.Println("qq bot enabled")
 	}
 

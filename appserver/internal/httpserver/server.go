@@ -183,6 +183,12 @@ func (s *Server) spaFileServer() http.Handler {
 			return
 		}
 		if info, err := os.Stat(full); err == nil && !info.IsDir() {
+			base := filepath.Base(full)
+			// Service Worker / manifest 必须可及时更新，避免长期缓存旧壳
+			if base == "sw.js" || base == "registerSW.js" ||
+				strings.HasSuffix(base, ".webmanifest") || strings.HasPrefix(base, "workbox-") {
+				w.Header().Set("Cache-Control", "no-cache")
+			}
 			fileServer.ServeHTTP(w, r)
 			return
 		}

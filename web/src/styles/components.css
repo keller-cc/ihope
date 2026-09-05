@@ -1184,7 +1184,7 @@
   flex-direction: column;
   flex-shrink: 0;
   gap: 4px;
-  padding: 6px 10px calc(10px + env(safe-area-inset-bottom, 0));
+  padding: 6px 10px calc(10px + max(env(safe-area-inset-bottom, 0px), var(--im-kb-inset, 0px)));
   background: color-mix(
     in srgb,
     var(--im-theme-panel, #f5f5f5) calc(var(--im-theme-panel-opacity, 1) * 100%),

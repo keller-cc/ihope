@@ -160,7 +160,6 @@ export function ChatPane({
 }: Props) {
   const imageRef = useRef<HTMLInputElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
-  const composerRef = useRef<HTMLElement | null>(null)
   const theme = resolveUserTheme(user)
   const texture = theme?.texture && theme.texture !== 'none' ? theme.texture : null
   const pressTimer = useRef<number | null>(null)
@@ -800,9 +799,6 @@ export function ChatPane({
       {!selectMode && (
         <footer
           className="im-composer"
-          ref={(el) => {
-            composerRef.current = el
-          }}
           onPaste={handlePaste}
         >
           <div className="im-composer__tools">
@@ -929,11 +925,6 @@ export function ChatPane({
                 onChange={(v) => onDraft(String(v))}
                 placeholder="输入消息"
                 autosize={{ minRows: 2, maxRows: 6 }}
-                onFocus={() => {
-                  window.setTimeout(() => {
-                    composerRef.current?.scrollIntoView({ block: 'end', behavior: 'smooth' })
-                  }, 50)
-                }}
                 onKeydown={(_value, { e }) => {
                   if (e.key === 'Enter' && !e.shiftKey) {
                     e.preventDefault()

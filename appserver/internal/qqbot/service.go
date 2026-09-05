@@ -42,6 +42,36 @@ func (s *Service) Media() *MediaHost { return s.media }
 func (s *Service) AddHint() string { return s.cfg.QQBotAddHint }
 
 func (s *Service) NotifyDoorbell(ctx context.Context, userID, senderHint string) {
+	senderHint = strings.TrimSpace(senderHint)
+	if senderHint == "" {
+		senderHint = "有人"
+	}
+	s.sendDoorbell(ctx, userID, fmt.Sprintf("您有新的聊天消息（%s），请打开 IHope 查看。", senderHint))
+}
+
+// NotifyCall 离线音视频提醒。event: invite | missed | call
+func (s *Service) NotifyCall(ctx context.Context, userID, senderHint, kind, event string) {
+	senderHint = strings.TrimSpace(senderHint)
+	if senderHint == "" {
+		senderHint = "有人"
+	}
+	label := "语音通话"
+	if kind == "video" {
+		label = "视频通话"
+	}
+	var text string
+	switch event {
+	case "invite":
+		text = fmt.Sprintf("%s 邀请你%s，请打开 IHope 接听。", senderHint, label)
+	case "missed":
+		text = fmt.Sprintf("您有未接的%s（%s），请打开 IHope 查看。", label, senderHint)
+	default:
+		text = fmt.Sprintf("您有新的%s消息（%s），请打开 IHope 查看。", label, senderHint)
+	}
+	s.sendDoorbell(ctx, userID, text)
+}
+
+func (s *Service) sendDoorbell(ctx context.Context, userID, text string) {
 	if !s.Enabled() {
 		return
 	}
@@ -56,11 +86,6 @@ func (s *Service) NotifyDoorbell(ctx context.Context, userID, senderHint string)
 	if cooldown > 0 && b.LastDoorbellAt != nil && time.Since(*b.LastDoorbellAt) < cooldown {
 		return
 	}
-	senderHint = strings.TrimSpace(senderHint)
-	if senderHint == "" {
-		senderHint = "有人"
-	}
-	text := fmt.Sprintf("您有新的聊天消息（%s），请打开 IHope 查看。", senderHint)
 	if err := s.client.SendText(ctx, b.QQOpenID, text, "", 0); err != nil {
 		log.Printf("qqbot notify user=%s: %v", userID, err)
 		return

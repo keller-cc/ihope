@@ -17,10 +17,23 @@
   position: fixed;
   left: 0;
   right: 0;
-  top: var(--im-vv-offset, 0px);
-  height: var(--im-vv-height, 100dvh);
-  max-height: var(--im-vv-height, 100dvh);
+  top: 0;
+  height: 100dvh;
+  max-height: 100dvh;
   overflow: hidden;
+}
+
+/* 键盘抬起：收起底栏，避免「消息/联系人」一并上移；仅输入区用 --im-kb-inset 垫高 */
+html.im-kb-open .im-frame--mobile.im-frame--chat {
+  grid-template-rows: 1fr 0;
+}
+
+html.im-kb-open .im-frame--mobile.im-frame--chat .im-tabbar {
+  visibility: hidden;
+  pointer-events: none;
+  overflow: hidden;
+  border: 0;
+  padding: 0;
 }
 
 .im-frame {

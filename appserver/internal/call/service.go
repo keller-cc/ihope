@@ -40,6 +40,11 @@ type Membership interface {
 	PostCallMessage(ctx context.Context, conversationID, senderID string, body CallMessageBody, markReadUserIDs []string) error
 }
 
+// CallDoorbell 离线 QQ 音视频提醒（可选）。
+type CallDoorbell interface {
+	NotifyCall(ctx context.Context, userID, senderHint, kind, event string)
+}
+
 type CallMessageBody struct {
 	Kind        string `json:"kind"`
 	Status      string `json:"status"` // ended | missed | rejected | cancelled
@@ -88,12 +93,13 @@ type room struct {
 }
 
 type Service struct {
-	hub  *hub.Hub
-	mem  Membership
-	ice  []ICEServer
-	mu   sync.Mutex
-	byID map[string]*room
-	byConv map[string]string // active conversation -> call id
+	hub      *hub.Hub
+	mem      Membership
+	ice      []ICEServer
+	doorbell CallDoorbell
+	mu       sync.Mutex
+	byID     map[string]*room
+	byConv   map[string]string // active conversation -> call id
 	userCall map[string]string // user -> active call id
 }
 
@@ -109,6 +115,10 @@ func New(h *hub.Hub, mem Membership, ice []ICEServer) *Service {
 		byConv:   make(map[string]string),
 		userCall: make(map[string]string),
 	}
+}
+
+func (s *Service) SetDoorbell(d CallDoorbell) {
+	s.doorbell = d
 }
 
 func (s *Service) ICEServers() []ICEServer {
@@ -207,6 +217,14 @@ func (s *Service) Start(ctx context.Context, conversationID, userID, kind string
 		"type": "call.started",
 		"call": snap,
 	})
+
+	if s.doorbell != nil {
+		hostName := hostInfo.Username
+		for _, uid := range notifyIDs {
+			id := uid
+			go s.doorbell.NotifyCall(context.Background(), id, hostName, kind, "invite")
+		}
+	}
 
 	r.mu.Lock()
 	r.timer = time.AfterFunc(RingTimeout, func() { s.onRingTimeout(r.id) })
@@ -554,6 +572,31 @@ func (s *Service) endCall(ctx context.Context, callID, status, hostID, convID, k
 
 	body := CallMessageBody{Kind: kind, Status: status, DurationSec: durationSec}
 	_ = s.mem.PostCallMessage(ctx, convID, hostID, body, markRead)
+
+	if s.doorbell != nil {
+		skip := make(map[string]bool, len(markRead))
+		for _, id := range markRead {
+			skip[id] = true
+		}
+		hostName := ""
+		for _, p := range snap.Participants {
+			if p.UserID == hostID {
+				hostName = p.Username
+				break
+			}
+		}
+		event := "call"
+		if status == "missed" {
+			event = "missed"
+		}
+		for _, id := range ids {
+			if skip[id] {
+				continue
+			}
+			uid := id
+			go s.doorbell.NotifyCall(context.Background(), uid, hostName, kind, event)
+		}
+	}
 	return nil
 }
 
