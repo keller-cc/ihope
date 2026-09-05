@@ -5,16 +5,14 @@ name: ihope-web
 
 services:
   postgres:
-    # 与旧 deploy 一致：CentOS 7 / 内核 3.10 勿用更新的 alpine
     image: postgres:12-alpine
     container_name: ihope-web-postgres
     environment:
       POSTGRES_USER: ${WEB_DB_USER:-ihope_web}
       POSTGRES_PASSWORD: ${WEB_DB_PASSWORD:?set WEB_DB_PASSWORD in .env}
       POSTGRES_DB: ${WEB_DB_NAME:-ihope_web}
-      PGDATA: /var/lib/postgresql/data/pgdata
     volumes:
-      - ./data/postgres:/var/lib/postgresql/data
+      - web_postgres_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 5s
@@ -37,7 +35,7 @@ services:
       WEB_DIST: /app/web
       UPLOAD_DIR: /data/uploads
     volumes:
-      - ./data/uploads:/data/uploads
+      - web_uploads_data:/data/uploads
       - ${QQ_QUOTES_HOST_DIR:-../deploy/quotes}:/opt/ihope/quotes:ro
       - ${QQ_POETRY_FONT_HOST_DIR:-../deploy/fonts}:/opt/ihope/fonts:ro
     depends_on:
@@ -59,6 +57,10 @@ services:
       - appserver
     restart: unless-stopped
     networks: [ihope_web_net]
+
+volumes:
+  web_postgres_data:
+  web_uploads_data:
 
 networks:
   ihope_web_net:
