@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"html"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -36,6 +37,7 @@ type Server struct {
 	adminToken string
 	uploadDir  string
 	quotesPath string
+	webDist    string
 	upg        websocket.Upgrader
 }
 
@@ -46,7 +48,7 @@ func New(
 	h *hub.Hub,
 	callSvc *call.Service,
 	qq *qqbot.Service,
-	corsOrigin, qqWebhookPath, adminToken, uploadDir, quotesPath string,
+	corsOrigin, qqWebhookPath, adminToken, uploadDir, quotesPath, webDist string,
 ) *Server {
 	return &Server{
 		auth:       authSvc,
@@ -60,6 +62,7 @@ func New(
 		adminToken: strings.TrimSpace(adminToken),
 		uploadDir:  uploadDir,
 		quotesPath: strings.TrimSpace(quotesPath),
+		webDist:    strings.TrimSpace(webDist),
 		upg: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool {
 				origin := r.Header.Get("Origin")
@@ -72,6 +75,7 @@ func New(
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", s.handleHealth)
+	mux.HandleFunc("GET /api/health", s.handleHealth) // 兼容旧 App / 探活 URL
 	mux.HandleFunc("POST /api/auth/register", s.handleRegister)
 	mux.HandleFunc("POST /api/auth/login", s.handleLogin)
 	mux.HandleFunc("POST /api/auth/resend-verification", s.handleResendVerification)
@@ -154,7 +158,35 @@ func (s *Server) Handler() http.Handler {
 	}
 	mux.HandleFunc("GET /ws", s.handleWS)
 	mux.HandleFunc("GET /ws/user", s.handleUserWS)
+	if s.webDist != "" {
+		if st, err := os.Stat(s.webDist); err == nil && st.IsDir() {
+			mux.Handle("/", s.spaFileServer())
+		}
+	}
 	return s.corsMiddleware(mux)
+}
+
+/** 生产：托管 Vite dist；未知路径回退 index.html（SPA）。 */
+func (s *Server) spaFileServer() http.Handler {
+	root := filepath.Clean(s.webDist)
+	fileServer := http.FileServer(http.Dir(root))
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		rel := strings.TrimPrefix(filepath.Clean("/"+r.URL.Path), "/")
+		full := filepath.Join(root, rel)
+		if !strings.HasPrefix(full, root+string(os.PathSeparator)) && full != root {
+			http.NotFound(w, r)
+			return
+		}
+		if info, err := os.Stat(full); err == nil && !info.IsDir() {
+			fileServer.ServeHTTP(w, r)
+			return
+		}
+		http.ServeFile(w, r, filepath.Join(root, "index.html"))
+	})
 }
 
 func (s *Server) corsMiddleware(next http.Handler) http.Handler {

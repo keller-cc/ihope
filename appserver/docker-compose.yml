@@ -1,16 +1,4 @@
-# =============================================================================
-# IHope Web IM — 本地 Postgres（与旧 deploy/ 完全隔离）
-# =============================================================================
-# 用法（在 appserver 目录）：
-#   copy .env.example .env          # 首次
-#   docker compose up -d            # 启动
-#   docker compose down             # 停止
-#   docker compose ps
-#
-# 勿与 deploy/docker-compose*.yml 混用：
-#   - 旧栈：容器 ihope-postgres-dev，端口 5433，库 ihope，卷 deploy/data/postgres
-#   - 本栈：容器 ihope-web-postgres，端口 5434，库 ihope_web，卷 appserver/data/postgres
-# =============================================================================
+# 本地：docker compose up -d（仅 Postgres）
 
 name: ihope-web
 

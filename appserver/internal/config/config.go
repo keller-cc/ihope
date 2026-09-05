@@ -39,6 +39,8 @@ type Config struct {
 	CallTurnURLs          string
 	CallTurnUsername      string
 	CallTurnCredential    string
+	// WEB_DIST：生产托管 web/dist；空则只提供 API（开发用 Vite）
+	WebDist string
 }
 
 func Load() Config {
@@ -65,7 +67,7 @@ func Load() Config {
 		JWTAccessTTL:          time.Duration(envInt("JWT_ACCESS_TTL_MIN", 60)) * time.Minute,
 		CORSOrigin:            env("CORS_ORIGIN", "http://localhost:5173"),
 		MessageEncryptionKey:  key,
-		UploadDir:             env("UPLOAD_DIR", "uploads"),
+		UploadDir:             env("UPLOAD_DIR", "data/uploads"),
 		AppPublicURL:          env("APP_PUBLIC_URL", "http://localhost:5173"),
 		MailDriver:            env("MAIL_DRIVER", "log"),
 		MailFrom:              env("MAIL_FROM", "noreply@localhost"),
@@ -86,6 +88,7 @@ func Load() Config {
 		CallTurnURLs:          env("CALL_TURN_URLS", ""),
 		CallTurnUsername:      env("CALL_TURN_USERNAME", ""),
 		CallTurnCredential:    env("CALL_TURN_CREDENTIAL", ""),
+		WebDist:               strings.TrimSpace(env("WEB_DIST", "")),
 	}
 }
 

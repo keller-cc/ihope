@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -95,11 +96,15 @@ func main() {
 		log.Println("qq bot enabled")
 	}
 
-	srv := httpserver.New(authSvc, chatSvc, adminSvc, h, callSvc, qqSvc, cfg.CORSOrigin, cfg.QQWebhookPath, cfg.AdminToken, "data/uploads", cfg.QQQuotesFilePath)
-	_ = os.MkdirAll("data/uploads/avatars", 0o755)
-	_ = os.MkdirAll("data/uploads/groups", 0o755)
-	_ = os.MkdirAll("data/uploads/chat", 0o755)
-	_ = os.MkdirAll("data/uploads/chat-bg", 0o755)
+	uploadDir := cfg.UploadDir
+	if uploadDir == "" {
+		uploadDir = "data/uploads"
+	}
+	srv := httpserver.New(authSvc, chatSvc, adminSvc, h, callSvc, qqSvc, cfg.CORSOrigin, cfg.QQWebhookPath, cfg.AdminToken, uploadDir, cfg.QQQuotesFilePath, cfg.WebDist)
+	_ = os.MkdirAll(filepath.Join(uploadDir, "avatars"), 0o755)
+	_ = os.MkdirAll(filepath.Join(uploadDir, "groups"), 0o755)
+	_ = os.MkdirAll(filepath.Join(uploadDir, "chat"), 0o755)
+	_ = os.MkdirAll(filepath.Join(uploadDir, "chat-bg"), 0o755)
 
 	httpSrv := &http.Server{
 		Addr:              cfg.HTTPAddr,
@@ -108,7 +113,11 @@ func main() {
 	}
 
 	go func() {
-		log.Printf("appserver listening on %s", cfg.HTTPAddr)
+		if cfg.WebDist != "" {
+			log.Printf("appserver listening on %s (web dist %s)", cfg.HTTPAddr, cfg.WebDist)
+		} else {
+			log.Printf("appserver listening on %s", cfg.HTTPAddr)
+		}
 		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("http: %v", err)
 		}
