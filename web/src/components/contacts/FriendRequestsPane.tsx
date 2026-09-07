@@ -1,5 +1,5 @@
-import type { FriendRequest } from '../api'
-import { Avatar } from './Avatar'
+﻿import type { FriendRequest } from '@/api'
+import { Avatar } from '@/components/Avatar'
 
 type Props = {
   incoming: FriendRequest[]

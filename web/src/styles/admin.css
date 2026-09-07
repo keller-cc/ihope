@@ -1,0 +1,182 @@
+﻿/* Admin console */
+/* Admin — same chrome as auth / IM shell */
+.im-admin {
+  min-height: 100%;
+  display: grid;
+  place-items: center;
+  padding: 24px 16px;
+  background:
+    radial-gradient(ellipse at 30% 20%, rgba(18, 183, 245, 0.2), transparent 50%),
+    linear-gradient(165deg, #b8c8d8 0%, #d5dbe3 50%, #c5cfd8 100%);
+}
+
+.im-admin__frame {
+  width: min(1180px, 100%);
+  height: min(760px, calc(100vh - 32px));
+  display: flex;
+  flex-direction: column;
+  background: var(--im-color-surface);
+  border-radius: var(--im-radius-lg);
+  overflow: hidden;
+  box-shadow: var(--im-shadow-frame);
+}
+
+.im-admin__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 16px 20px 12px;
+  border-bottom: 1px solid var(--im-color-line);
+  background: #fafafa;
+}
+
+.im-admin__brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.im-admin__logo {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  object-fit: contain;
+  background: #e8e8e8;
+  flex-shrink: 0;
+}
+
+.im-admin__brand h1 {
+  margin: 0 0 4px;
+  font-size: 1.2rem;
+  font-weight: 700;
+}
+
+.im-admin__brand .im-muted {
+  margin: 0;
+  font-size: 0.85rem;
+}
+
+.im-admin__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.im-admin__tabs {
+  display: flex;
+  gap: 4px;
+  padding: 10px 16px;
+  background: #f3f3f3;
+  border-bottom: 1px solid var(--im-color-line);
+  overflow-x: auto;
+}
+
+.im-admin__tab {
+  flex: 0 0 auto;
+  border: 0;
+  background: transparent;
+  padding: 8px 14px;
+  border-radius: 6px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.88rem;
+  color: #666;
+  white-space: nowrap;
+}
+
+.im-admin__tab.is-active {
+  background: #fff;
+  color: var(--im-color-primary);
+  font-weight: 600;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+}
+
+.im-admin__body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 14px 16px 18px;
+  background: var(--im-color-drawer-bg);
+}
+
+.im-admin__panel {
+  margin-bottom: 0;
+  padding: 12px;
+  overflow: hidden;
+  min-height: 0;
+}
+
+.im-admin__panel .t-table {
+  background: transparent;
+}
+
+.im-admin__panel .t-table .t-table__cell--fixed-right {
+  background: #fff !important;
+}
+
+.im-admin__panel .t-table__header .t-table__cell--fixed-right {
+  background: var(--td-bg-color-container, #fff) !important;
+}
+
+.im-admin__toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.im-admin__ops {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  align-items: center;
+}
+
+.im-admin__hint {
+  margin: 0 0 10px;
+  font-size: 0.88rem;
+}
+
+.im-admin__empty {
+  margin: 8px 4px;
+}
+
+.im-admin__form {
+  display: grid;
+  gap: 12px;
+}
+
+.im-admin__form label {
+  display: grid;
+  gap: 6px;
+  font-size: 0.9rem;
+  color: #333;
+}
+
+@media (max-width: 860px) {
+  .im-admin {
+    padding: 0;
+    place-items: stretch;
+  }
+
+  .im-admin__frame {
+    width: 100%;
+    height: 100%;
+    border-radius: 0;
+    box-shadow: none;
+  }
+
+  .im-admin__head {
+    padding: 12px 14px;
+  }
+
+  .im-admin__brand h1 {
+    font-size: 1.05rem;
+  }
+}
+

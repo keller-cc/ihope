@@ -1,5 +1,5 @@
-/** Shared chat display helpers. */
-import type { Conversation } from '../api'
+﻿/** Shared chat display helpers. */
+import type { Conversation } from '@/api'
 
 export function initialOf(name: string): string {
   const t = name.trim()

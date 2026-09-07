@@ -1,7 +1,7 @@
-import { useState } from 'react'
+﻿import { useState } from 'react'
 import { Button, Dialog, Input, MessagePlugin, Tabs } from 'tdesign-react'
-import { api, apiErrorMessage, type PublicGroup, type PublicUser } from '../api'
-import { Avatar } from './Avatar'
+import { api, apiErrorMessage, type PublicGroup, type PublicUser } from '@/api'
+import { Avatar } from '@/components/Avatar'
 
 type Props = {
   visible: boolean

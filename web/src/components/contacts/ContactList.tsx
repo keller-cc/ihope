@@ -1,6 +1,6 @@
-import type { Contact, Conversation } from '../api'
-import { conversationTitle } from '../lib/chatFormat'
-import { Avatar } from './Avatar'
+﻿import type { Contact, Conversation } from '@/api'
+import { conversationTitle } from '@/lib/chatFormat'
+import { Avatar } from '@/components/Avatar'
 
 type Section = 'friends' | 'groups'
 

@@ -1,5 +1,5 @@
-import type { CSSProperties } from 'react'
-import type { ChatBg, ChatTheme } from '../api'
+﻿import type { CSSProperties } from 'react'
+import type { ChatBg, ChatTheme } from '@/api'
 
 export type ChatBgPreset = {
   id: string

@@ -1,8 +1,8 @@
-import { ChatOffIcon, PinFilledIcon } from 'tdesign-icons-react'
+﻿import { ChatOffIcon, PinFilledIcon } from 'tdesign-icons-react'
 import { Dropdown } from 'tdesign-react'
-import type { Conversation } from '../api'
-import { conversationTitle, formatMessageTime } from '../lib/chatFormat'
-import { Avatar } from './Avatar'
+import type { Conversation } from '@/api'
+import { conversationTitle, formatMessageTime } from '@/lib/chatFormat'
+import { Avatar } from '@/components/Avatar'
 
 type Props = {
   sessions: Conversation[]

@@ -1,34 +1,29 @@
-# web
+# Web 前端
 
-独立 Web IM 前端（Vite + React + TypeScript + TDesign）。
+Vite + React 19 SPA。路径别名：`@/` → `src/`。
 
-与旧 Flutter `mobile/` 无关；对接 `appserver/`（默认 `:8090`）。
+## 目录
 
-## 开发
-
-```bash
-pnpm install
-pnpm run dev
+```
+src/
+  api/           # HTTP 客户端（types / client / admin）
+  assets/        # 静态资源
+  components/
+    call/        # 音视频通话 UI
+    chat/        # 会话面板、主题、转发、看图
+    contacts/    # 会话列表、联系人、好友/群资料
+    history/     # 查找聊天记录
+    Avatar.tsx   # 跨域共用组件
+    PlusMenu.tsx
+    UserDrawer.tsx
+  hooks/         # 通用 hooks
+  lib/           # 领域逻辑（call、chatBg、chatFormat…）
+  pages/         # 路由页
+  styles/        # tokens / layout / 按域拆分的 CSS
 ```
 
-Vite 已将 `/api`、`/ws`、`/health` 代理到 `http://127.0.0.1:8090`。
+## 脚本
 
-先启动 appserver，再打开 http://localhost:5173 。
-
-### 双账号同浏览器测试
-
-同一 origin 下默认共用 `localStorage`，两个标签会串登录态。可开隔离槽：
-
-- http://localhost:5173/?slot=a
-- http://localhost:5173/?slot=b
-
-也可用无痕窗口 / 另一个浏览器配置文件。
-
-## 生产构建
-
-```bash
-pnpm install
-pnpm run build
-```
-
-将 `dist/` 交给 Nginx 托管；与 `appserver` 同源部署时无需 Vite 代理。本地联调见 [../appserver/README.md](../appserver/README.md)。
+- `pnpm dev` — 开发（代理到 appserver `:8090`）
+- `pnpm build` — 类型检查 + 生产构建（含 PWA）
+- `pnpm lint` — oxlint

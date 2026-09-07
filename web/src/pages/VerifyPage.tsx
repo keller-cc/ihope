@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react'
+﻿import { useEffect, useState } from 'react'
 import { useSearchParams, Link } from 'react-router-dom'
 import { Button, Loading, MessagePlugin } from 'tdesign-react'
-import { api } from '../api'
+import { api } from '@/api'
 
 export function VerifyPage() {
   const [params] = useSearchParams()

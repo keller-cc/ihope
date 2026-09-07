@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState } from 'react'
+﻿import { useEffect, useRef, useState } from 'react'
 import { Button, Dialog, Drawer, Input, MessagePlugin, Switch } from 'tdesign-react'
-import { api, apiErrorMessage, setToken, type QQStatus, type User } from '../api'
-import { useIsMobile } from '../hooks/useIsMobile'
+import { api, apiErrorMessage, setToken, type QQStatus, type User } from '@/api'
+import { useIsMobile } from '@/hooks/useIsMobile'
 import { Avatar } from './Avatar'
 
 export type DrawerView = 'home' | 'hope' | 'notify' | 'quote'

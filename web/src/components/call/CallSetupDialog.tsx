@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+﻿import { useEffect, useRef, useState } from 'react'
 import {
   CallIcon,
   CameraOffIcon,
@@ -7,8 +7,8 @@ import {
   VideoCamera1Icon,
 } from 'tdesign-icons-react'
 import { Button, Dialog, MessagePlugin } from 'tdesign-react'
-import type { CallKind } from '../api'
-import { Avatar } from './Avatar'
+import type { CallKind } from '@/api'
+import { Avatar } from '@/components/Avatar'
 
 export type CallSetupResult = {
   kind: CallKind

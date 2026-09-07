@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+﻿import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Button, Checkbox, Input, Loading, MessagePlugin } from 'tdesign-react'
 import {
   api,
@@ -7,7 +7,7 @@ import {
   type Conversation,
   type Message,
   type MessageDay,
-} from '../../api'
+} from '@/api'
 import {
   formatFileSize,
   formatMessageTimeDivider,
@@ -15,8 +15,8 @@ import {
   parseFileBody,
   parseImageBody,
   parseVoiceBody,
-} from '../../lib/chatFormat'
-import { Avatar } from '../Avatar'
+} from '@/lib/chatFormat'
+import { Avatar } from '@/components/Avatar'
 
 export type HistoryTab = 'all' | 'media' | 'files'
 

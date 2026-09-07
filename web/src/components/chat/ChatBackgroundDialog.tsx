@@ -1,8 +1,8 @@
-import { useEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react'
+﻿import { useEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react'
 import { DesktopIcon, MobileIcon } from 'tdesign-icons-react'
 import { Button, Collapse, Dialog, DialogPlugin, MessagePlugin, Slider } from 'tdesign-react'
-import { api, apiErrorMessage, type ChatBg, type ChatBgImage, type ChatTheme, type User } from '../api'
-import zhongguoseIcon from '../assets/zhongguose-icon.svg'
+import { api, apiErrorMessage, type ChatBg, type ChatBgImage, type ChatTheme, type User } from '@/api'
+import zhongguoseIcon from '@/assets/zhongguose-icon.svg'
 import {
   CHAT_BG_GRADIENTS,
   CHINESE_COLOR_RECIPES,
@@ -16,7 +16,7 @@ import {
   resolveGradientPreset,
   softChatHex,
   usesFrameWallpaper,
-} from '../lib/chatBg'
+} from '@/lib/chatBg'
 
 type Props = {
   visible: boolean

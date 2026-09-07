@@ -43,7 +43,7 @@ func (h *Hub) IsUserOnline(userID string) bool {
 }
 
 func (h *Hub) Subscribe(conversationID string) chan []byte {
-	ch := make(chan []byte, 16)
+	ch := make(chan []byte, 64)
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.subs[conversationID] == nil {

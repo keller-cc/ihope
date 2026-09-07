@@ -1,9 +1,10 @@
-import { api } from '../../api'
+﻿import { api } from '@/api'
 import type { CallKind, CallPeer, CallRoom, RemoteMedia } from './types'
 import { ringtone } from './ringtone'
 import { userSocket } from './userSocket'
 
 type Listener = () => void
+type CallEndedListener = (conversationId: string, status: string) => void
 
 type PeerConn = {
   pc: RTCPeerConnection
@@ -48,6 +49,7 @@ export class CallController {
   private peers = new Map<string, PeerConn>()
   private remoteStreams = new Map<string, MediaStream>()
   private listeners = new Set<Listener>()
+  private endedListeners = new Set<CallEndedListener>()
   private unsub: (() => void) | null = null
   private audioCtx: AudioContext | null = null
   private micGain: GainNode | null = null
@@ -65,8 +67,21 @@ export class CallController {
     }
   }
 
+  /** 通话结束（超时/挂断/拒绝等）后刷新会话列表与聊天记录 */
+  onCallEnded(fn: CallEndedListener) {
+    this.endedListeners.add(fn)
+    return () => {
+      this.endedListeners.delete(fn)
+    }
+  }
+
   private emit() {
     for (const fn of this.listeners) fn()
+  }
+
+  private emitCallEnded(conversationId: string, status: string) {
+    if (!conversationId) return
+    for (const fn of this.endedListeners) fn(conversationId, status)
   }
 
   private setState( partial: Partial<CallUIState>) {
@@ -114,17 +129,37 @@ export class CallController {
 
   async acceptIncoming(opts?: { muted?: boolean; cameraOff?: boolean; stream?: MediaStream }) {
     const room = this.state.incoming
-    if (!room) return
-    this.setState({ connecting: true, error: null })
+    if (!room || this.state.connecting) return
+    // 立刻停铃、关掉来电条，进入通话页（避免仍停在「接听」且铃声不停）
+    ringtone.stop()
+    this.setState({
+      connecting: true,
+      error: null,
+      incoming: null,
+      active: { ...room, status: 'active' },
+    })
     try {
-      await this.ensureIce()
-      const next = await api.acceptCall(room.id)
-      await this.enterLocal(next, opts)
-      this.setState({ active: next, incoming: null, connecting: false })
+      const mediaPromise =
+        opts?.stream ||
+        navigator.mediaDevices.getUserMedia({
+          audio: true,
+          video: room.kind === 'video',
+        })
+      const [, next, stream] = await Promise.all([
+        this.ensureIce(),
+        api.acceptCall(room.id),
+        Promise.resolve(mediaPromise),
+      ])
+      await this.enterLocal(next, { ...opts, stream })
+      this.setState({ active: next, connecting: false })
       await this.offerToJoinedPeers(next)
     } catch (e) {
       opts?.stream?.getTracks().forEach((t) => t.stop())
+      await this.cleanupMedia()
       this.setState({
+        active: null,
+        remotes: [],
+        localStream: null,
         connecting: false,
         error: e instanceof Error ? e.message : '接听失败',
       })
@@ -431,6 +466,11 @@ export class CallController {
         break
       }
       case 'call.ended': {
+        const convId =
+          this.state.active?.conversationId ||
+          this.state.incoming?.conversationId ||
+          ''
+        const status = String(data.status || '')
         await this.cleanupMedia()
         this.setState({
           active: null,
@@ -443,6 +483,7 @@ export class CallController {
           micVolume: 1,
           speakerVolume: 1,
         })
+        this.emitCallEnded(convId, status)
         break
       }
       case 'call.offer': {

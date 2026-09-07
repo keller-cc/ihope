@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+﻿import { useCallback, useEffect, useRef, useState } from 'react'
 import { ChevronRightIcon } from 'tdesign-icons-react'
 import { Button, Checkbox, Dialog, Input, MessagePlugin, Switch } from 'tdesign-react'
 import {
@@ -13,31 +13,30 @@ import {
   type Message,
   type QQStatus,
   type User,
-} from '../api'
-import { AddContactDialog } from '../components/AddContactDialog'
-import { Avatar } from '../components/Avatar'
-import { CallOverlay, IncomingCallModal } from '../components/CallOverlay'
-import { CallSetupDialog, type CallSetupResult } from '../components/CallSetupDialog'
-import { ChatThemeDialog } from '../components/ChatBackgroundDialog'
-import { ChatPane } from '../components/ChatPane'
-import { ContactList } from '../components/ContactList'
-import { ForwardDialog } from '../components/ForwardDialog'
-import { FriendProfile } from '../components/FriendProfile'
-import { FriendRequestsPane } from '../components/FriendRequestsPane'
-import { GroupProfile } from '../components/GroupProfile'
+} from '@/api'
+import { Avatar } from '@/components/Avatar'
+import { CallOverlay, CallSetupDialog, IncomingCallModal, type CallSetupResult } from '@/components/call'
+import { ChatPane, ChatThemeDialog, ForwardDialog } from '@/components/chat'
+import {
+  AddContactDialog,
+  ContactList,
+  FriendProfile,
+  FriendRequestsPane,
+  GroupProfile,
+  SessionList,
+} from '@/components/contacts'
 import {
   ChatHistoryPanel,
   defaultHistoryCache,
   type HistoryCache,
-} from '../components/history/ChatHistoryPanel'
-import { PlusMenu } from '../components/PlusMenu'
-import { SessionList } from '../components/SessionList'
-import { UserDrawer } from '../components/UserDrawer'
-import { useIsMobile } from '../hooks/useIsMobile'
-import { useVisualViewportLock } from '../hooks/useVisualViewportLock'
-import { chatBgStyle, chatThemeSummary, chatThemeVars, resolveUserTheme, usesFrameWallpaper } from '../lib/chatBg'
-import { callController } from '../lib/call/CallController'
-import { conversationTitle, initialOf } from '../lib/chatFormat'
+} from '@/components/history/ChatHistoryPanel'
+import { PlusMenu } from '@/components/PlusMenu'
+import { UserDrawer } from '@/components/UserDrawer'
+import { useIsMobile } from '@/hooks/useIsMobile'
+import { useVisualViewportLock } from '@/hooks/useVisualViewportLock'
+import { callController } from '@/lib/call/CallController'
+import { chatBgStyle, chatThemeSummary, chatThemeVars, resolveUserTheme, usesFrameWallpaper } from '@/lib/chatBg'
+import { conversationTitle, initialOf } from '@/lib/chatFormat'
 
 type Props = {
   user: User
@@ -148,6 +147,18 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
       MessagePlugin.error(apiErrorMessage(e, '加载消息失败'))
     }
   }, [])
+
+  useEffect(() => {
+    return callController.onCallEnded((conversationId) => {
+      void loadConversations()
+      if (activeId === conversationId && right.kind === 'chat') {
+        // 会话 WS 可能未挂上；结束后主动拉一次，避免超时摘要要刷新才出现
+        window.setTimeout(() => {
+          void loadMessages(conversationId)
+        }, 200)
+      }
+    })
+  }, [activeId, right.kind, loadConversations, loadMessages])
 
   const loadOlderMessages = async () => {
     if (!activeId || !messages.length || loadingMore) return

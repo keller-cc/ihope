@@ -1,8 +1,8 @@
-import { useEffect, useState } from 'react'
+﻿import { useEffect, useState } from 'react'
 import { ChevronRightIcon } from 'tdesign-icons-react'
 import { Button, Dialog, Input, Switch } from 'tdesign-react'
-import type { Contact, Conversation } from '../api'
-import { Avatar } from './Avatar'
+import type { Contact, Conversation } from '@/api'
+import { Avatar } from '@/components/Avatar'
 
 type Props = {
   profile: Contact

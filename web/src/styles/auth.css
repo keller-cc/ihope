@@ -1,0 +1,130 @@
+﻿/* Auth / verify */
+/* Auth / verify — match product chrome */
+.im-auth {
+  min-height: 100%;
+  display: grid;
+  place-items: center;
+  padding: 24px 16px;
+  background:
+    radial-gradient(ellipse at 30% 20%, rgba(18, 183, 245, 0.2), transparent 50%),
+    linear-gradient(165deg, #b8c8d8 0%, #d5dbe3 50%, #c5cfd8 100%);
+}
+
+.im-auth__card {
+  width: min(400px, 100%);
+  background: #fff;
+  border-radius: var(--im-radius-lg);
+  padding: 28px 24px 22px;
+  box-shadow: var(--im-shadow-frame);
+  min-width: 0;
+  overflow: hidden;
+}
+
+.im-auth__brand {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 22px;
+}
+
+.im-auth__logo {
+  width: 72px;
+  height: 72px;
+  border-radius: 16px;
+  object-fit: contain;
+  background: #e8e8e8;
+}
+
+.im-auth__title {
+  margin: 0;
+  font-size: 1.45rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+
+.im-auth__panel {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 12px;
+  min-width: 0;
+}
+
+.im-auth__heading {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 700;
+  text-align: center;
+  color: #222;
+}
+
+.im-auth__lead {
+  margin: 0 0 4px;
+  text-align: center;
+  color: var(--im-color-muted);
+  font-size: 0.9rem;
+  line-height: 1.55;
+  word-break: break-word;
+}
+
+.im-auth__lead strong {
+  color: #333;
+  font-weight: 600;
+}
+
+.im-auth__loading {
+  display: flex;
+  justify-content: center;
+  padding: 28px 0 12px;
+}
+
+.im-auth__link-btn {
+  display: block;
+  width: 100%;
+  text-decoration: none;
+}
+
+.im-auth__tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 16px;
+  background: #f3f3f3;
+  border-radius: 8px;
+  padding: 3px;
+}
+
+.im-auth__tab {
+  flex: 1;
+  border: 0;
+  background: transparent;
+  padding: 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  font: inherit;
+  color: #666;
+}
+
+.im-auth__tab.is-active {
+  background: #fff;
+  color: var(--im-color-primary);
+  font-weight: 600;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+}
+
+@media (max-width: 860px) {
+  .im-auth {
+    padding: 0;
+    place-items: stretch;
+    background: #fff;
+  }
+
+  .im-auth__card {
+    width: 100%;
+    min-height: 100%;
+    border-radius: 0;
+    box-shadow: none;
+    padding: 48px 24px 32px;
+  }
+}
+

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type ReactNode } from 'react'
+﻿import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import {
   Button,
@@ -19,7 +19,7 @@ import {
   type AdminFellowship,
   type AdminQQBinding,
   type AdminUser,
-} from '../api'
+} from '@/api'
 
 type AdminTab = 'users' | 'domains' | 'fellowships' | 'qq' | 'conversations'
 

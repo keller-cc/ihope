@@ -1,8 +1,8 @@
-import { useMemo, useState } from 'react'
+﻿import { useMemo, useState } from 'react'
 import { Button, Checkbox, Dialog, MessagePlugin, Radio } from 'tdesign-react'
-import { api, apiErrorMessage, type Conversation } from '../api'
-import { conversationTitle } from '../lib/chatFormat'
-import { Avatar } from './Avatar'
+import { api, apiErrorMessage, type Conversation } from '@/api'
+import { conversationTitle } from '@/lib/chatFormat'
+import { Avatar } from '@/components/Avatar'
 
 type Props = {
   visible: boolean

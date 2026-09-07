@@ -1,6 +1,6 @@
-import { useState } from 'react'
+﻿import { useState } from 'react'
 import { Button, Input, MessagePlugin } from 'tdesign-react'
-import { api, apiErrorMessage, setToken, type User } from '../api'
+import { api, apiErrorMessage, setToken, type User } from '@/api'
 
 type Props = {
   onAuthed: (user: User) => void

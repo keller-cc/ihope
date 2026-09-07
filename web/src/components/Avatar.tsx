@@ -1,4 +1,4 @@
-import { initialOf } from '../lib/chatFormat'
+﻿import { initialOf } from '@/lib/chatFormat'
 
 type Size = 'sm' | 'md' | 'lg' | 'xl' | 'rail'
 

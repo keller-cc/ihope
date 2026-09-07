@@ -1,4 +1,4 @@
-import { getToken } from '../../api'
+﻿import { getToken } from '@/api'
 
 type Handler = (data: Record<string, unknown>) => void
 

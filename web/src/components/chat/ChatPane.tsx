@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+﻿import { useEffect, useRef, useState } from 'react'
 import {
   CallIcon,
   ChatOffIcon,
@@ -12,7 +12,7 @@ import {
   VideoCamera1Icon,
 } from 'tdesign-icons-react'
 import { Button, Dialog, MessagePlugin, Popup, Textarea } from 'tdesign-react'
-import type { Conversation, Message, User } from '../api'
+import type { Conversation, Message, User } from '@/api'
 import {
   conversationTitle,
   formatFileSize,
@@ -26,10 +26,10 @@ import {
   parseVoiceBody,
   parseCallBody,
   shouldShowMessageTimeDivider,
-} from '../lib/chatFormat'
-import { CHAT_EMOJIS } from '../lib/emojis'
-import { chatBgStyle, resolveUserTheme } from '../lib/chatBg'
-import { Avatar } from './Avatar'
+} from '@/lib/chatFormat'
+import { CHAT_EMOJIS } from '@/lib/emojis'
+import { chatBgStyle, resolveUserTheme } from '@/lib/chatBg'
+import { Avatar } from '@/components/Avatar'
 import { ImageViewer } from './ImageViewer'
 
 type Props = {

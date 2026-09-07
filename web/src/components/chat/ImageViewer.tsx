@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react'
+﻿import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { loadOriginalImage, peekCachedOriginal } from '../lib/imageCache'
+import { loadOriginalImage, peekCachedOriginal } from '@/lib/imageCache'
 
 type Props = {
   open: boolean

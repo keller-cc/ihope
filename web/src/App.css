@@ -1,4 +1,9 @@
-/* Entry stylesheet — re-exports design system */
+/* Entry stylesheet — design tokens + layout + domain UI */
 @import './styles/tokens.css';
 @import './styles/layout.css';
-@import './styles/components.css';
+@import './styles/ui.css';
+@import './styles/chat.css';
+@import './styles/call.css';
+@import './styles/history.css';
+@import './styles/auth.css';
+@import './styles/admin.css';

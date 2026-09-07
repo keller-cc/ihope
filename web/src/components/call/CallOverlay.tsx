@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
+﻿import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import {
   AdjustmentIcon,
   CallIcon,
@@ -11,10 +11,10 @@ import {
   VideoCamera1Icon,
 } from 'tdesign-icons-react'
 import { Button } from 'tdesign-react'
-import { Avatar } from './Avatar'
-import { callController, type CallUIState } from '../lib/call/CallController'
-import type { RemoteMedia } from '../lib/call/types'
-import { ringtone } from '../lib/call/ringtone'
+import { Avatar } from '@/components/Avatar'
+import { callController, type CallUIState } from '@/lib/call/CallController'
+import type { RemoteMedia } from '@/lib/call/types'
+import { ringtone } from '@/lib/call/ringtone'
 
 function useCallState(): CallUIState {
   const [state, setState] = useState(callController.state)
@@ -260,6 +260,7 @@ export function CallOverlay({ selfName, selfAvatar, resolveTitle }: Props) {
   const room = state.active
   const isVideo = room?.kind === 'video'
   const ringing = room?.status === 'ringing'
+  const connecting = state.connecting
   const hasRemote = state.remotes.length > 0
   const outVolume = state.speakerMuted ? 0 : state.speakerVolume
 
@@ -282,13 +283,14 @@ export function CallOverlay({ selfName, selfAvatar, resolveTitle }: Props) {
   }, [room?.id, room?.startedAt, room?.status])
 
   useEffect(() => {
-    if (room && ringing) {
+    // 仅主叫振铃播等待音；接听方 connecting 时不播
+    if (room && ringing && !connecting) {
       ringtone.start('outgoing')
       return () => ringtone.stop()
     }
     ringtone.stop()
     return undefined
-  }, [room?.id, ringing])
+  }, [room?.id, ringing, connecting])
 
   if (!room) return null
 
@@ -298,7 +300,11 @@ export function CallOverlay({ selfName, selfAvatar, resolveTitle }: Props) {
     (room.convType === 'group' ? '群通话' : peer?.username || '通话')
   const mm = String(Math.floor(elapsed / 60)).padStart(2, '0')
   const ss = String(elapsed % 60).padStart(2, '0')
-  const statusText = ringing ? '等待对方接听…' : `${mm}:${ss}`
+  const statusText = connecting
+    ? '正在连接…'
+    : ringing
+      ? '等待对方接听…'
+      : `${mm}:${ss}`
 
   const focusedRemote: RemoteMedia | null =
     state.remotes.find((r) => r.userId === focusRemoteId) || state.remotes[0] || null
@@ -414,7 +420,7 @@ export function CallOverlay({ selfName, selfAvatar, resolveTitle }: Props) {
                 showLabel={false}
               />
               <div className="im-call-overlay__wait im-call-overlay__wait--on-video">
-                {ringing ? '正在呼叫…' : '连接中…'}
+                {connecting ? '正在连接…' : ringing ? '正在呼叫…' : '连接中…'}
               </div>
             </>
           )
@@ -434,7 +440,9 @@ export function CallOverlay({ selfName, selfAvatar, resolveTitle }: Props) {
                   name={peer?.username || title}
                   avatarUrl={peer?.avatarUrl}
                 />
-                <p className="im-call-overlay__wait">正在呼叫对方…</p>
+                <p className="im-call-overlay__wait">
+                  {connecting ? '正在连接…' : '正在呼叫对方…'}
+                </p>
               </>
             ) : (
               <>
@@ -538,13 +546,19 @@ export function IncomingCallModal({
 }) {
   const state = useCallState()
   const incoming = state.incoming
+  const [accepting, setAccepting] = useState(false)
 
   useEffect(() => {
-    if (incoming) {
+    if (incoming && !state.connecting && !accepting) {
       ringtone.start('incoming')
       return () => ringtone.stop()
     }
+    ringtone.stop()
     return undefined
+  }, [incoming?.id, state.connecting, accepting])
+
+  useEffect(() => {
+    if (!incoming) setAccepting(false)
   }, [incoming?.id])
 
   if (!incoming) return null
@@ -556,12 +570,13 @@ export function IncomingCallModal({
         <Avatar name={host?.username || '来电'} src={host?.avatarUrl} size="lg" />
         <div className="im-call-incoming__meta">
           <strong>{host?.username || '好友'}</strong>
-          <span>{label}</span>
+          <span>{accepting || state.connecting ? '正在接听…' : label}</span>
         </div>
         <div className="im-call-incoming__actions">
           <Button
             theme="danger"
             shape="round"
+            disabled={accepting || state.connecting}
             onClick={() => void callController.rejectIncoming()}
           >
             拒绝
@@ -570,9 +585,15 @@ export function IncomingCallModal({
             theme="success"
             shape="round"
             icon={<CallIcon />}
+            loading={accepting || state.connecting}
+            disabled={accepting || state.connecting}
             onClick={() => {
+              setAccepting(true)
+              ringtone.stop()
               onOpenChat?.(incoming.conversationId)
-              void callController.acceptIncoming().catch(() => undefined)
+              void callController.acceptIncoming().catch(() => {
+                setAccepting(false)
+              })
             }}
           >
             接听

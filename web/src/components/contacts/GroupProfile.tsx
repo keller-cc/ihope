@@ -1,8 +1,8 @@
-import { useMemo, useRef, useState } from 'react'
+﻿import { useMemo, useRef, useState } from 'react'
 import { ChevronRightIcon } from 'tdesign-icons-react'
 import { Button, Checkbox, Dialog, Input, MessagePlugin, Switch } from 'tdesign-react'
-import { api, apiErrorMessage, type Contact, type Conversation } from '../api'
-import { Avatar } from './Avatar'
+import { api, apiErrorMessage, type Contact, type Conversation } from '@/api'
+import { Avatar } from '@/components/Avatar'
 
 type Props = {
   group: Conversation
