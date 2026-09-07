@@ -3,6 +3,7 @@ package chat
 import (
 	"context"
 	"errors"
+	"strconv"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
@@ -23,14 +24,37 @@ type GroupAnnouncement struct {
 	AckCount        int     `json:"ackCount,omitempty"`
 }
 
-func (s *Service) ListAnnouncements(ctx context.Context, conversationID, userID string) ([]GroupAnnouncement, error) {
+// ListAnnouncements returns newest-first pages. before is created_at cursor (exclusive).
+func (s *Service) ListAnnouncements(
+	ctx context.Context,
+	conversationID, userID string,
+	limit int,
+	before string,
+) ([]GroupAnnouncement, bool, int, error) {
 	ok, err := s.CanAccessConversation(ctx, conversationID, userID)
 	if err != nil {
-		return nil, err
+		return nil, false, 0, err
 	}
 	if !ok {
-		return nil, errors.New("forbidden")
+		return nil, false, 0, errors.New("forbidden")
 	}
+	if limit <= 0 || limit > 50 {
+		limit = 20
+	}
+	var total int
+	_ = s.pool.QueryRow(ctx, `
+		SELECT COUNT(*)::int FROM group_announcements WHERE conversation_id = $1
+	`, conversationID).Scan(&total)
+
+	args := []any{conversationID, userID}
+	where := "a.conversation_id = $1"
+	if strings.TrimSpace(before) != "" {
+		args = append(args, before)
+		where += " AND a.created_at < $" + strconv.Itoa(len(args)) + "::timestamptz"
+	}
+	args = append(args, limit+1)
+	limitPH := "$" + strconv.Itoa(len(args))
+
 	rows, err := s.pool.Query(ctx, `
 		SELECT a.id::text, a.conversation_id::text, a.body, a.author_id::text,
 			u.username, u.avatar_url, a.require_confirm,
@@ -42,11 +66,12 @@ func (s *Service) ListAnnouncements(ctx context.Context, conversationID, userID 
 			(SELECT COUNT(*)::int FROM group_announcement_acks k WHERE k.announcement_id = a.id)
 		FROM group_announcements a
 		JOIN users u ON u.id = a.author_id
-		WHERE a.conversation_id = $1
+		WHERE `+where+`
 		ORDER BY a.created_at DESC
-	`, conversationID, userID)
+		LIMIT `+limitPH+`
+	`, args...)
 	if err != nil {
-		return nil, err
+		return nil, false, 0, err
 	}
 	defer rows.Close()
 	var out []GroupAnnouncement
@@ -57,14 +82,21 @@ func (s *Service) ListAnnouncements(ctx context.Context, conversationID, userID 
 			&a.AuthorName, &a.AuthorAvatarURL, &a.RequireConfirm,
 			&a.CreatedAt, &a.UpdatedAt, &a.Acked, &a.AckCount,
 		); err != nil {
-			return nil, err
+			return nil, false, 0, err
 		}
 		out = append(out, a)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, 0, err
+	}
+	hasMore := len(out) > limit
+	if hasMore {
+		out = out[:limit]
 	}
 	if out == nil {
 		out = []GroupAnnouncement{}
 	}
-	return out, rows.Err()
+	return out, hasMore, total, nil
 }
 
 func (s *Service) GetAnnouncement(ctx context.Context, conversationID, announcementID, userID string) (*GroupAnnouncement, error) {

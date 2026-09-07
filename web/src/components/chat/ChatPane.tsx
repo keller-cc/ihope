@@ -191,15 +191,8 @@ export function ChatPane({
     const aid = viewingAnn.id
     void (async () => {
       try {
-        await api.ackAnnouncement(cid, aid)
-        let next: GroupAnnouncement | null = null
-        try {
-          const res = await api.listAnnouncements(cid)
-          next = res.announcements.find((a) => !a.acked && a.id !== aid) || null
-        } catch {
-          next = null
-        }
-        onConversationPatch?.({ pendingAnnouncement: next })
+        const res = await api.ackAnnouncement(cid, aid)
+        onConversationPatch?.({ pendingAnnouncement: res.nextPending ?? null })
       } catch {
         /* keep banner if ack failed */
       } finally {

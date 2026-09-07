@@ -317,10 +317,20 @@ export const api = {
       method: 'PATCH',
       body: JSON.stringify(patch),
     }),
-  listAnnouncements: (conversationId: string) =>
-    request<{ announcements: GroupAnnouncement[] }>(
-      `/api/conversations/${conversationId}/announcements`,
-    ),
+  listAnnouncements: (
+    conversationId: string,
+    opts?: { limit?: number; before?: string },
+  ) => {
+    const q = new URLSearchParams()
+    if (opts?.limit != null) q.set('limit', String(opts.limit))
+    if (opts?.before) q.set('before', opts.before)
+    const qs = q.toString()
+    return request<{
+      announcements: GroupAnnouncement[]
+      hasMore: boolean
+      total: number
+    }>(`/api/conversations/${conversationId}/announcements${qs ? `?${qs}` : ''}`)
+  },
   createAnnouncement: (conversationId: string, body: string, requireConfirm = false) =>
     request<GroupAnnouncement>(`/api/conversations/${conversationId}/announcements`, {
       method: 'POST',
@@ -337,7 +347,10 @@ export const api = {
       { method: 'DELETE' },
     ),
   ackAnnouncement: (conversationId: string, announcementId: string) =>
-    request<GroupAnnouncement>(
+    request<{
+      announcement: GroupAnnouncement
+      nextPending: GroupAnnouncement | null
+    }>(
       `/api/conversations/${conversationId}/announcements/${announcementId}/ack`,
       { method: 'POST' },
     ),

@@ -356,7 +356,7 @@ export function GroupProfile({
                   ? `${announcementPreview}（共 ${announcementCount} 条）`
                   : announcementPreview
                 : canManage
-                  ? '未设置，点击发布'
+                  ? '未设置，点击新增'
                   : '暂无公告'}
             </span>
             <ChevronRightIcon size="16px" className="im-set-cell__arrow" />
@@ -659,11 +659,11 @@ export function GroupProfile({
         onChanged={(patch) => {
           if (patch) onGroupUpdated({ ...group, ...patch })
           else
-            void api.listAnnouncements(group.id).then((res) => {
+            void api.listAnnouncements(group.id, { limit: 1 }).then((res) => {
               onGroupUpdated({
                 ...group,
                 announcement: res.announcements[0]?.body || '',
-                announcementCount: res.announcements.length,
+                announcementCount: res.total ?? res.announcements.length,
                 pendingAnnouncement: res.announcements.find((a) => !a.acked) || null,
               })
             })

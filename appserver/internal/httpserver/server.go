@@ -759,7 +759,14 @@ func (s *Server) handlePatchConversation(w http.ResponseWriter, r *http.Request,
 
 func (s *Server) handleListAnnouncements(w http.ResponseWriter, r *http.Request, userID string) {
 	id := r.PathValue("id")
-	list, err := s.chat.ListAnnouncements(r.Context(), id, userID)
+	q := r.URL.Query()
+	limit := 20
+	if v := strings.TrimSpace(q.Get("limit")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			limit = n
+		}
+	}
+	list, hasMore, total, err := s.chat.ListAnnouncements(r.Context(), id, userID, limit, q.Get("before"))
 	if err != nil {
 		if err.Error() == "forbidden" {
 			writeErr(w, http.StatusForbidden, "forbidden")
@@ -768,7 +775,11 @@ func (s *Server) handleListAnnouncements(w http.ResponseWriter, r *http.Request,
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"announcements": list})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"announcements": list,
+		"hasMore":       hasMore,
+		"total":         total,
+	})
 }
 
 func (s *Server) handleGetAnnouncement(w http.ResponseWriter, r *http.Request, userID string) {
@@ -874,7 +885,11 @@ func (s *Server) handleAckAnnouncement(w http.ResponseWriter, r *http.Request, u
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, a)
+	next, _ := s.chat.PendingAnnouncement(r.Context(), id, userID)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"announcement": a,
+		"nextPending":  next,
+	})
 }
 
 func (s *Server) handleLeaveGroup(w http.ResponseWriter, r *http.Request, userID string) {

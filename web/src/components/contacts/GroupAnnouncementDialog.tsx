@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { ChevronRightIcon, DeleteIcon, Edit1Icon } from 'tdesign-icons-react'
 import { Button, Dialog, MessagePlugin, Textarea } from 'tdesign-react'
 import {
@@ -7,6 +7,8 @@ import {
   type Conversation,
   type GroupAnnouncement,
 } from '@/api'
+
+const PAGE_SIZE = 20
 
 type Mode = 'list' | 'create' | 'edit'
 
@@ -33,33 +35,106 @@ export function GroupAnnouncementDialog({
 }: Props) {
   const [mode, setMode] = useState<Mode>('list')
   const [list, setList] = useState<GroupAnnouncement[]>([])
+  const [hasMore, setHasMore] = useState(false)
+  const [total, setTotal] = useState(0)
+  const [loading, setLoading] = useState(false)
+  const [loadingMore, setLoadingMore] = useState(false)
   const [current, setCurrent] = useState<GroupAnnouncement | null>(null)
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [draft, setDraft] = useState('')
   const [busy, setBusy] = useState(false)
   const ackingRef = useRef<string | null>(null)
+  const listRef = useRef<HTMLDivElement | null>(null)
+  const loadGen = useRef(0)
 
-  const load = async () => {
+  const applyPage = useCallback(
+    (
+      items: GroupAnnouncement[],
+      pageHasMore: boolean,
+      pageTotal: number,
+      append: boolean,
+    ) => {
+      setList((prev) => (append ? [...prev, ...items] : items))
+      setHasMore(pageHasMore)
+      setTotal(pageTotal)
+    },
+    [],
+  )
+
+  const loadFirst = useCallback(async () => {
+    const gen = ++loadGen.current
+    setLoading(true)
     try {
-      const res = await api.listAnnouncements(group.id)
-      setList(res.announcements || [])
-      return res.announcements || []
+      const res = await api.listAnnouncements(group.id, { limit: PAGE_SIZE })
+      if (gen !== loadGen.current) {
+        return { items: [] as GroupAnnouncement[], total: 0 }
+      }
+      const items = res.announcements || []
+      const pageTotal = res.total ?? items.length
+      applyPage(items, !!res.hasMore, pageTotal, false)
+      return { items, total: pageTotal }
     } catch (e) {
-      MessagePlugin.error(apiErrorMessage(e, '加载公告失败'))
-      return [] as GroupAnnouncement[]
+      if (gen === loadGen.current) {
+        MessagePlugin.error(apiErrorMessage(e, '加载公告失败'))
+        applyPage([], false, 0, false)
+      }
+      return { items: [] as GroupAnnouncement[], total: 0 }
+    } finally {
+      if (gen === loadGen.current) setLoading(false)
+    }
+  }, [applyPage, group.id])
+
+  const loadMore = useCallback(async () => {
+    if (!hasMore || loadingMore || loading) return
+    const last = list[list.length - 1]
+    if (!last) return
+    setLoadingMore(true)
+    const gen = loadGen.current
+    try {
+      const res = await api.listAnnouncements(group.id, {
+        limit: PAGE_SIZE,
+        before: last.createdAt,
+      })
+      if (gen !== loadGen.current) return
+      applyPage(res.announcements || [], !!res.hasMore, res.total ?? total, true)
+    } catch (e) {
+      if (gen === loadGen.current) {
+        MessagePlugin.error(apiErrorMessage(e, '加载更多失败'))
+      }
+    } finally {
+      if (gen === loadGen.current) setLoadingMore(false)
+    }
+  }, [applyPage, group.id, hasMore, list, loading, loadingMore, total])
+
+  const onListScroll = () => {
+    const el = listRef.current
+    if (!el || !hasMore || loadingMore) return
+    if (el.scrollTop + el.clientHeight >= el.scrollHeight - 48) {
+      void loadMore()
     }
   }
+
+  useEffect(() => {
+    if (!visible || mode !== 'list' || !hasMore || loading || loadingMore) return
+    const el = listRef.current
+    if (!el) return
+    if (el.scrollHeight <= el.clientHeight + 8) {
+      void loadMore()
+    }
+  }, [visible, mode, hasMore, loading, loadingMore, list.length, loadMore])
 
   const markRead = async (a: GroupAnnouncement) => {
     if (a.acked || ackingRef.current === a.id) return
     ackingRef.current = a.id
     try {
-      await api.ackAnnouncement(group.id, a.id)
-      const items = await load()
+      const res = await api.ackAnnouncement(group.id, a.id)
+      setList((prev) =>
+        prev.map((x) => (x.id === a.id ? { ...x, acked: true, ackCount: (x.ackCount || 0) + 1 } : x)),
+      )
       onChanged({
-        pendingAnnouncement: nextPending(items),
-        announcement: items[0]?.body || '',
-        announcementCount: items.length,
+        pendingAnnouncement: res.nextPending ?? null,
+        announcement: list[0]?.body || a.body,
+        announcementCount: total || group.announcementCount,
       })
     } catch {
       /* ignore */
@@ -74,8 +149,10 @@ export function GroupAnnouncementDialog({
     setCurrent(null)
     setDraft('')
     setExpandedId(null)
+    setHasMore(false)
+    setTotal(0)
     void (async () => {
-      const items = await load()
+      const { items } = await loadFirst()
       if (initialId) {
         const hit = items.find((a) => a.id === initialId)
         if (hit) {
@@ -114,17 +191,17 @@ export function GroupAnnouncementDialog({
       if (mode === 'edit' && current) {
         const a = await api.updateAnnouncement(group.id, current.id, draft.trim())
         MessagePlugin.success('公告已更新')
-        await load()
+        setList((prev) => prev.map((x) => (x.id === a.id ? { ...x, ...a } : x)))
         setExpandedId(a.id)
         setMode('list')
         onChanged({ announcement: a.body })
       } else {
         const a = await api.createAnnouncement(group.id, draft.trim(), false)
         MessagePlugin.success('公告已发布')
-        const items = await load()
+        const { items, total: pageTotal } = await loadFirst()
         onChanged({
           announcement: a.body,
-          announcementCount: items.length,
+          announcementCount: pageTotal,
           pendingAnnouncement: null,
         })
         setExpandedId(a.id)
@@ -142,12 +219,12 @@ export function GroupAnnouncementDialog({
     try {
       await api.deleteAnnouncement(group.id, a.id)
       MessagePlugin.success('已删除公告')
-      const items = await load()
       if (expandedId === a.id) setExpandedId(null)
       if (current?.id === a.id) setCurrent(null)
+      const { items, total: pageTotal } = await loadFirst()
       onChanged({
         announcement: items[0]?.body || '',
-        announcementCount: items.length,
+        announcementCount: pageTotal,
         pendingAnnouncement: nextPending(items),
       })
       setMode('list')
@@ -163,14 +240,14 @@ export function GroupAnnouncementDialog({
   }
 
   const header =
-    mode === 'create' ? '发布群公告' : mode === 'edit' ? '编辑群公告' : '群公告'
+    mode === 'create' ? '新增群公告' : mode === 'edit' ? '编辑群公告' : '群公告'
 
   const footer =
     mode === 'list'
       ? canManage
         ? (
             <Button theme="primary" onClick={openCreate}>
-              发布公告
+              新增公告
             </Button>
           )
         : null
@@ -196,61 +273,72 @@ export function GroupAnnouncementDialog({
       closeBtn
     >
       {mode === 'list' && (
-        <div className="im-ann-list">
-          {list.length === 0 ? (
-            <p className="im-empty-hint">暂无群公告{canManage ? '，点击下方发布' : ''}</p>
+        <div className="im-ann-list" ref={listRef} onScroll={onListScroll}>
+          {loading && list.length === 0 ? (
+            <p className="im-empty-hint">加载中…</p>
+          ) : list.length === 0 ? (
+            <p className="im-empty-hint">
+              暂无群公告{canManage ? '，点击下方新增' : ''}
+            </p>
           ) : (
-            list.map((a) => {
-              const open = expandedId === a.id
-              return (
-                <div
-                  key={a.id}
-                  className={`im-ann-list__row${open ? ' is-expanded' : ''}`}
-                >
-                  <button
-                    type="button"
-                    className="im-ann-list__main"
-                    onClick={() => toggleExpand(a)}
-                    aria-expanded={open}
+            <>
+              {list.map((a) => {
+                const open = expandedId === a.id
+                return (
+                  <div
+                    key={a.id}
+                    className={`im-ann-list__row${open ? ' is-expanded' : ''}`}
                   >
-                    <strong className={`im-ann-list__text${open ? ' is-open' : ''}`}>
-                      {a.body}
-                    </strong>
-                    <span className="im-muted">
-                      {a.authorName || '管理员'} · {new Date(a.createdAt).toLocaleString()}
-                      {canManage ? ` · 已读 ${a.ackCount || 0}` : ''}
-                    </span>
-                  </button>
-                  <ChevronRightIcon
-                    size="16px"
-                    className={`im-ann-list__chevron${open ? ' is-open' : ''}`}
-                  />
-                  {canManage && (
-                    <div className="im-ann-list__actions">
-                      <button
-                        type="button"
-                        className="im-ann-list__icon"
-                        title="编辑"
-                        aria-label="编辑公告"
-                        onClick={() => openEdit(a)}
-                      >
-                        <Edit1Icon size="18px" />
-                      </button>
-                      <button
-                        type="button"
-                        className="im-ann-list__icon im-ann-list__icon--danger"
-                        title="删除"
-                        aria-label="删除公告"
-                        disabled={busy}
-                        onClick={() => confirmRemove(a)}
-                      >
-                        <DeleteIcon size="18px" />
-                      </button>
-                    </div>
-                  )}
-                </div>
-              )
-            })
+                    <button
+                      type="button"
+                      className="im-ann-list__main"
+                      onClick={() => toggleExpand(a)}
+                      aria-expanded={open}
+                    >
+                      <strong className={`im-ann-list__text${open ? ' is-open' : ''}`}>
+                        {a.body}
+                      </strong>
+                      <span className="im-muted">
+                        {a.authorName || '管理员'} ·{' '}
+                        {new Date(a.createdAt).toLocaleString()}
+                        {canManage ? ` · 已读 ${a.ackCount || 0}` : ''}
+                      </span>
+                    </button>
+                    <ChevronRightIcon
+                      size="16px"
+                      className={`im-ann-list__chevron${open ? ' is-open' : ''}`}
+                    />
+                    {canManage && (
+                      <div className="im-ann-list__actions">
+                        <button
+                          type="button"
+                          className="im-ann-list__icon"
+                          title="编辑"
+                          aria-label="编辑公告"
+                          onClick={() => openEdit(a)}
+                        >
+                          <Edit1Icon size="18px" />
+                        </button>
+                        <button
+                          type="button"
+                          className="im-ann-list__icon im-ann-list__icon--danger"
+                          title="删除"
+                          aria-label="删除公告"
+                          disabled={busy}
+                          onClick={() => confirmRemove(a)}
+                        >
+                          <DeleteIcon size="18px" />
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+              {loadingMore && <p className="im-ann-list__more">加载中…</p>}
+              {!hasMore && list.length > 0 && total > PAGE_SIZE && (
+                <p className="im-ann-list__more im-muted">没有更多了</p>
+              )}
+            </>
           )}
         </div>
       )}

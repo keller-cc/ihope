@@ -1197,8 +1197,10 @@
 }
 
 .im-ann-dialog .t-dialog__body {
-  overflow: visible;
-  max-height: none;
+  overflow: hidden;
+  max-height: min(70vh, 520px);
+  display: flex;
+  flex-direction: column;
 }
 
 .im-announce-edit .t-textarea__tips {
@@ -1210,6 +1212,16 @@
   display: flex;
   flex-direction: column;
   margin: -4px 0 0;
+  overflow-y: auto;
+  max-height: min(60vh, 440px);
+  overscroll-behavior: contain;
+}
+
+.im-ann-list__more {
+  margin: 8px 0 4px;
+  text-align: center;
+  font-size: 0.8rem;
+  color: #8a8a8a;
 }
 
 .im-ann-list__row {
