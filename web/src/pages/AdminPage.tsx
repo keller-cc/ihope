@@ -1,4 +1,4 @@
-﻿import { useCallback, useEffect, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import {
   Button,
@@ -17,6 +17,7 @@ import {
   type AdminConversation,
   type AdminDomain,
   type AdminFellowship,
+  type AdminGroupDetail,
   type AdminQQBinding,
   type AdminUser,
 } from '@/api'
@@ -36,6 +37,9 @@ export function AdminPage() {
   const [authed, setAuthed] = useState(!!getAdminToken())
   const [users, setUsers] = useState<AdminUser[]>([])
   const [conversations, setConversations] = useState<AdminConversation[]>([])
+  const [userFilter, setUserFilter] = useState('')
+  const [convFilter, setConvFilter] = useState<'all' | 'group' | 'dm'>('all')
+  const [groupDetail, setGroupDetail] = useState<AdminGroupDetail | null>(null)
   const [qqBindings, setQqBindings] = useState<AdminQQBinding[]>([])
   const [domains, setDomains] = useState<AdminDomain[]>([])
   const [fellowships, setFellowships] = useState<AdminFellowship[]>([])
@@ -183,6 +187,43 @@ export function AdminPage() {
     }
   }
 
+  const toggleEmailVerified = async (user: AdminUser) => {
+    try {
+      await adminApi.setUserEmailVerified(user.id, !user.emailVerified)
+      MessagePlugin.success(user.emailVerified ? '已取消验证' : '已标记邮箱已验证')
+      await load()
+    } catch (e) {
+      MessagePlugin.error(apiErrorMessage(e, '操作失败'))
+    }
+  }
+
+  const openGroupDetail = async (id: string) => {
+    try {
+      const detail = await adminApi.getGroup(id)
+      setGroupDetail(detail)
+    } catch (e) {
+      MessagePlugin.error(apiErrorMessage(e, '加载群详情失败'))
+    }
+  }
+
+  const filteredUsers = users.filter((u) => {
+    const q = userFilter.trim().toLowerCase()
+    if (!q) return true
+    return (
+      u.username.toLowerCase().includes(q) ||
+      u.email.toLowerCase().includes(q) ||
+      (u.hopeId || '').includes(q) ||
+      (u.fellowshipCode || '').toLowerCase().includes(q) ||
+      (u.domainName || '').toLowerCase().includes(q)
+    )
+  })
+
+  const filteredConversations = conversations.filter((c) => {
+    if (convFilter === 'group') return c.type === 'group'
+    if (convFilter === 'dm') return c.type === 'dm'
+    return true
+  })
+
   const createDomain = async () => {
     const name = domainDraft.trim()
     if (!name) {
@@ -287,102 +328,135 @@ export function AdminPage() {
   let panel: ReactNode = null
   if (tab === 'users') {
     panel = (
-      <Table
-        rowKey="id"
-        data={users}
-        loading={loading}
-        maxHeight={520}
-        columns={[
-          { colKey: 'username', title: '用户名', width: 110 },
-          {
-            colKey: 'hopeId',
-            title: 'IHope 号',
-            width: 100,
-            cell: ({ row }) => row.hopeId || '—',
-          },
-          { colKey: 'email', title: '邮箱', ellipsis: true, width: 160 },
-          {
-            colKey: 'fellowshipId',
-            title: '团契',
-            width: 200,
-            cell: ({ row }) => (
-              <Select
-                size="small"
-                value={row.fellowshipId || undefined}
-                options={fellowshipOptions}
-                placeholder="选择团契"
-                onChange={(v) => void changeUserFellowship(row, String(v))}
-                style={{ width: '100%' }}
-              />
-            ),
-          },
-          {
-            colKey: 'domainName',
-            title: '自治域',
-            width: 120,
-            cell: ({ row }) => row.domainName || '—',
-          },
-          {
-            colKey: 'qqBound',
-            title: 'QQ',
-            width: 64,
-            cell: ({ row }) => (row.qqBound ? '已绑' : '未绑'),
-          },
-          {
-            colKey: 'emailVerified',
-            title: '已验证',
-            width: 64,
-            cell: ({ row }) => (row.emailVerified ? '是' : '否'),
-          },
-          { colKey: 'createdAt', title: '注册时间', width: 160 },
-          {
-            colKey: 'op',
-            title: '操作',
-            fixed: 'right',
-            width: 200,
-            cell: ({ row }) => (
-              <div className="im-admin__ops">
-                <Button
+      <>
+        <div className="im-admin__toolbar">
+          <Input
+            placeholder="搜索用户名 / 邮箱 / IHope 号 / 团契"
+            value={userFilter}
+            onChange={(v) => setUserFilter(String(v))}
+            clearable
+            style={{ maxWidth: 320 }}
+          />
+        </div>
+        <Table
+          rowKey="id"
+          className="im-admin-table"
+          data={filteredUsers}
+          loading={loading}
+          maxHeight={520}
+          columns={[
+            { colKey: 'username', title: '用户名', width: 100, ellipsis: true },
+            {
+              colKey: 'hopeId',
+              title: 'IHope 号',
+              width: 128,
+              cell: ({ row }) => (
+                <span className="im-admin-mono">{row.hopeId || '—'}</span>
+              ),
+            },
+            { colKey: 'email', title: '邮箱', ellipsis: true, width: 180 },
+            {
+              colKey: 'fellowshipId',
+              title: '团契',
+              width: 200,
+              cell: ({ row }) => (
+                <Select
                   size="small"
-                  variant="text"
-                  theme="primary"
-                  disabled={!qqBotEnabled}
-                  onClick={() => void createBindCode(row)}
-                >
-                  绑定码
-                </Button>
-                <Button
-                  size="small"
-                  variant="text"
-                  disabled={!qqBotEnabled || !row.qqBound}
-                  onClick={() => unbindQQ(row.id, row.username)}
-                >
-                  解绑 QQ
-                </Button>
-                <Button
-                  size="small"
-                  theme="danger"
-                  variant="text"
-                  onClick={() =>
-                    confirmAction({
-                      header: '确认删除',
-                      body: `确定删除用户「${row.username}」？其私聊与消息将一并删除。`,
-                      confirm: '删除',
-                      danger: true,
-                      success: '已删除',
-                      onOk: async () => {
-                        await adminApi.deleteUser(row.id)
-                      },
-                    })
-                  }
-                >
-                  删除
-                </Button>
-              </div>
-            ),
-          },
-        ]}
-      />
+                  value={row.fellowshipId || undefined}
+                  options={fellowshipOptions}
+                  placeholder="选择团契"
+                  onChange={(v) => void changeUserFellowship(row, String(v))}
+                  style={{ width: '100%' }}
+                />
+              ),
+            },
+            {
+              colKey: 'domainName',
+              title: '自治域',
+              width: 110,
+              ellipsis: true,
+              cell: ({ row }) => row.domainName || '—',
+            },
+            {
+              colKey: 'qqBound',
+              title: 'QQ',
+              width: 72,
+              align: 'center',
+              cell: ({ row }) => (row.qqBound ? '已绑' : '未绑'),
+            },
+            {
+              colKey: 'emailVerified',
+              title: '已验证',
+              width: 72,
+              align: 'center',
+              cell: ({ row }) => (row.emailVerified ? '是' : '否'),
+            },
+            {
+              colKey: 'createdAt',
+              title: '注册',
+              width: 136,
+              cell: ({ row }) => (
+                <span className="im-admin-mono">{formatTime(row.createdAt)}</span>
+              ),
+            },
+            {
+              colKey: 'op',
+              title: '操作',
+              align: 'center',
+              fixed: 'right',
+              width: 236,
+              cell: ({ row }) => (
+                <div className="im-admin__ops">
+                  <Button
+                    size="small"
+                    variant="text"
+                    theme="primary"
+                    onClick={() => void toggleEmailVerified(row)}
+                  >
+                    {row.emailVerified ? '取消验证' : '验证邮箱'}
+                  </Button>
+                  <Button
+                    size="small"
+                    variant="text"
+                    theme="primary"
+                    disabled={!qqBotEnabled}
+                    onClick={() => void createBindCode(row)}
+                  >
+                    绑定码
+                  </Button>
+                  <Button
+                    size="small"
+                    variant="text"
+                    disabled={!qqBotEnabled || !row.qqBound}
+                    onClick={() => unbindQQ(row.id, row.username)}
+                  >
+                    解绑 QQ
+                  </Button>
+                  <Button
+                    size="small"
+                    theme="danger"
+                    variant="text"
+                    onClick={() =>
+                      confirmAction({
+                        header: '确认删除',
+                        body: `确定删除用户「${row.username}」？其私聊与消息将一并删除。`,
+                        confirm: '删除',
+                        danger: true,
+                        success: '已删除',
+                        onOk: async () => {
+                          await adminApi.deleteUser(row.id)
+                        },
+                      })
+                    }
+                  >
+                    删除
+                  </Button>
+                </div>
+              ),
+            },
+          ]}
+        />
+      </>
     )
   } else if (tab === 'domains') {
     panel = (
@@ -401,18 +475,32 @@ export function AdminPage() {
         </div>
         <Table
           rowKey="id"
+          className="im-admin-table"
           data={domains}
           loading={loading}
           maxHeight={520}
           columns={[
-            { colKey: 'name', title: '名称' },
-            { colKey: 'fellowshipCount', title: '团契数', width: 90 },
-            { colKey: 'createdAt', title: '创建时间', width: 180 },
+            { colKey: 'name', title: '名称', ellipsis: true },
+            {
+              colKey: 'fellowshipCount',
+              title: '团契数',
+              width: 90,
+              align: 'center',
+            },
+            {
+              colKey: 'createdAt',
+              title: '创建',
+              width: 136,
+              cell: ({ row }) => (
+                <span className="im-admin-mono">{formatTime(row.createdAt)}</span>
+              ),
+            },
             {
               colKey: 'op',
               title: '操作',
+              align: 'center',
               fixed: 'right',
-              width: 160,
+              width: 120,
               cell: ({ row }) => (
                 <div className="im-admin__ops">
                   <Button
@@ -496,20 +584,29 @@ export function AdminPage() {
         </p>
         <Table
           rowKey="id"
+          className="im-admin-table"
           data={fellowships}
           loading={loading}
           maxHeight={520}
           columns={[
             { colKey: 'code', title: '团契码', width: 140 },
-            { colKey: 'name', title: '名称', width: 140 },
-            { colKey: 'domainName', title: '自治域', width: 140 },
-            { colKey: 'userCount', title: '人数', width: 70 },
-            { colKey: 'createdAt', title: '创建时间', width: 180 },
+            { colKey: 'name', title: '名称', width: 140, ellipsis: true },
+            { colKey: 'domainName', title: '自治域', width: 140, ellipsis: true },
+            { colKey: 'userCount', title: '人数', width: 70, align: 'center' },
+            {
+              colKey: 'createdAt',
+              title: '创建',
+              width: 136,
+              cell: ({ row }) => (
+                <span className="im-admin-mono">{formatTime(row.createdAt)}</span>
+              ),
+            },
             {
               colKey: 'op',
               title: '操作',
+              align: 'center',
               fixed: 'right',
-              width: 140,
+              width: 108,
               cell: ({ row }) => (
                 <div className="im-admin__ops">
                   <Button
@@ -553,41 +650,50 @@ export function AdminPage() {
     ) : (
       <Table
         rowKey="userId"
+        className="im-admin-table"
         data={qqBindings}
         loading={loading}
         empty="暂无 QQ 绑定"
         maxHeight={520}
         columns={[
-          { colKey: 'username', title: '用户名', width: 120 },
+          { colKey: 'username', title: '用户名', width: 120, ellipsis: true },
           {
             colKey: 'hopeId',
             title: 'IHope 号',
-            width: 110,
-            cell: ({ row }) => row.hopeId || '—',
+            width: 128,
+            cell: ({ row }) => (
+              <span className="im-admin-mono">{row.hopeId || '—'}</span>
+            ),
           },
           {
             colKey: 'qqOpenId',
             title: 'QQ OpenID',
             ellipsis: true,
-            cell: ({ row }) => maskOpenId(row.qqOpenId),
+            cell: ({ row }) => (
+              <span className="im-admin-mono">{maskOpenId(row.qqOpenId)}</span>
+            ),
           },
           {
             colKey: 'doorbellEnabled',
             title: '消息提醒',
             width: 90,
+            align: 'center',
             cell: ({ row }) => (row.doorbellEnabled ? '开' : '关'),
           },
           {
             colKey: 'boundAt',
             title: '绑定时间',
-            width: 180,
-            cell: ({ row }) => formatTime(row.boundAt),
+            width: 136,
+            cell: ({ row }) => (
+              <span className="im-admin-mono">{formatTime(row.boundAt)}</span>
+            ),
           },
           {
             colKey: 'op',
             title: '操作',
+            align: 'center',
             fixed: 'right',
-            width: 100,
+            width: 72,
             cell: ({ row }) => (
               <Button
                 size="small"
@@ -604,51 +710,107 @@ export function AdminPage() {
     )
   } else {
     panel = (
-      <Table
-        rowKey="id"
-        data={conversations}
-        loading={loading}
-        maxHeight={520}
-        columns={[
-          {
-            colKey: 'type',
-            title: '类型',
-            width: 80,
-            cell: ({ row }) => (row.type === 'group' ? '群聊' : '私聊'),
-          },
-          { colKey: 'title', title: '标题', width: 160 },
-          { colKey: 'members', title: '成员', ellipsis: true },
-          { colKey: 'memberCount', title: '人数', width: 70 },
-          { colKey: 'createdAt', title: '创建时间', width: 180 },
-          {
-            colKey: 'op',
-            title: '操作',
-            fixed: 'right',
-            width: 100,
-            cell: ({ row }) => (
-              <Button
-                size="small"
-                theme="danger"
-                variant="text"
-                onClick={() =>
-                  confirmAction({
-                    header: '确认删除',
-                    body: `确定删除${row.type === 'group' ? '群' : '私聊'}「${row.title || row.id}」？消息将一并删除。`,
-                    confirm: '删除',
-                    danger: true,
-                    success: '已删除',
-                    onOk: async () => {
-                      await adminApi.deleteConversation(row.id)
-                    },
-                  })
-                }
-              >
-                删除
-              </Button>
-            ),
-          },
-        ]}
-      />
+      <>
+        <div className="im-admin__toolbar">
+          <Select
+            value={convFilter}
+            options={[
+              { label: '全部', value: 'all' },
+              { label: '仅群聊', value: 'group' },
+              { label: '仅私聊', value: 'dm' },
+            ]}
+            onChange={(v) => setConvFilter(v as 'all' | 'group' | 'dm')}
+            style={{ width: 140 }}
+          />
+        </div>
+        <Table
+          rowKey="id"
+          className="im-admin-table"
+          data={filteredConversations}
+          loading={loading}
+          maxHeight={520}
+          columns={[
+            {
+              colKey: 'type',
+              title: '类型',
+              width: 72,
+              align: 'center',
+              cell: ({ row }) => (row.type === 'group' ? '群聊' : '私聊'),
+            },
+            { colKey: 'title', title: '标题', width: 160, ellipsis: true },
+            {
+              colKey: 'groupNo',
+              title: '群号',
+              width: 120,
+              cell: ({ row }) => (
+                <span className="im-admin-mono">{row.groupNo || '—'}</span>
+              ),
+            },
+            {
+              colKey: 'ownerUsername',
+              title: '群主',
+              width: 100,
+              ellipsis: true,
+              cell: ({ row }) => row.ownerUsername || '—',
+            },
+            { colKey: 'members', title: '成员', ellipsis: true, width: 200 },
+            {
+              colKey: 'memberCount',
+              title: '人数',
+              width: 64,
+              align: 'center',
+            },
+            {
+              colKey: 'createdAt',
+              title: '创建',
+              width: 136,
+              cell: ({ row }) => (
+                <span className="im-admin-mono">{formatTime(row.createdAt)}</span>
+              ),
+            },
+            {
+              colKey: 'op',
+              title: '操作',
+              align: 'center',
+              fixed: 'right',
+              width: 108,
+              cell: ({ row }) => (
+                <div className="im-admin__ops">
+                  {row.type === 'group' && (
+                    <Button
+                      size="small"
+                      variant="text"
+                      theme="primary"
+                      onClick={() => void openGroupDetail(row.id)}
+                    >
+                      详情
+                    </Button>
+                  )}
+                  <Button
+                    size="small"
+                    theme="danger"
+                    variant="text"
+                    onClick={() =>
+                      confirmAction({
+                        header: '确认删除',
+                        body: `确定删除${row.type === 'group' ? '群' : '私聊'}「${row.title || row.id}」？消息将一并删除。`,
+                        confirm: '删除',
+                        danger: true,
+                        success: '已删除',
+                        onOk: async () => {
+                          await adminApi.deleteConversation(row.id)
+                        },
+                      })
+                    }
+                  >
+                    删除
+                  </Button>
+                </div>
+              ),
+            },
+          ]}
+        />
+      </>
     )
   }
 
@@ -682,6 +844,7 @@ export function AdminPage() {
                 setAuthed(false)
                 setUsers([])
                 setConversations([])
+                setGroupDetail(null)
                 setQqBindings([])
                 setDomains([])
                 setFellowships([])
@@ -714,6 +877,217 @@ export function AdminPage() {
           <div className="im-card im-admin__panel">{panel}</div>
         </div>
       </div>
+
+      <Dialog
+        visible={!!groupDetail}
+        header={
+          groupDetail
+            ? `群详情 · ${groupDetail.conversation.title}${
+                groupDetail.conversation.groupNo
+                  ? `（${groupDetail.conversation.groupNo}）`
+                  : ''
+              }`
+            : '群详情'
+        }
+        width={640}
+        onClose={() => setGroupDetail(null)}
+        footer={
+          <Button theme="default" onClick={() => setGroupDetail(null)}>
+            关闭
+          </Button>
+        }
+      >
+        {groupDetail && (
+          <div className="im-admin-group">
+            <div className="im-admin-group__row">
+              <span>群主</span>
+              <strong>{groupDetail.conversation.ownerUsername || '—'}</strong>
+            </div>
+            <div className="im-admin-group__row">
+              <span>加群方式</span>
+              <Select
+                style={{ width: 220 }}
+                value={groupDetail.conversation.joinMode || 'verify'}
+                options={[
+                  { label: '允许任何人加入', value: 'anyone' },
+                  { label: '需要验证信息', value: 'verify' },
+                  { label: '不允许任何人加入', value: 'deny' },
+                ]}
+                onChange={async (v) => {
+                  const mode = String(v) as 'anyone' | 'verify' | 'deny'
+                  try {
+                    const c = await adminApi.patchGroup(groupDetail.conversation.id, {
+                      joinMode: mode,
+                    })
+                    setGroupDetail({
+                      ...groupDetail,
+                      conversation: { ...groupDetail.conversation, ...c },
+                    })
+                    MessagePlugin.success('已更新')
+                    await load()
+                  } catch (e) {
+                    MessagePlugin.error(apiErrorMessage(e, '设置失败'))
+                  }
+                }}
+              />
+            </div>
+
+            {groupDetail.joinRequests.length > 0 && (
+              <div className="im-admin-group__block">
+                <div className="im-admin-group__label">
+                  入群申请（{groupDetail.joinRequests.length}）
+                </div>
+                {groupDetail.joinRequests.map((r) => (
+                  <div key={r.id} className="im-admin-group__join">
+                    <div>
+                      <strong>{r.fromUsername}</strong>
+                      <div className="im-muted">{r.message || '申请入群'}</div>
+                    </div>
+                    <div className="im-admin__ops">
+                      <Button
+                        size="small"
+                        theme="primary"
+                        variant="text"
+                        onClick={async () => {
+                          try {
+                            await adminApi.acceptGroupJoin(r.conversationId, r.id)
+                            MessagePlugin.success('已同意')
+                            await openGroupDetail(groupDetail.conversation.id)
+                            await load()
+                          } catch (e) {
+                            MessagePlugin.error(apiErrorMessage(e, '操作失败'))
+                          }
+                        }}
+                      >
+                        同意
+                      </Button>
+                      <Button
+                        size="small"
+                        theme="danger"
+                        variant="text"
+                        onClick={async () => {
+                          try {
+                            await adminApi.rejectGroupJoin(r.conversationId, r.id)
+                            MessagePlugin.success('已拒绝')
+                            await openGroupDetail(groupDetail.conversation.id)
+                            await load()
+                          } catch (e) {
+                            MessagePlugin.error(apiErrorMessage(e, '操作失败'))
+                          }
+                        }}
+                      >
+                        拒绝
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="im-admin-group__block">
+              <div className="im-admin-group__label">
+                成员（
+                {groupDetail.members.filter((m) => !m.removed).length}）
+              </div>
+              {groupDetail.members
+                .filter((m) => !m.removed)
+                .map((m) => (
+                  <div key={m.id} className="im-admin-group__join">
+                    <div>
+                      <strong>
+                        {m.username}
+                        {m.isOwner
+                          ? ' · 群主'
+                          : m.role === 'admin'
+                            ? ' · 管理员'
+                            : ''}
+                      </strong>
+                      {m.hopeId && (
+                        <div className="im-muted">IHope 号：{m.hopeId}</div>
+                      )}
+                    </div>
+                    {!m.isOwner && (
+                      <div className="im-admin__ops">
+                        <Button
+                          size="small"
+                          variant="text"
+                          theme="primary"
+                          onClick={() =>
+                            confirmAction({
+                              header: m.role === 'admin' ? '取消管理员' : '设为管理员',
+                              body:
+                                m.role === 'admin'
+                                  ? `取消「${m.username}」的管理员身份？`
+                                  : `将「${m.username}」设为管理员？`,
+                              confirm: '确认',
+                              success: m.role === 'admin' ? '已取消管理员' : '已设为管理员',
+                              onOk: async () => {
+                                await adminApi.setGroupMemberRole(
+                                  groupDetail.conversation.id,
+                                  m.id,
+                                  m.role === 'admin' ? 'member' : 'admin',
+                                )
+                                await openGroupDetail(groupDetail.conversation.id)
+                              },
+                            })
+                          }
+                        >
+                          {m.role === 'admin' ? '取消管理员' : '设管理员'}
+                        </Button>
+                        <Button
+                          size="small"
+                          variant="text"
+                          theme="primary"
+                          onClick={() =>
+                            confirmAction({
+                              header: '转让群主',
+                              body: `将群主转让给「${m.username}」？原群主将变为管理员。`,
+                              confirm: '转让',
+                              success: '已转让群主',
+                              onOk: async () => {
+                                await adminApi.transferGroupOwner(
+                                  groupDetail.conversation.id,
+                                  m.id,
+                                )
+                                await openGroupDetail(groupDetail.conversation.id)
+                                await load()
+                              },
+                            })
+                          }
+                        >
+                          转让群主
+                        </Button>
+                        <Button
+                          size="small"
+                          theme="danger"
+                          variant="text"
+                          onClick={() =>
+                            confirmAction({
+                              header: '移出成员',
+                              body: `将「${m.username}」移出本群？`,
+                              confirm: '移出',
+                              danger: true,
+                              success: '已移出',
+                              onOk: async () => {
+                                await adminApi.kickGroupMember(
+                                  groupDetail.conversation.id,
+                                  m.id,
+                                )
+                                await openGroupDetail(groupDetail.conversation.id)
+                              },
+                            })
+                          }
+                        >
+                          移出
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                ))}
+            </div>
+          </div>
+        )}
+      </Dialog>
 
       <Dialog
         visible={!!bindDialog}
@@ -804,8 +1178,10 @@ function maskOpenId(id: string): string {
   return `${t.slice(0, 6)}…${t.slice(-4)}`
 }
 
-function formatTime(iso: string): string {
+function formatTime(iso?: string | null): string {
+  if (!iso) return '—'
   const d = new Date(iso)
-  if (Number.isNaN(d.getTime())) return iso
-  return d.toLocaleString()
+  if (Number.isNaN(d.getTime())) return String(iso)
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
 }

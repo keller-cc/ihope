@@ -240,3 +240,128 @@ CREATE UNIQUE INDEX IF NOT EXISTS user_chat_backgrounds_user_url_uidx
 
 INSERT INTO schema_migrations (version) VALUES ('013_user_chat_backgrounds')
 ON CONFLICT DO NOTHING;
+
+CREATE TABLE IF NOT EXISTS group_join_requests (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  conversation_id UUID NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  from_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  status TEXT NOT NULL DEFAULT 'pending'
+    CHECK (status IN ('pending', 'accepted', 'rejected')),
+  message TEXT NOT NULL DEFAULT '',
+  decided_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  decided_at TIMESTAMPTZ
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS group_join_requests_pending_uidx
+  ON group_join_requests (conversation_id, from_user_id)
+  WHERE status = 'pending';
+
+CREATE INDEX IF NOT EXISTS group_join_requests_conv_pending_idx
+  ON group_join_requests (conversation_id, created_at DESC)
+  WHERE status = 'pending';
+
+INSERT INTO schema_migrations (version) VALUES ('014_group_join_requests')
+ON CONFLICT DO NOTHING;
+
+ALTER TABLE conversations
+  ADD COLUMN IF NOT EXISTS invite_requires_approval BOOLEAN NOT NULL DEFAULT FALSE;
+
+ALTER TABLE conversations
+  ADD COLUMN IF NOT EXISTS announcement TEXT NOT NULL DEFAULT '';
+
+ALTER TABLE conversations
+  ADD COLUMN IF NOT EXISTS announcement_updated_at TIMESTAMPTZ;
+
+ALTER TABLE conversations
+  ADD COLUMN IF NOT EXISTS announcement_updated_by UUID REFERENCES users(id) ON DELETE SET NULL;
+
+ALTER TABLE group_join_requests
+  ADD COLUMN IF NOT EXISTS invited_by UUID REFERENCES users(id) ON DELETE SET NULL;
+
+INSERT INTO schema_migrations (version) VALUES ('015_group_invite_announcement')
+ON CONFLICT DO NOTHING;
+
+ALTER TABLE conversation_members
+  ADD COLUMN IF NOT EXISTS removed_at TIMESTAMPTZ;
+
+ALTER TABLE conversation_members
+  ADD COLUMN IF NOT EXISTS remove_reason TEXT;
+
+INSERT INTO schema_migrations (version) VALUES ('016_member_soft_remove')
+ON CONFLICT DO NOTHING;
+
+ALTER TABLE conversations
+  ADD COLUMN IF NOT EXISTS join_mode TEXT NOT NULL DEFAULT 'verify';
+
+UPDATE conversations
+SET join_mode = CASE
+  WHEN COALESCE(invite_requires_approval, FALSE) THEN 'verify'
+  ELSE 'anyone'
+END
+WHERE join_mode = 'verify'
+  AND COALESCE(invite_requires_approval, FALSE) = FALSE;
+
+UPDATE conversations
+SET invite_requires_approval = (join_mode = 'verify');
+
+INSERT INTO schema_migrations (version) VALUES ('017_group_join_mode')
+ON CONFLICT DO NOTHING;
+
+CREATE TABLE IF NOT EXISTS group_announcements (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  conversation_id UUID NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  author_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  body TEXT NOT NULL,
+  require_confirm BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS group_announcements_conv_created_idx
+  ON group_announcements (conversation_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS group_announcement_acks (
+  announcement_id UUID NOT NULL REFERENCES group_announcements(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  acked_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (announcement_id, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS group_announcement_acks_user_idx
+  ON group_announcement_acks (user_id, announcement_id);
+
+INSERT INTO group_announcements (conversation_id, author_id, body, require_confirm, created_at, updated_at)
+SELECT c.id,
+       COALESCE(c.announcement_updated_by, c.owner_id),
+       trim(c.announcement),
+       TRUE,
+       COALESCE(c.announcement_updated_at, c.created_at),
+       COALESCE(c.announcement_updated_at, c.created_at)
+FROM conversations c
+WHERE c.type = 'group'
+  AND trim(c.announcement) <> ''
+  AND COALESCE(c.announcement_updated_by, c.owner_id) IS NOT NULL
+  AND NOT EXISTS (
+    SELECT 1 FROM group_announcements a WHERE a.conversation_id = c.id
+  );
+
+INSERT INTO schema_migrations (version) VALUES ('018_group_announcements')
+ON CONFLICT DO NOTHING;
+
+CREATE TABLE IF NOT EXISTS game_scores (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  game_id TEXT NOT NULL,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  score INT NOT NULL CHECK (score >= 0),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS game_scores_game_score_idx
+  ON game_scores (game_id, score DESC, created_at ASC);
+
+CREATE INDEX IF NOT EXISTS game_scores_user_game_idx
+  ON game_scores (user_id, game_id, score DESC);
+
+INSERT INTO schema_migrations (version) VALUES ('019_game_scores')
+ON CONFLICT DO NOTHING;

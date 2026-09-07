@@ -17,6 +17,7 @@ import (
 	"github.com/keller-cc/ihope/appserver/internal/chat"
 	"github.com/keller-cc/ihope/appserver/internal/config"
 	"github.com/keller-cc/ihope/appserver/internal/db"
+	"github.com/keller-cc/ihope/appserver/internal/games"
 	"github.com/keller-cc/ihope/appserver/internal/hub"
 	"github.com/keller-cc/ihope/appserver/internal/httpserver"
 	"github.com/keller-cc/ihope/appserver/internal/mail"
@@ -64,6 +65,7 @@ func main() {
 		log.Printf("backfill group nos: %v", err)
 	}
 	adminSvc := admin.NewService(pool)
+	gameSvc := games.NewService(pool)
 	h := hub.New()
 
 	var ice []call.ICEServer
@@ -105,7 +107,7 @@ func main() {
 		log.Println("qq bot enabled")
 	}
 
-	srv := httpserver.New(authSvc, chatSvc, adminSvc, h, callSvc, qqSvc, cfg.CORSOrigin, cfg.QQWebhookPath, cfg.AdminToken, uploadDir, cfg.QQQuotesFilePath, cfg.WebDist)
+	srv := httpserver.New(authSvc, chatSvc, adminSvc, gameSvc, h, callSvc, qqSvc, cfg.CORSOrigin, cfg.QQWebhookPath, cfg.AdminToken, uploadDir, cfg.QQQuotesFilePath, cfg.WebDist)
 	_ = os.MkdirAll(filepath.Join(uploadDir, "avatars"), 0o755)
 	_ = os.MkdirAll(filepath.Join(uploadDir, "groups"), 0o755)
 	_ = os.MkdirAll(filepath.Join(uploadDir, "chat"), 0o755)

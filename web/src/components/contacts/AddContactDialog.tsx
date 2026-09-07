@@ -196,18 +196,28 @@ export function AddContactDialog({
               >
                 进入群聊
               </Button>
-            ) : (
+            ) : group.joinPending ? (
+              <p className="im-muted">入群申请已发送，等待管理员同意</p>
+            ) : group.joinMode === 'deny' ? (
+              <p className="im-muted">该群不允许加入</p>
+            ) : group.joinMode === 'anyone' ? (
               <Button
                 theme="primary"
                 loading={busy}
                 onClick={async () => {
                   setBusy(true)
                   try {
-                    const c = await api.joinGroup(String(group.groupNo || q))
-                    MessagePlugin.success('已加入群聊')
-                    reset()
-                    onClose()
-                    onJoined(c.id)
+                    const res = await api.joinGroup(String(group.groupNo || q), '')
+                    if (res.status === 'joined' && res.conversation) {
+                      MessagePlugin.success('已加入群聊')
+                      reset()
+                      onClose()
+                      onJoined(res.conversation.id)
+                    } else {
+                      MessagePlugin.success('入群申请已发送，等待管理员同意')
+                      setGroup({ ...group, joinPending: true })
+                      onRequestSent()
+                    }
                   } catch (e) {
                     MessagePlugin.error(apiErrorMessage(e, '加入失败'))
                   } finally {
@@ -217,6 +227,41 @@ export function AddContactDialog({
               >
                 加入群聊
               </Button>
+            ) : (
+              <>
+                <Input
+                  placeholder="验证信息（可选）"
+                  value={msg}
+                  onChange={(v) => setMsg(String(v))}
+                />
+                <Button
+                  theme="primary"
+                  loading={busy}
+                  onClick={async () => {
+                    setBusy(true)
+                    try {
+                      const res = await api.joinGroup(String(group.groupNo || q), msg.trim())
+                      if (res.status === 'joined' && res.conversation) {
+                        MessagePlugin.success('已加入群聊')
+                        reset()
+                        onClose()
+                        onJoined(res.conversation.id)
+                      } else {
+                        MessagePlugin.success('入群申请已发送，等待管理员同意')
+                        setGroup({ ...group, joinPending: true })
+                        setMsg('')
+                        onRequestSent()
+                      }
+                    } catch (e) {
+                      MessagePlugin.error(apiErrorMessage(e, '加入失败'))
+                    } finally {
+                      setBusy(false)
+                    }
+                  }}
+                >
+                  申请加入
+                </Button>
+              </>
             )}
           </div>
         )}

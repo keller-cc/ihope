@@ -39,11 +39,15 @@ export function SessionList({
           placement="bottom-left"
           minColumnWidth={148}
           maxColumnWidth={220}
-          options={[
-            { content: c.pinned ? '取消置顶' : '置顶', value: 'pin' },
-            { content: c.muted ? '关闭免打扰' : '消息免打扰', value: 'mute' },
-            { content: '从消息列表删除', value: 'hide', theme: 'error' },
-          ]}
+          options={
+            c.removed
+              ? [{ content: '删除会话', value: 'hide', theme: 'error' }]
+              : [
+                  { content: c.pinned ? '取消置顶' : '置顶', value: 'pin' },
+                  { content: c.muted ? '关闭免打扰' : '消息免打扰', value: 'mute' },
+                  { content: '从消息列表删除', value: 'hide', theme: 'error' },
+                ]
+          }
           onClick={(item) => {
             const v = String(item.value)
             if (v === 'pin') onTogglePin(c)
@@ -80,8 +84,16 @@ export function SessionList({
               </span>
               <span className="im-list-item__row">
                 <span className="im-list-item__preview">
-                  {c.lastMessage ||
-                    (c.type === 'group' ? `群聊 · ${c.memberCount || 0} 人` : '暂无消息')}
+                  {c.removed
+                    ? c.removeReason === 'kicked'
+                      ? '你已被移出群聊'
+                      : c.removeReason === 'unfriended'
+                        ? '已删除好友'
+                        : c.type === 'dm'
+                          ? '已删除好友'
+                          : '已退出群聊'
+                    : c.lastMessage ||
+                      (c.type === 'group' ? `群聊 · ${c.memberCount || 0} 人` : '暂无消息')}
                 </span>
                 {(c.unreadCount || 0) > 0 ? (
                   <span

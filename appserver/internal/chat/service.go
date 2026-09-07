@@ -16,25 +16,55 @@ import (
 )
 
 type Conversation struct {
-	ID             string  `json:"id"`
-	Type           string  `json:"type"`
-	Title          string  `json:"title"`
-	CreatedAt      string  `json:"createdAt"`
-	PeerUsername   string  `json:"peerUsername,omitempty"`
-	PeerAvatarURL  *string `json:"peerAvatarUrl,omitempty"`
-	MemberCount    int     `json:"memberCount,omitempty"`
-	LastMessage    string  `json:"lastMessage,omitempty"`
-	LastMessageAt  string  `json:"lastMessageAt,omitempty"`
-	UnreadCount    int     `json:"unreadCount"`
-	GroupNo        *string `json:"groupNo,omitempty"`
-	OwnerID        *string `json:"ownerId,omitempty"`
-	IsOwner        bool    `json:"isOwner,omitempty"`
-	IsAdmin        bool    `json:"isAdmin,omitempty"`
-	Pinned         bool    `json:"pinned"`
-	Muted          bool    `json:"muted"`
-	PinnedAt       *string `json:"pinnedAt,omitempty"`
-	AvatarURL      *string `json:"avatarUrl,omitempty"`
-	Joined         bool    `json:"joined,omitempty"`
+	ID                      string  `json:"id"`
+	Type                    string  `json:"type"`
+	Title                   string  `json:"title"`
+	CreatedAt               string  `json:"createdAt"`
+	PeerUsername            string  `json:"peerUsername,omitempty"`
+	PeerAvatarURL           *string `json:"peerAvatarUrl,omitempty"`
+	MemberCount             int     `json:"memberCount,omitempty"`
+	LastMessage             string  `json:"lastMessage,omitempty"`
+	LastMessageAt           string  `json:"lastMessageAt,omitempty"`
+	UnreadCount             int     `json:"unreadCount"`
+	GroupNo                 *string `json:"groupNo,omitempty"`
+	OwnerID                 *string `json:"ownerId,omitempty"`
+	IsOwner                 bool    `json:"isOwner,omitempty"`
+	IsAdmin                 bool    `json:"isAdmin,omitempty"`
+	Pinned                  bool    `json:"pinned"`
+	Muted                   bool    `json:"muted"`
+	PinnedAt                *string `json:"pinnedAt,omitempty"`
+	AvatarURL               *string `json:"avatarUrl,omitempty"`
+	Joined                  bool    `json:"joined,omitempty"`
+	JoinMode                string  `json:"joinMode,omitempty"` // anyone | verify | deny
+	InviteRequiresApproval  bool    `json:"inviteRequiresApproval"` // legacy: true when joinMode=verify
+	Announcement            string  `json:"announcement"` // latest body preview for settings
+	AnnouncementCount       int     `json:"announcementCount,omitempty"`
+	PendingAnnouncement     *GroupAnnouncement `json:"pendingAnnouncement,omitempty"`
+	AnnouncementUpdatedAt   *string `json:"announcementUpdatedAt,omitempty"` // legacy
+	AnnouncementUpdatedBy   *string `json:"announcementUpdatedBy,omitempty"` // legacy
+	AnnouncementAuthorName  string  `json:"announcementAuthorName,omitempty"` // legacy
+	Removed                 bool    `json:"removed,omitempty"`
+	RemoveReason            string  `json:"removeReason,omitempty"`
+}
+
+const (
+	JoinModeAnyone = "anyone"
+	JoinModeVerify = "verify"
+	JoinModeDeny   = "deny"
+)
+
+func normalizeJoinMode(mode string) string {
+	switch strings.TrimSpace(mode) {
+	case JoinModeAnyone, JoinModeVerify, JoinModeDeny:
+		return strings.TrimSpace(mode)
+	default:
+		return JoinModeVerify
+	}
+}
+
+func applyJoinMode(c *Conversation, mode string) {
+	c.JoinMode = normalizeJoinMode(mode)
+	c.InviteRequiresApproval = c.JoinMode == JoinModeVerify
 }
 
 type FriendRequest struct {
@@ -46,6 +76,34 @@ type FriendRequest struct {
 	CreatedAt  string   `json:"createdAt"`
 	FromUser   *Contact `json:"fromUser,omitempty"`
 	ToUser     *Contact `json:"toUser,omitempty"`
+}
+
+type GroupJoinRequest struct {
+	ID             string        `json:"id"`
+	ConversationID string        `json:"conversationId"`
+	FromUserID     string        `json:"fromUserId"`
+	Status         string        `json:"status"`
+	Message        string        `json:"message"`
+	CreatedAt      string        `json:"createdAt"`
+	FromUser       *Contact      `json:"fromUser,omitempty"`
+	InvitedBy      *Contact      `json:"invitedBy,omitempty"`
+	Group          *Conversation `json:"group,omitempty"`
+}
+
+// JoinGroupResult: joined 已入群；pending 等待管理员同意。
+type JoinGroupResult struct {
+	Status       string            `json:"status"` // joined | pending
+	NewlyJoined  bool              `json:"-"`
+	Conversation *Conversation    `json:"conversation,omitempty"`
+	Request      *GroupJoinRequest `json:"request,omitempty"`
+}
+
+// InviteResult: added 为直接入群人数；pending 为需管理员审批的邀请数。
+type InviteResult struct {
+	Conversation *Conversation `json:"conversation"`
+	Added        int           `json:"added"`
+	Pending      int           `json:"pending"`
+	AddedNames   []string      `json:"addedNames,omitempty"`
 }
 
 type Message struct {
@@ -92,6 +150,8 @@ type PublicGroup struct {
 	MemberCount int     `json:"memberCount"`
 	AvatarURL   *string `json:"avatarUrl,omitempty"`
 	Joined      bool    `json:"joined"`
+	JoinPending bool    `json:"joinPending"`
+	JoinMode    string  `json:"joinMode"` // anyone | verify | deny
 }
 
 type Service struct {
@@ -125,7 +185,8 @@ func (s *Service) ListConversations(ctx context.Context, userID string) ([]Conve
 				WHERE cm.conversation_id = c.id AND cm.user_id <> $1
 				LIMIT 1
 			),
-			(SELECT COUNT(*)::int FROM conversation_members cm2 WHERE cm2.conversation_id = c.id),
+			(SELECT COUNT(*)::int FROM conversation_members cm2
+			 WHERE cm2.conversation_id = c.id AND cm2.removed_at IS NULL),
 			COALESCE((
 				SELECT m.type FROM messages m
 				WHERE m.conversation_id = c.id
@@ -158,6 +219,9 @@ func (s *Service) ListConversations(ctx context.Context, userID string) ([]Conve
 			mem.pinned_at::text,
 			c.avatar_url,
 			COALESCE(mem.role, 'member'),
+			COALESCE(NULLIF(c.join_mode, ''), 'verify'),
+			mem.removed_at IS NOT NULL,
+			COALESCE(mem.remove_reason, ''),
 			COALESCE((
 				SELECT m.created_at FROM messages m
 				WHERE m.conversation_id = c.id
@@ -184,17 +248,24 @@ func (s *Service) ListConversations(ctx context.Context, userID string) ([]Conve
 		var peerAvatar *string
 		var myRole string
 		var peerRemark string
+		var removed bool
+		var removeReason string
+		var joinMode string
 		if err := rows.Scan(
 			&c.ID, &c.Type, &c.Title, &c.CreatedAt, &c.PeerUsername, &peerRemark, &peerAvatar, &c.MemberCount,
 			&lastType, &sealed, &lastRecalled, &c.LastMessageAt, &c.UnreadCount, &c.GroupNo, &ownerID,
-			&c.Muted, &pinnedAt, &c.AvatarURL, &myRole, &sortAt,
+			&c.Muted, &pinnedAt, &c.AvatarURL, &myRole,
+			&joinMode, &removed, &removeReason, &sortAt,
 		); err != nil {
 			return nil, err
 		}
+		applyJoinMode(&c, joinMode)
 		c.OwnerID = ownerID
 		c.PinnedAt = pinnedAt
 		c.Pinned = pinnedAt != nil && *pinnedAt != ""
 		c.PeerAvatarURL = peerAvatar
+		c.Removed = removed
+		c.RemoveReason = removeReason
 		if c.Type == "dm" {
 			c.AvatarURL = peerAvatar
 		}
@@ -225,6 +296,13 @@ func (s *Service) ListConversations(ctx context.Context, userID string) ([]Conve
 				c.LastMessage = "[通话]"
 			} else if lastType == "forward" {
 				c.LastMessage = "[聊天记录]"
+			} else if lastType == "system" {
+				plain, err := crypto.Open(s.key, sealed)
+				if err != nil {
+					c.LastMessage = "[系统消息]"
+				} else {
+					c.LastMessage = string(plain)
+				}
 			} else {
 				plain, err := crypto.Open(s.key, sealed)
 				if err != nil {
@@ -234,6 +312,7 @@ func (s *Service) ListConversations(ctx context.Context, userID string) ([]Conve
 				}
 			}
 		}
+		s.fillAnnouncementMeta(ctx, &c, userID)
 		out = append(out, c)
 	}
 	if out == nil {
@@ -243,7 +322,7 @@ func (s *Service) ListConversations(ctx context.Context, userID string) ([]Conve
 }
 
 func (s *Service) MarkRead(ctx context.Context, conversationID, userID string) error {
-	ok, err := s.IsMember(ctx, conversationID, userID)
+	ok, err := s.CanAccessConversation(ctx, conversationID, userID)
 	if err != nil {
 		return err
 	}
@@ -270,11 +349,32 @@ func (s *Service) MarkReadUsers(ctx context.Context, conversationID string, user
 }
 
 func (s *Service) SetMemberPrefs(ctx context.Context, conversationID, userID string, pinned, muted, hidden *bool) error {
+	var removed bool
+	err := s.pool.QueryRow(ctx, `
+		SELECT removed_at IS NOT NULL FROM conversation_members
+		WHERE conversation_id = $1 AND user_id = $2
+	`, conversationID, userID).Scan(&removed)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return errors.New("forbidden")
+		}
+		return err
+	}
+	if hidden != nil && *hidden && removed {
+		_, err = s.pool.Exec(ctx, `
+			DELETE FROM conversation_members WHERE conversation_id = $1 AND user_id = $2
+		`, conversationID, userID)
+		return err
+	}
 	ok, err := s.IsMember(ctx, conversationID, userID)
 	if err != nil {
 		return err
 	}
+	if !ok && !removed {
+		return errors.New("forbidden")
+	}
 	if !ok {
+		// soft-removed: only hide handled above
 		return errors.New("forbidden")
 	}
 	if pinned != nil {
@@ -351,11 +451,12 @@ func (s *Service) ListFriends(ctx context.Context, userID string) ([]Contact, er
 func (s *Service) ListGroups(ctx context.Context, userID string) ([]Conversation, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT c.id::text, c.type, c.title, c.created_at::text,
-			(SELECT COUNT(*)::int FROM conversation_members cm WHERE cm.conversation_id = c.id),
-			c.group_no, c.owner_id::text, c.avatar_url, COALESCE(m.role, 'member')
+			(SELECT COUNT(*)::int FROM conversation_members cm WHERE cm.conversation_id = c.id AND cm.removed_at IS NULL),
+			c.group_no, c.owner_id::text, c.avatar_url, COALESCE(m.role, 'member'),
+			COALESCE(NULLIF(c.join_mode, ''), 'verify')
 		FROM conversations c
 		JOIN conversation_members m ON m.conversation_id = c.id
-		WHERE m.user_id = $1 AND c.type = 'group'
+		WHERE m.user_id = $1 AND c.type = 'group' AND m.removed_at IS NULL
 		ORDER BY c.title
 	`, userID)
 	if err != nil {
@@ -367,9 +468,14 @@ func (s *Service) ListGroups(ctx context.Context, userID string) ([]Conversation
 		var c Conversation
 		var ownerID *string
 		var myRole string
-		if err := rows.Scan(&c.ID, &c.Type, &c.Title, &c.CreatedAt, &c.MemberCount, &c.GroupNo, &ownerID, &c.AvatarURL, &myRole); err != nil {
+		var joinMode string
+		if err := rows.Scan(
+			&c.ID, &c.Type, &c.Title, &c.CreatedAt, &c.MemberCount, &c.GroupNo, &ownerID, &c.AvatarURL, &myRole,
+			&joinMode,
+		); err != nil {
 			return nil, err
 		}
+		applyJoinMode(&c, joinMode)
 		c.OwnerID = ownerID
 		c.Joined = true
 		if ownerID != nil && *ownerID == userID {
@@ -378,6 +484,7 @@ func (s *Service) ListGroups(ctx context.Context, userID string) ([]Conversation
 		if myRole == "admin" {
 			c.IsAdmin = true
 		}
+		s.fillAnnouncementMeta(ctx, &c, userID)
 		out = append(out, c)
 	}
 	if out == nil {
@@ -660,9 +767,10 @@ func (s *Service) CreateDM(ctx context.Context, userID, peerLogin string) (*Conv
 	`, userID, peerID).Scan(&existingID)
 	if err == nil {
 		_, _ = s.pool.Exec(ctx, `
-			UPDATE conversation_members SET hidden_at = NULL
-			WHERE conversation_id = $1 AND user_id = $2
-		`, existingID, userID)
+			UPDATE conversation_members
+			SET hidden_at = NULL, removed_at = NULL, remove_reason = NULL
+			WHERE conversation_id = $1 AND user_id IN ($2, $3)
+		`, existingID, userID, peerID)
 		c, err := s.getConversation(ctx, existingID)
 		if err != nil {
 			return nil, err
@@ -791,14 +899,21 @@ func utf8Len(s string) int {
 
 func (s *Service) getConversation(ctx context.Context, id string) (*Conversation, error) {
 	var c Conversation
+	var joinMode string
 	err := s.pool.QueryRow(ctx, `
 		SELECT id::text, type, title, created_at::text, group_no, owner_id::text, avatar_url,
-			(SELECT COUNT(*)::int FROM conversation_members cm WHERE cm.conversation_id = conversations.id)
+			(SELECT COUNT(*)::int FROM conversation_members cm
+			 WHERE cm.conversation_id = conversations.id AND cm.removed_at IS NULL),
+			COALESCE(NULLIF(join_mode, ''), 'verify')
 		FROM conversations WHERE id = $1
-	`, id).Scan(&c.ID, &c.Type, &c.Title, &c.CreatedAt, &c.GroupNo, &c.OwnerID, &c.AvatarURL, &c.MemberCount)
+	`, id).Scan(
+		&c.ID, &c.Type, &c.Title, &c.CreatedAt, &c.GroupNo, &c.OwnerID, &c.AvatarURL, &c.MemberCount,
+		&joinMode,
+	)
 	if err != nil {
 		return nil, err
 	}
+	applyJoinMode(&c, joinMode)
 	return &c, nil
 }
 
@@ -821,40 +936,238 @@ func allocGroupNo(ctx context.Context, tx pgx.Tx) (string, error) {
 	return "", errors.New("failed to allocate group number")
 }
 
-func (s *Service) JoinGroupByNo(ctx context.Context, userID, groupNo string) (*Conversation, error) {
+func (s *Service) JoinGroupByNo(ctx context.Context, userID, groupNo, message string) (*JoinGroupResult, error) {
 	groupNo = strings.TrimSpace(groupNo)
 	if groupNo == "" {
 		return nil, errors.New("group not found")
 	}
+	message = strings.TrimSpace(message)
+	if len([]rune(message)) > 64 {
+		return nil, errors.New("message too long")
+	}
 	var c Conversation
+	var joinMode string
 	err := s.pool.QueryRow(ctx, `
-		SELECT id::text, type, title, created_at::text, group_no, owner_id::text, avatar_url
+		SELECT id::text, type, title, created_at::text, group_no, owner_id::text, avatar_url,
+			COALESCE(NULLIF(join_mode, ''), 'verify')
 		FROM conversations WHERE type = 'group' AND group_no = $1
-	`, groupNo).Scan(&c.ID, &c.Type, &c.Title, &c.CreatedAt, &c.GroupNo, &c.OwnerID, &c.AvatarURL)
+	`, groupNo).Scan(&c.ID, &c.Type, &c.Title, &c.CreatedAt, &c.GroupNo, &c.OwnerID, &c.AvatarURL, &joinMode)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, errors.New("group not found")
 		}
 		return nil, err
 	}
-	_, err = s.pool.Exec(ctx, `
-		INSERT INTO conversation_members (conversation_id, user_id) VALUES ($1, $2)
-		ON CONFLICT DO NOTHING
-	`, c.ID, userID)
+	applyJoinMode(&c, joinMode)
+	ok, err := s.IsMember(ctx, c.ID, userID)
 	if err != nil {
 		return nil, err
 	}
-	_, _ = s.pool.Exec(ctx, `
-		UPDATE conversation_members SET hidden_at = NULL
-		WHERE conversation_id = $1 AND user_id = $2
-	`, c.ID, userID)
+	if ok {
+		_, _ = s.pool.Exec(ctx, `
+			UPDATE conversation_members SET hidden_at = NULL
+			WHERE conversation_id = $1 AND user_id = $2
+		`, c.ID, userID)
+		_ = s.pool.QueryRow(ctx, `
+			SELECT COUNT(*)::int FROM conversation_members
+			WHERE conversation_id = $1 AND removed_at IS NULL
+		`, c.ID).Scan(&c.MemberCount)
+		s.annotateViewer(ctx, &c, userID)
+		return &JoinGroupResult{Status: "joined", Conversation: &c}, nil
+	}
+	if c.OwnerID == nil || *c.OwnerID == "" {
+		return nil, errors.New("group not found")
+	}
+	same, err := s.sameAutonomousDomain(ctx, userID, *c.OwnerID)
+	if err != nil {
+		return nil, err
+	}
+	if !same {
+		return nil, errors.New("group not found")
+	}
+	if c.JoinMode == JoinModeDeny {
+		return nil, errors.New("join not allowed")
+	}
+	if c.JoinMode == JoinModeAnyone {
+		added, err := s.restoreOrAddMember(ctx, c.ID, userID)
+		if err != nil {
+			return nil, err
+		}
+		_ = s.pool.QueryRow(ctx, `
+			SELECT COUNT(*)::int FROM conversation_members
+			WHERE conversation_id = $1 AND removed_at IS NULL
+		`, c.ID).Scan(&c.MemberCount)
+		s.annotateViewer(ctx, &c, userID)
+		return &JoinGroupResult{Status: "joined", NewlyJoined: added, Conversation: &c}, nil
+	}
+	var pending bool
 	_ = s.pool.QueryRow(ctx, `
-		SELECT COUNT(*)::int FROM conversation_members WHERE conversation_id = $1
-	`, c.ID).Scan(&c.MemberCount)
-	if c.OwnerID != nil && *c.OwnerID == userID {
-		c.IsOwner = true
+		SELECT EXISTS(
+			SELECT 1 FROM group_join_requests
+			WHERE conversation_id = $1 AND from_user_id = $2 AND status = 'pending'
+		)
+	`, c.ID, userID).Scan(&pending)
+	if pending {
+		return nil, errors.New("join request pending")
+	}
+	var req GroupJoinRequest
+	err = s.pool.QueryRow(ctx, `
+		INSERT INTO group_join_requests (conversation_id, from_user_id, message)
+		VALUES ($1, $2, $3)
+		RETURNING id::text, conversation_id::text, from_user_id::text, status, message, created_at::text
+	`, c.ID, userID, message).Scan(
+		&req.ID, &req.ConversationID, &req.FromUserID, &req.Status, &req.Message, &req.CreatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	req.Group = &Conversation{
+		ID: c.ID, Type: c.Type, Title: c.Title, GroupNo: c.GroupNo, AvatarURL: c.AvatarURL, JoinMode: c.JoinMode,
+	}
+	return &JoinGroupResult{Status: "pending", Request: &req}, nil
+}
+
+func (s *Service) ListGroupJoinRequests(ctx context.Context, conversationID, userID string) ([]GroupJoinRequest, error) {
+	ok, err := s.canManageGroup(ctx, conversationID, userID)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, errors.New("forbidden")
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT r.id::text, r.conversation_id::text, r.from_user_id::text, r.status, r.message, r.created_at::text,
+			u.id::text, u.username, u.email, u.hope_id, u.avatar_url,
+			ib.id::text, ib.username, ib.email, ib.hope_id, ib.avatar_url
+		FROM group_join_requests r
+		JOIN users u ON u.id = r.from_user_id
+		LEFT JOIN users ib ON ib.id = r.invited_by
+		WHERE r.conversation_id = $1 AND r.status = 'pending'
+		ORDER BY r.created_at DESC
+	`, conversationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []GroupJoinRequest{}
+	for rows.Next() {
+		var r GroupJoinRequest
+		var from Contact
+		var invID, invUser, invEmail *string
+		var invHope, invAvatar *string
+		if err := rows.Scan(
+			&r.ID, &r.ConversationID, &r.FromUserID, &r.Status, &r.Message, &r.CreatedAt,
+			&from.ID, &from.Username, &from.Email, &from.HopeID, &from.AvatarURL,
+			&invID, &invUser, &invEmail, &invHope, &invAvatar,
+		); err != nil {
+			return nil, err
+		}
+		r.FromUser = &from
+		if invID != nil && *invID != "" {
+			r.InvitedBy = &Contact{
+				ID: *invID, Username: derefStr(invUser), Email: derefStr(invEmail),
+				HopeID: invHope, AvatarURL: invAvatar,
+			}
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+func (s *Service) AcceptGroupJoinRequest(ctx context.Context, conversationID, actorID, requestID string) (*Contact, error) {
+	ok, err := s.canManageGroup(ctx, conversationID, actorID)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, errors.New("forbidden")
+	}
+	var fromID, reqConv string
+	err = s.pool.QueryRow(ctx, `
+		SELECT from_user_id::text, conversation_id::text FROM group_join_requests
+		WHERE id = $1 AND status = 'pending'
+	`, requestID).Scan(&fromID, &reqConv)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, errors.New("request not found")
+		}
+		return nil, err
+	}
+	if reqConv != conversationID {
+		return nil, errors.New("request not found")
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+	tag, err := tx.Exec(ctx, `
+		UPDATE group_join_requests
+		SET status = 'accepted', decided_by = $2, decided_at = now()
+		WHERE id = $1 AND status = 'pending'
+	`, requestID, actorID)
+	if err != nil {
+		return nil, err
+	}
+	if tag.RowsAffected() == 0 {
+		return nil, errors.New("request not found")
+	}
+	_, err = tx.Exec(ctx, `
+		INSERT INTO conversation_members (conversation_id, user_id, role)
+		VALUES ($1, $2, 'member')
+		ON CONFLICT (conversation_id, user_id) DO UPDATE
+		SET removed_at = NULL, remove_reason = NULL, hidden_at = NULL, role = 'member'
+	`, conversationID, fromID)
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	var c Contact
+	err = s.pool.QueryRow(ctx, `
+		SELECT id::text, username, email, hope_id, avatar_url FROM users WHERE id = $1
+	`, fromID).Scan(&c.ID, &c.Username, &c.Email, &c.HopeID, &c.AvatarURL)
+	if err != nil {
+		return nil, err
 	}
 	return &c, nil
+}
+
+func (s *Service) RejectGroupJoinRequest(ctx context.Context, conversationID, actorID, requestID string) error {
+	ok, err := s.canManageGroup(ctx, conversationID, actorID)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return errors.New("forbidden")
+	}
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE group_join_requests
+		SET status = 'rejected', decided_by = $3, decided_at = now()
+		WHERE id = $1 AND conversation_id = $2 AND status = 'pending'
+	`, requestID, conversationID, actorID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return errors.New("request not found")
+	}
+	return nil
+}
+
+func (s *Service) CancelGroupJoinRequest(ctx context.Context, userID, requestID string) error {
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE group_join_requests SET status = 'rejected', decided_at = now()
+		WHERE id = $1 AND from_user_id = $2 AND status = 'pending'
+	`, requestID, userID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return errors.New("request not found")
+	}
+	return nil
 }
 
 func (s *Service) LeaveGroup(ctx context.Context, conversationID, userID string) error {
@@ -880,11 +1193,11 @@ func (s *Service) LeaveGroup(ctx context.Context, conversationID, userID string)
 		return errors.New("forbidden")
 	}
 	if ownerID != nil && *ownerID == userID {
-		// 群主退群：转让给最早加入的其他成员，若无人则解散
+		// 群主退群：转让给最早加入的其他活跃成员，若无人则解散
 		var nextOwner *string
 		_ = s.pool.QueryRow(ctx, `
 			SELECT user_id::text FROM conversation_members
-			WHERE conversation_id = $1 AND user_id <> $2
+			WHERE conversation_id = $1 AND user_id <> $2 AND removed_at IS NULL
 			ORDER BY joined_at ASC LIMIT 1
 		`, conversationID, userID).Scan(&nextOwner)
 		if nextOwner == nil {
@@ -896,22 +1209,56 @@ func (s *Service) LeaveGroup(ctx context.Context, conversationID, userID string)
 			return err
 		}
 	}
+	// QQ 风格：主动退群后会话仍保留，可查看历史；用户可手动「删除会话」硬删
 	_, err = s.pool.Exec(ctx, `
-		DELETE FROM conversation_members WHERE conversation_id = $1 AND user_id = $2
+		UPDATE conversation_members
+		SET removed_at = now(), remove_reason = 'left', pinned_at = NULL, role = 'member'
+		WHERE conversation_id = $1 AND user_id = $2 AND removed_at IS NULL
 	`, conversationID, userID)
 	return err
 }
 
-// InviteToGroup adds friends into a group (owner or admin).
-func (s *Service) InviteToGroup(ctx context.Context, conversationID, userID string, memberIDs []string) (*Conversation, error) {
-	ok, err := s.canManageGroup(ctx, conversationID, userID)
+// InviteToGroup: 任意群成员可邀请好友（不允许加入时仅群主/管理员可邀请）。
+// anyone → 直接入群；verify → 普通成员邀请需管理员同意；deny → 仅管理员可直接邀请。
+func (s *Service) InviteToGroup(ctx context.Context, conversationID, userID string, memberIDs []string) (*InviteResult, error) {
+	ok, err := s.IsMember(ctx, conversationID, userID)
 	if err != nil {
 		return nil, err
 	}
 	if !ok {
 		return nil, errors.New("forbidden")
 	}
+	var typ string
+	var joinMode string
+	err = s.pool.QueryRow(ctx, `
+		SELECT type, COALESCE(NULLIF(join_mode, ''), 'verify')
+		FROM conversations WHERE id = $1
+	`, conversationID).Scan(&typ, &joinMode)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, errors.New("group not found")
+		}
+		return nil, err
+	}
+	if typ != "group" {
+		return nil, errors.New("not a group")
+	}
+	mode := normalizeJoinMode(joinMode)
+	canManage, err := s.canManageGroup(ctx, conversationID, userID)
+	if err != nil {
+		return nil, err
+	}
+	if mode == JoinModeDeny && !canManage {
+		return nil, errors.New("join not allowed")
+	}
+	directInvite := mode == JoinModeAnyone || canManage
+
+	var inviterName string
+	_ = s.pool.QueryRow(ctx, `SELECT username FROM users WHERE id = $1`, userID).Scan(&inviterName)
+
 	added := 0
+	pending := 0
+	var addedNames []string
 	for _, mid := range memberIDs {
 		mid = strings.TrimSpace(mid)
 		if mid == "" || mid == userID {
@@ -924,23 +1271,62 @@ func (s *Service) InviteToGroup(ctx context.Context, conversationID, userID stri
 		if !friends {
 			return nil, errors.New("not friends")
 		}
-		tag, err := s.pool.Exec(ctx, `
-			INSERT INTO conversation_members (conversation_id, user_id, role)
-			VALUES ($1, $2, 'member')
-			ON CONFLICT DO NOTHING
-		`, conversationID, mid)
+		already, err := s.IsMember(ctx, conversationID, mid)
 		if err != nil {
 			return nil, err
 		}
-		if tag.RowsAffected() > 0 {
-			added++
+		if already {
+			continue
 		}
-		_, _ = s.pool.Exec(ctx, `
-			UPDATE conversation_members SET hidden_at = NULL
-			WHERE conversation_id = $1 AND user_id = $2
-		`, conversationID, mid)
+		if directInvite {
+			addedOne, err := s.restoreOrAddMember(ctx, conversationID, mid)
+			if err != nil {
+				return nil, err
+			}
+			if addedOne {
+				added++
+				addedNames = append(addedNames, s.UsernameByID(ctx, mid))
+			}
+			_, _ = s.pool.Exec(ctx, `
+				UPDATE group_join_requests
+				SET status = 'accepted', decided_by = $3, decided_at = now()
+				WHERE conversation_id = $1 AND from_user_id = $2 AND status = 'pending'
+			`, conversationID, mid, userID)
+			continue
+		}
+		msg := "邀请入群"
+		if inviterName != "" {
+			msg = inviterName + " 邀请入群"
+		}
+		var pendingExists bool
+		_ = s.pool.QueryRow(ctx, `
+			SELECT EXISTS(
+				SELECT 1 FROM group_join_requests
+				WHERE conversation_id = $1 AND from_user_id = $2 AND status = 'pending'
+			)
+		`, conversationID, mid).Scan(&pendingExists)
+		if pendingExists {
+			_, err = s.pool.Exec(ctx, `
+				UPDATE group_join_requests
+				SET message = $3, invited_by = $4
+				WHERE conversation_id = $1 AND from_user_id = $2 AND status = 'pending'
+			`, conversationID, mid, msg, userID)
+			if err != nil {
+				return nil, err
+			}
+			pending++
+			continue
+		}
+		_, err = s.pool.Exec(ctx, `
+			INSERT INTO group_join_requests (conversation_id, from_user_id, message, invited_by)
+			VALUES ($1, $2, $3, $4)
+		`, conversationID, mid, msg, userID)
+		if err != nil {
+			return nil, err
+		}
+		pending++
 	}
-	if added == 0 {
+	if added == 0 && pending == 0 {
 		return nil, errors.New("no new members")
 	}
 	c, err := s.getConversation(ctx, conversationID)
@@ -948,7 +1334,11 @@ func (s *Service) InviteToGroup(ctx context.Context, conversationID, userID stri
 		return nil, err
 	}
 	s.annotateViewer(ctx, c, userID)
-	return c, nil
+	res := &InviteResult{Conversation: c, Added: added, Pending: pending}
+	if len(addedNames) > 0 {
+		res.AddedNames = addedNames
+	}
+	return res, nil
 }
 
 // KickFromGroup: owner can remove anyone except self; admin can remove regular members only.
@@ -984,7 +1374,9 @@ func (s *Service) KickFromGroup(ctx context.Context, conversationID, actorID, me
 		}
 	}
 	tag, err := s.pool.Exec(ctx, `
-		DELETE FROM conversation_members WHERE conversation_id = $1 AND user_id = $2
+		UPDATE conversation_members
+		SET removed_at = now(), remove_reason = 'kicked', pinned_at = NULL
+		WHERE conversation_id = $1 AND user_id = $2 AND removed_at IS NULL
 	`, conversationID, memberID)
 	if err != nil {
 		return err
@@ -1057,26 +1449,69 @@ func (s *Service) RenameGroup(ctx context.Context, conversationID, userID, title
 	if title == "" {
 		return nil, errors.New("group title required")
 	}
-	if utf8Len(title) > 32 {
-		return nil, errors.New("group title too long")
-	}
+	t := title
+	c, _, err := s.PatchGroup(ctx, conversationID, userID, &t, nil, nil)
+	return c, err
+}
+
+// PatchGroup updates title / join mode (owner or admin).
+func (s *Service) PatchGroup(
+	ctx context.Context,
+	conversationID, userID string,
+	title *string,
+	joinMode *string,
+	_ *string, // legacy announcement ignored; use CreateAnnouncement
+) (*Conversation, *Message, error) {
 	ok, err := s.canManageGroup(ctx, conversationID, userID)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if !ok {
-		return nil, errors.New("forbidden")
+		return nil, nil, errors.New("forbidden")
 	}
-	_, err = s.pool.Exec(ctx, `UPDATE conversations SET title = $1 WHERE id = $2`, title, conversationID)
-	if err != nil {
-		return nil, err
+	if title == nil && joinMode == nil {
+		return nil, nil, errors.New("nothing to update")
+	}
+	if title != nil {
+		t := strings.TrimSpace(*title)
+		if t == "" {
+			return nil, nil, errors.New("group title required")
+		}
+		if utf8Len(t) > 32 {
+			return nil, nil, errors.New("group title too long")
+		}
+		_, err = s.pool.Exec(ctx, `UPDATE conversations SET title = $1 WHERE id = $2`, t, conversationID)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+	if joinMode != nil {
+		mode := strings.TrimSpace(*joinMode)
+		if mode != JoinModeAnyone && mode != JoinModeVerify && mode != JoinModeDeny {
+			return nil, nil, errors.New("invalid join mode")
+		}
+		_, err = s.pool.Exec(ctx, `
+			UPDATE conversations
+			SET join_mode = $1, invite_requires_approval = ($1 = 'verify')
+			WHERE id = $2
+		`, mode, conversationID)
+		if err != nil {
+			return nil, nil, err
+		}
 	}
 	c, err := s.getConversation(ctx, conversationID)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	s.annotateViewer(ctx, c, userID)
-	return c, nil
+	return c, nil, nil
+}
+
+func derefStr(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
 }
 
 func (s *Service) ListGroupMembers(ctx context.Context, conversationID, userID string) ([]Contact, error) {
@@ -1091,14 +1526,20 @@ func (s *Service) ListGroupMembers(ctx context.Context, conversationID, userID s
 	_ = s.pool.QueryRow(ctx, `SELECT owner_id::text FROM conversations WHERE id = $1`, conversationID).Scan(&ownerID)
 	rows, err := s.pool.Query(ctx, `
 		SELECT u.id::text, u.username, u.email, u.hope_id, u.avatar_url,
-			COALESCE(m.role, 'member'), COALESCE(m.member_title, '')
+			COALESCE(m.role, 'member'), COALESCE(m.member_title, ''),
+			EXISTS(SELECT 1 FROM friendships f WHERE f.user_id = $2 AND f.friend_id = u.id),
+			COALESCE((SELECT f.remark FROM friendships f WHERE f.user_id = $2 AND f.friend_id = u.id), '')
 		FROM conversation_members m
 		JOIN users u ON u.id = m.user_id
-		WHERE m.conversation_id = $1
+		WHERE m.conversation_id = $1 AND m.removed_at IS NULL
 		ORDER BY
-			CASE WHEN COALESCE(m.role, 'member') = 'admin' THEN 0 ELSE 1 END,
+			CASE
+				WHEN $3::text IS NOT NULL AND u.id::text = $3 THEN 0
+				WHEN COALESCE(m.role, 'member') = 'admin' THEN 1
+				ELSE 2
+			END,
 			m.joined_at
-	`, conversationID)
+	`, conversationID, userID, ownerID)
 	if err != nil {
 		return nil, err
 	}
@@ -1106,7 +1547,10 @@ func (s *Service) ListGroupMembers(ctx context.Context, conversationID, userID s
 	var out []Contact
 	for rows.Next() {
 		var c Contact
-		if err := rows.Scan(&c.ID, &c.Username, &c.Email, &c.HopeID, &c.AvatarURL, &c.Role, &c.MemberTitle); err != nil {
+		if err := rows.Scan(
+			&c.ID, &c.Username, &c.Email, &c.HopeID, &c.AvatarURL, &c.Role, &c.MemberTitle,
+			&c.IsFriend, &c.Remark,
+		); err != nil {
 			return nil, err
 		}
 		c.IsAdmin = c.Role == "admin"
@@ -1225,6 +1669,18 @@ func (s *Service) IsMember(ctx context.Context, conversationID, userID string) (
 	err := s.pool.QueryRow(ctx, `
 		SELECT EXISTS(
 			SELECT 1 FROM conversation_members
+			WHERE conversation_id = $1 AND user_id = $2 AND removed_at IS NULL
+		)
+	`, conversationID, userID).Scan(&ok)
+	return ok, err
+}
+
+// CanAccessConversation: active members or soft-removed (kicked) may still read history.
+func (s *Service) CanAccessConversation(ctx context.Context, conversationID, userID string) (bool, error) {
+	var ok bool
+	err := s.pool.QueryRow(ctx, `
+		SELECT EXISTS(
+			SELECT 1 FROM conversation_members
 			WHERE conversation_id = $1 AND user_id = $2
 		)
 	`, conversationID, userID).Scan(&ok)
@@ -1235,7 +1691,7 @@ func (s *Service) memberRole(ctx context.Context, conversationID, userID string)
 	var role string
 	err := s.pool.QueryRow(ctx, `
 		SELECT COALESCE(role, 'member') FROM conversation_members
-		WHERE conversation_id = $1 AND user_id = $2
+		WHERE conversation_id = $1 AND user_id = $2 AND removed_at IS NULL
 	`, conversationID, userID).Scan(&role)
 	if err != nil {
 		return "", err
@@ -1254,6 +1710,7 @@ func (s *Service) annotateViewer(ctx context.Context, c *Conversation, userID st
 	if err == nil && role == "admin" {
 		c.IsAdmin = true
 	}
+	s.fillAnnouncementMeta(ctx, c, userID)
 }
 
 // canManageGroup: 群主或管理员可改群名/头像、邀请、踢普通成员。
@@ -1687,17 +2144,21 @@ func (s *Service) SearchGroup(ctx context.Context, viewerID, groupNo string) (*P
 	}
 	var g PublicGroup
 	var ownerID *string
+	var joinMode string
 	err := s.pool.QueryRow(ctx, `
 		SELECT id::text, title, group_no, avatar_url, owner_id::text,
-			(SELECT COUNT(*)::int FROM conversation_members cm WHERE cm.conversation_id = conversations.id)
+			COALESCE(NULLIF(join_mode, ''), 'verify'),
+			(SELECT COUNT(*)::int FROM conversation_members cm
+			 WHERE cm.conversation_id = conversations.id AND cm.removed_at IS NULL)
 		FROM conversations WHERE type = 'group' AND group_no = $1
-	`, groupNo).Scan(&g.ID, &g.Title, &g.GroupNo, &g.AvatarURL, &ownerID, &g.MemberCount)
+	`, groupNo).Scan(&g.ID, &g.Title, &g.GroupNo, &g.AvatarURL, &ownerID, &joinMode, &g.MemberCount)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, errors.New("group not found")
 		}
 		return nil, err
 	}
+	g.JoinMode = normalizeJoinMode(joinMode)
 	ok, err := s.IsMember(ctx, g.ID, viewerID)
 	if err != nil {
 		return nil, err
@@ -1714,6 +2175,12 @@ func (s *Service) SearchGroup(ctx context.Context, viewerID, groupNo string) (*P
 		if !same {
 			return nil, errors.New("group not found")
 		}
+		_ = s.pool.QueryRow(ctx, `
+			SELECT EXISTS(
+				SELECT 1 FROM group_join_requests
+				WHERE conversation_id = $1 AND from_user_id = $2 AND status = 'pending'
+			)
+		`, g.ID, viewerID).Scan(&g.JoinPending)
 	}
 	return &g, nil
 }
@@ -1772,7 +2239,8 @@ func (s *Service) SetFriendRemark(ctx context.Context, userID, friendID, remark 
 
 func (s *Service) MemberUserIDs(ctx context.Context, conversationID string) ([]string, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT user_id::text FROM conversation_members WHERE conversation_id = $1
+		SELECT user_id::text FROM conversation_members
+		WHERE conversation_id = $1 AND removed_at IS NULL
 	`, conversationID)
 	if err != nil {
 		return nil, err
@@ -1793,4 +2261,178 @@ func (s *Service) UsernameByID(ctx context.Context, userID string) string {
 	var name string
 	_ = s.pool.QueryRow(ctx, `SELECT username FROM users WHERE id = $1`, userID).Scan(&name)
 	return name
+}
+
+// PostSystemMessage writes a centered tip in the chat (type=system).
+func (s *Service) PostSystemMessage(ctx context.Context, conversationID, actorID, body string) (*Message, error) {
+	body = strings.TrimSpace(body)
+	if body == "" {
+		return nil, errors.New("empty message")
+	}
+	sealed, err := crypto.Seal(s.key, []byte(body))
+	if err != nil {
+		return nil, err
+	}
+	var m Message
+	var sealedOut string
+	err = s.pool.QueryRow(ctx, `
+		INSERT INTO messages (conversation_id, sender_id, type, body_sealed)
+		VALUES ($1, $2, 'system', $3)
+		RETURNING id::text, conversation_id::text, sender_id::text, type, body_sealed, created_at::text
+	`, conversationID, actorID, sealed).Scan(
+		&m.ID, &m.ConversationID, &m.SenderID, &m.Type, &sealedOut, &m.CreatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	m.Body = body
+	return &m, nil
+}
+
+func (s *Service) restoreOrAddMember(ctx context.Context, conversationID, userID string) (bool, error) {
+	var wasActive bool
+	_ = s.pool.QueryRow(ctx, `
+		SELECT EXISTS(
+			SELECT 1 FROM conversation_members
+			WHERE conversation_id = $1 AND user_id = $2 AND removed_at IS NULL
+		)
+	`, conversationID, userID).Scan(&wasActive)
+	if wasActive {
+		_, _ = s.pool.Exec(ctx, `
+			UPDATE conversation_members SET hidden_at = NULL
+			WHERE conversation_id = $1 AND user_id = $2
+		`, conversationID, userID)
+		return false, nil
+	}
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO conversation_members (conversation_id, user_id, role)
+		VALUES ($1, $2, 'member')
+		ON CONFLICT (conversation_id, user_id) DO UPDATE
+		SET removed_at = NULL, remove_reason = NULL, hidden_at = NULL, role = 'member'
+	`, conversationID, userID)
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// GroupManagerIDs returns owner + admins for notifications.
+func (s *Service) GroupManagerIDs(ctx context.Context, conversationID string) ([]string, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT owner_id::text FROM conversations WHERE id = $1 AND owner_id IS NOT NULL
+		UNION
+		SELECT user_id::text FROM conversation_members
+		WHERE conversation_id = $1 AND removed_at IS NULL AND COALESCE(role, 'member') = 'admin'
+	`, conversationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		if id != "" {
+			out = append(out, id)
+		}
+	}
+	return out, rows.Err()
+}
+
+// ListManagedGroupJoinRequests lists pending join requests for all groups the user manages.
+func (s *Service) ListManagedGroupJoinRequests(ctx context.Context, userID string) ([]GroupJoinRequest, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT r.id::text, r.conversation_id::text, r.from_user_id::text, r.status, r.message, r.created_at::text,
+			u.id::text, u.username, u.email, u.hope_id, u.avatar_url,
+			ib.id::text, ib.username, ib.email, ib.hope_id, ib.avatar_url,
+			c.id::text, c.type, c.title, c.created_at::text, c.group_no, c.owner_id::text, c.avatar_url
+		FROM group_join_requests r
+		JOIN conversations c ON c.id = r.conversation_id AND c.type = 'group'
+		JOIN users u ON u.id = r.from_user_id
+		LEFT JOIN users ib ON ib.id = r.invited_by
+		WHERE r.status = 'pending'
+		  AND (
+			c.owner_id = $1::uuid
+			OR EXISTS (
+				SELECT 1 FROM conversation_members m
+				WHERE m.conversation_id = c.id AND m.user_id = $1::uuid
+				  AND m.removed_at IS NULL AND COALESCE(m.role, 'member') = 'admin'
+			)
+		  )
+		ORDER BY r.created_at DESC
+	`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []GroupJoinRequest{}
+	for rows.Next() {
+		var r GroupJoinRequest
+		var from Contact
+		var invID, invUser, invEmail *string
+		var invHope, invAvatar *string
+		var g Conversation
+		if err := rows.Scan(
+			&r.ID, &r.ConversationID, &r.FromUserID, &r.Status, &r.Message, &r.CreatedAt,
+			&from.ID, &from.Username, &from.Email, &from.HopeID, &from.AvatarURL,
+			&invID, &invUser, &invEmail, &invHope, &invAvatar,
+			&g.ID, &g.Type, &g.Title, &g.CreatedAt, &g.GroupNo, &g.OwnerID, &g.AvatarURL,
+		); err != nil {
+			return nil, err
+		}
+		r.FromUser = &from
+		r.Group = &g
+		if invID != nil && *invID != "" {
+			r.InvitedBy = &Contact{
+				ID: *invID, Username: derefStr(invUser), Email: derefStr(invEmail),
+				HopeID: invHope, AvatarURL: invAvatar,
+			}
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// RemoveFriend deletes the friendship both ways (QQ-style).
+// DM sessions stay visible (soft-removed) so both sides can still read history.
+func (s *Service) RemoveFriend(ctx context.Context, userID, friendID string) error {
+	friendID = strings.TrimSpace(friendID)
+	if friendID == "" || friendID == userID {
+		return errors.New("user not found")
+	}
+	tag, err := s.pool.Exec(ctx, `
+		DELETE FROM friendships
+		WHERE (user_id = $1 AND friend_id = $2) OR (user_id = $2 AND friend_id = $1)
+	`, userID, friendID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return errors.New("not friends")
+	}
+	_, _ = s.pool.Exec(ctx, `
+		UPDATE friend_requests SET status = 'rejected', decided_at = now()
+		WHERE status = 'pending'
+		  AND ((from_user_id = $1 AND to_user_id = $2) OR (from_user_id = $2 AND to_user_id = $1))
+	`, userID, friendID)
+	_, _ = s.pool.Exec(ctx, `
+		UPDATE conversation_members mem
+		SET removed_at = now(), remove_reason = 'unfriended', pinned_at = NULL, hidden_at = NULL
+		FROM conversations c
+		WHERE mem.conversation_id = c.id
+		  AND c.type = 'dm'
+		  AND mem.removed_at IS NULL
+		  AND mem.user_id IN ($1, $2)
+		  AND EXISTS (
+			SELECT 1 FROM conversation_members a
+			WHERE a.conversation_id = c.id AND a.user_id = $1
+		  )
+		  AND EXISTS (
+			SELECT 1 FROM conversation_members b
+			WHERE b.conversation_id = c.id AND b.user_id = $2
+		  )
+	`, userID, friendID)
+	return nil
 }

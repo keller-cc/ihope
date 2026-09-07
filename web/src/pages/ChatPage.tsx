@@ -10,6 +10,8 @@ import {
   type Contact,
   type Conversation,
   type FriendRequest,
+  type GroupAnnouncement,
+  type GroupJoinRequest,
   type Message,
   type QQStatus,
   type User,
@@ -22,7 +24,9 @@ import {
   ContactList,
   FriendProfile,
   FriendRequestsPane,
+  GroupJoinRequestsPane,
   GroupProfile,
+  MemberProfile,
   SessionList,
 } from '@/components/contacts'
 import {
@@ -35,6 +39,7 @@ import { UserDrawer } from '@/components/UserDrawer'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { useVisualViewportLock } from '@/hooks/useVisualViewportLock'
 import { callController } from '@/lib/call/CallController'
+import { userSocket } from '@/lib/call/userSocket'
 import { chatBgStyle, chatThemeSummary, chatThemeVars, resolveUserTheme, usesFrameWallpaper } from '@/lib/chatBg'
 import { conversationTitle, initialOf } from '@/lib/chatFormat'
 
@@ -53,7 +58,9 @@ type RightSurface =
   | { kind: 'history' }
   | { kind: 'friendProfile'; profile: Contact }
   | { kind: 'groupProfile'; group: Conversation }
+  | { kind: 'memberProfile'; member: Contact; group: Conversation; backTo?: 'group' | 'chat' }
   | { kind: 'friendRequests' }
+  | { kind: 'groupJoinRequests' }
   | { kind: 'settings' }
 
 export function ChatPage({ user, onUserChange, onLogout }: Props) {
@@ -73,6 +80,7 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
   const [groups, setGroups] = useState<Conversation[]>([])
   const [incoming, setIncoming] = useState<FriendRequest[]>([])
   const [outgoing, setOutgoing] = useState<FriendRequest[]>([])
+  const [groupJoins, setGroupJoins] = useState<GroupJoinRequest[]>([])
   const [reqBusyId, setReqBusyId] = useState<string | null>(null)
   const [activeId, setActiveId] = useState<string | null>(null)
   const [messages, setMessages] = useState<Message[]>([])
@@ -120,15 +128,17 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
 
   const loadContacts = useCallback(async () => {
     try {
-      const [f, g, req] = await Promise.all([
+      const [f, g, req, joins] = await Promise.all([
         api.listFriends(),
         api.listGroups(),
         api.listFriendRequests(),
+        api.listManagedGroupJoinRequests().catch(() => ({ requests: [] as GroupJoinRequest[] })),
       ])
       setFriends(f.friends)
       setGroups(g.groups)
       setIncoming(req.incoming || [])
       setOutgoing(req.outgoing || [])
+      setGroupJoins(joins.requests || [])
     } catch (e) {
       MessagePlugin.error(apiErrorMessage(e, '加载联系人失败'))
     }
@@ -159,6 +169,70 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
       }
     })
   }, [activeId, right.kind, loadConversations, loadMessages])
+
+  useEffect(() => {
+    userSocket.connect()
+    return userSocket.on((data) => {
+      const t = String(data.type || '')
+      if (t === 'friend.request') {
+        MessagePlugin.info('收到一条好友申请')
+        void loadContacts()
+        return
+      }
+      if (t === 'group.join_request') {
+        const cid = String(data.conversationId || '')
+        const conv =
+          conversations.find((c) => c.id === cid) || groups.find((c) => c.id === cid)
+        // 仅群主/管理员应收到；若本地能判定且无权限则忽略
+        if (conv && !(conv.isOwner || conv.isAdmin)) return
+        const req = data.request as { group?: { title?: string } } | undefined
+        const title = req?.group?.title || conv?.title || '群聊'
+        MessagePlugin.info(`「${title}」有新的入群申请`)
+        void loadContacts()
+        return
+      }
+      if (t === 'group.announcement') {
+        const cid = String(data.conversationId || '')
+        const ann = data.announcement as GroupAnnouncement | undefined
+        if (cid && ann?.id) {
+          const patch = (c: Conversation): Conversation =>
+            c.id === cid
+              ? {
+                  ...c,
+                  announcement: ann.body,
+                  announcementCount: (c.announcementCount || 0) + 1,
+                  pendingAnnouncement:
+                    ann.authorId === user.id ? c.pendingAnnouncement ?? null : ann,
+                }
+              : c
+          setConversations((prev) => prev.map(patch))
+          setGroups((prev) => prev.map(patch))
+          if (ann.authorId !== user.id) {
+            MessagePlugin.info('有新的群公告')
+          }
+        }
+        return
+      }
+      if (t === 'group.kicked') {
+        const cid = String(data.conversationId || '')
+        const tip = String(data.body || '你已被移出群聊')
+        MessagePlugin.warning(tip)
+        void loadConversations()
+        void loadContacts()
+        if (cid && activeId === cid) {
+          const msg = data.message as Message | undefined
+          if (msg?.id) {
+            setMessages((prev) => (prev.some((m) => m.id === msg.id) ? prev : [...prev, msg]))
+          }
+          setConversations((prev) =>
+            prev.map((c) =>
+              c.id === cid ? { ...c, removed: true, removeReason: 'kicked' } : c,
+            ),
+          )
+        }
+      }
+    })
+  }, [activeId, conversations, groups, loadContacts, loadConversations])
 
   const loadOlderMessages = async () => {
     if (!activeId || !messages.length || loadingMore) return
@@ -478,6 +552,41 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
     }
   }
 
+  const openGroupMember = async (g: Conversation, memberId: string) => {
+    try {
+      const membersRes = await api.listGroupMembers(g.id)
+      setGroupMembersList(membersRes.members)
+      const member = membersRes.members.find((m) => m.id === memberId)
+      if (!member) {
+        MessagePlugin.warning('该成员不在本群')
+        return
+      }
+      const latest =
+        conversations.find((x) => x.id === g.id) ||
+        groups.find((x) => x.id === g.id) ||
+        g
+      setRight({
+        kind: 'memberProfile',
+        member,
+        group: { ...latest, memberCount: membersRes.members.length },
+        backTo: 'chat',
+      })
+      setMobileDetail(true)
+    } catch (e) {
+      MessagePlugin.error(apiErrorMessage(e, '加载成员资料失败'))
+    }
+  }
+
+  const refreshMemberProfile = async (groupId: string, memberId: string) => {
+    const membersRes = await api.listGroupMembers(groupId)
+    setGroupMembersList(membersRes.members)
+    const member = membersRes.members.find((m) => m.id === memberId)
+    const g =
+      groups.find((x) => x.id === groupId) ||
+      conversations.find((x) => x.id === groupId)
+    return { members: membersRes.members, member, group: g }
+  }
+
   const totalUnread = conversations.reduce(
     (n, c) => n + (c.muted ? 0 : c.unreadCount || 0),
     0,
@@ -589,7 +698,7 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
               )}
             </button>
             {navBtn('messages', '消息', 'msg', totalUnread)}
-            {navBtn('contacts', '联系人', 'contacts', incoming.length)}
+            {navBtn('contacts', '联系人', 'contacts', incoming.length + groupJoins.length)}
             <button
               type="button"
               className={right.kind === 'settings' ? 'im-nav-btn is-active' : 'im-nav-btn'}
@@ -719,7 +828,8 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
                 onSection={setContactSection}
                 friends={friends}
                 groups={groups}
-                incomingCount={incoming.length}
+                friendRequestCount={incoming.length}
+                groupJoinCount={groupJoins.length}
                 filter={filter}
                 selectedFriendId={
                   right.kind === 'friendProfile' ? right.profile.id : null
@@ -728,15 +838,22 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
                   right.kind === 'groupProfile' ? right.group.id : null
                 }
                 requestsOpen={right.kind === 'friendRequests'}
+                groupJoinsOpen={right.kind === 'groupJoinRequests'}
                 onSelectFriend={(f) => {
                   setRight({ kind: 'friendProfile', profile: f })
                   setMobileDetail(true)
                   setContactSection('friends')
                 }}
                 onSelectGroup={(g) => void openGroupProfile(g)}
-                onOpenRequests={() => {
+                onOpenFriendRequests={() => {
                   setContactSection('friends')
                   setRight({ kind: 'friendRequests' })
+                  setMobileDetail(true)
+                  void loadContacts()
+                }}
+                onOpenGroupJoins={() => {
+                  setContactSection('groups')
+                  setRight({ kind: 'groupJoinRequests' })
                   setMobileDetail(true)
                   void loadContacts()
                 }}
@@ -950,6 +1067,13 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
               void loadContacts()
               void loadConversations()
             }}
+            onGroupUpdated={(g) => {
+              setRight({ kind: 'groupProfile', group: { ...right.group, ...g } })
+              const apply = (c: Conversation) =>
+                c.id === g.id ? { ...c, ...g } : c
+              setConversations((prev) => prev.map(apply))
+              setGroups((prev) => prev.map(apply))
+            }}
             onMembersChanged={async () => {
               try {
                 const membersRes = await api.listGroupMembers(right.group.id)
@@ -967,6 +1091,15 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
               } catch (e) {
                 MessagePlugin.error(apiErrorMessage(e, '刷新成员失败'))
               }
+            }}
+            onSelectMember={(m) => {
+              setRight({
+                kind: 'memberProfile',
+                member: m,
+                group: right.group,
+                backTo: 'group',
+              })
+              setMobileDetail(true)
             }}
             onTogglePin={async () => {
               try {
@@ -1009,14 +1142,15 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
             }}
             onEnterChat={() => openChat(right.group.id, right.group)}
             onLeave={async () => {
+              const gid = right.group.id
               try {
-                await api.leaveGroup(right.group.id)
+                await api.leaveGroup(gid)
                 MessagePlugin.success('已退出群聊')
-                if (activeId === right.group.id) setActiveId(null)
-                setRight({ kind: 'empty' })
-                setMobileDetail(false)
                 await loadContacts()
                 await loadConversations()
+                setActiveId(gid)
+                setRight({ kind: 'chat' })
+                setMobileDetail(true)
               } catch (e) {
                 MessagePlugin.error(apiErrorMessage(e, '退出失败'))
               }
@@ -1033,6 +1167,60 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
               setMobileDetail(false)
             }}
             showBack={isMobile || !!activeId}
+          />
+        )}
+
+        {right.kind === 'memberProfile' && (
+          <MemberProfile
+            member={right.member}
+            group={right.group}
+            selfId={user.id}
+            showBack
+            onBack={() => {
+              if (right.backTo === 'chat') {
+                setRight({ kind: 'chat' })
+                return
+              }
+              setRight({ kind: 'groupProfile', group: right.group })
+            }}
+            onMessage={() => void startDM(right.member.username)}
+            onFriendAdded={() => {
+              void loadContacts()
+            }}
+            onMembersChanged={async () => {
+              try {
+                const refreshed = await refreshMemberProfile(right.group.id, right.member.id)
+                if (!refreshed.member) {
+                  if (right.backTo === 'chat') {
+                    setRight({ kind: 'chat' })
+                  } else {
+                    setRight({
+                      kind: 'groupProfile',
+                      group: {
+                        ...right.group,
+                        ...(refreshed.group || {}),
+                        memberCount: refreshed.members.length,
+                      },
+                    })
+                  }
+                } else {
+                  setRight({
+                    kind: 'memberProfile',
+                    member: refreshed.member,
+                    group: {
+                      ...right.group,
+                      ...(refreshed.group || {}),
+                      memberCount: refreshed.members.length,
+                    },
+                    backTo: right.backTo,
+                  })
+                }
+                await loadContacts()
+                await loadConversations()
+              } catch (e) {
+                MessagePlugin.error(apiErrorMessage(e, '刷新成员失败'))
+              }
+            }}
           />
         )}
 
@@ -1066,6 +1254,31 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
                 await loadConversations()
               } catch (e) {
                 MessagePlugin.error(apiErrorMessage(e, '保存失败'))
+              }
+            }}
+            onDeleteFriend={async () => {
+              if (!right.profile.id) return
+              const peer = right.profile.username
+              try {
+                await api.removeFriend(right.profile.id)
+                MessagePlugin.success('已删除好友')
+                await loadContacts()
+                const res = await api.listConversations()
+                setConversations(res.conversations)
+                const dm = res.conversations.find(
+                  (c) => c.type === 'dm' && c.peerUsername === peer,
+                )
+                if (dm) {
+                  setActiveId(dm.id)
+                  setRight({ kind: 'chat' })
+                  setMobileDetail(true)
+                } else {
+                  setRight({ kind: 'empty' })
+                  setMobileDetail(false)
+                }
+              } catch (e) {
+                MessagePlugin.error(apiErrorMessage(e, '删除失败'))
+                throw e
               }
             }}
             onTogglePin={
@@ -1193,6 +1406,52 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
           />
         )}
 
+        {right.kind === 'groupJoinRequests' && (
+          <GroupJoinRequestsPane
+            requests={groupJoins}
+            busyId={reqBusyId}
+            onBack={
+              isMobile
+                ? () => {
+                    setRight({ kind: 'empty' })
+                    setMobileDetail(false)
+                  }
+                : undefined
+            }
+            onOpenGroup={(conversationId) => {
+              const g =
+                groups.find((x) => x.id === conversationId) ||
+                conversations.find((x) => x.id === conversationId)
+              if (g) void openGroupProfile(g)
+            }}
+            onAccept={async (conversationId, requestId) => {
+              setReqBusyId(requestId)
+              try {
+                await api.acceptGroupJoinRequest(conversationId, requestId)
+                MessagePlugin.success('已同意入群')
+                await loadContacts()
+                await loadConversations()
+              } catch (e) {
+                MessagePlugin.error(apiErrorMessage(e, '操作失败'))
+              } finally {
+                setReqBusyId(null)
+              }
+            }}
+            onReject={async (conversationId, requestId) => {
+              setReqBusyId(requestId)
+              try {
+                await api.rejectGroupJoinRequest(conversationId, requestId)
+                MessagePlugin.success('已拒绝')
+                await loadContacts()
+              } catch (e) {
+                MessagePlugin.error(apiErrorMessage(e, '操作失败'))
+              } finally {
+                setReqBusyId(null)
+              }
+            }}
+          />
+        )}
+
         {right.kind === 'history' && activeId && active && (
           <ChatHistoryPanel
             conversation={active}
@@ -1274,6 +1533,33 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
                     }
                   : undefined
             }
+            onOpenSender={
+              active?.type === 'group'
+                ? (senderId) => void openGroupMember(active, senderId)
+                : active?.type === 'dm' && active.peerUsername
+                  ? (senderId) => {
+                      if (senderId === user.id) return
+                      const peer = active.peerUsername as string
+                      const friend = friends.find((f) => f.username === peer)
+                      if (friend) {
+                        setRight({ kind: 'friendProfile', profile: friend })
+                        setMobileDetail(true)
+                      } else {
+                        const title = (active.title || '').trim()
+                        setRight({
+                          kind: 'friendProfile',
+                          profile: {
+                            id: '',
+                            username: peer,
+                            remark: title && title !== peer ? title : undefined,
+                            avatarUrl: active.peerAvatarUrl,
+                          },
+                        })
+                        setMobileDetail(true)
+                      }
+                    }
+                  : undefined
+            }
             onVoiceCall={
               activeId
                 ? () => setCallSetup({ kind: 'voice', conversationId: activeId })
@@ -1284,6 +1570,13 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
                 ? () => setCallSetup({ kind: 'video', conversationId: activeId })
                 : undefined
             }
+            onConversationPatch={(patch) => {
+              if (!activeId) return
+              const apply = (c: Conversation) =>
+                c.id === activeId ? { ...c, ...patch } : c
+              setConversations((prev) => prev.map(apply))
+              setGroups((prev) => prev.map(apply))
+            }}
             listRef={listRef}
             showBack={isMobile}
             focusMessageId={focusMessageId}
@@ -1305,7 +1598,7 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
         {isMobile && (
           <nav className="im-tabbar" aria-label="底部导航">
             {navBtn('messages', '消息', 'msg', totalUnread)}
-            {navBtn('contacts', '联系人', 'contacts', incoming.length)}
+            {navBtn('contacts', '联系人', 'contacts', incoming.length + groupJoins.length)}
           </nav>
         )}
       </div>

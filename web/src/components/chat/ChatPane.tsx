@@ -12,7 +12,7 @@ import {
   VideoCamera1Icon,
 } from 'tdesign-icons-react'
 import { Button, Dialog, MessagePlugin, Popup, Textarea } from 'tdesign-react'
-import type { Conversation, Message, User } from '@/api'
+import { api, type Conversation, type GroupAnnouncement, type Message, type User } from '@/api'
 import {
   conversationTitle,
   formatFileSize,
@@ -51,8 +51,10 @@ type Props = {
   onLoadMore?: () => void
   onBack: () => void
   onOpenProfile?: () => void
+  onOpenSender?: (senderId: string) => void
   onVoiceCall?: () => void
   onVideoCall?: () => void
+  onConversationPatch?: (patch: Partial<Conversation>) => void
   listRef: React.RefObject<HTMLDivElement | null>
   showBack: boolean
   focusMessageId?: string | null
@@ -148,8 +150,10 @@ export function ChatPane({
   onLoadMore,
   onBack,
   onOpenProfile,
+  onOpenSender,
   onVoiceCall,
   onVideoCall,
+  onConversationPatch,
   listRef,
   showBack,
   focusMessageId,
@@ -168,6 +172,42 @@ export function ChatPane({
   const [emojiOpen, setEmojiOpen] = useState(false)
   const [menu, setMenu] = useState<MsgMenu | null>(null)
   const [forwardDetail, setForwardDetail] = useState<Message | null>(null)
+  const [announceOpen, setAnnounceOpen] = useState(false)
+  const [viewingAnn, setViewingAnn] = useState<GroupAnnouncement | null>(null)
+  const pendingAnn = conversation?.pendingAnnouncement || null
+  const annAcking = useRef<string | null>(null)
+
+  const openPendingAnnouncement = () => {
+    if (!pendingAnn) return
+    setViewingAnn(pendingAnn)
+    setAnnounceOpen(true)
+  }
+
+  useEffect(() => {
+    if (!announceOpen || !conversation || !viewingAnn || viewingAnn.acked) return
+    if (annAcking.current === viewingAnn.id) return
+    annAcking.current = viewingAnn.id
+    const cid = conversation.id
+    const aid = viewingAnn.id
+    void (async () => {
+      try {
+        await api.ackAnnouncement(cid, aid)
+        let next: GroupAnnouncement | null = null
+        try {
+          const res = await api.listAnnouncements(cid)
+          next = res.announcements.find((a) => !a.acked && a.id !== aid) || null
+        } catch {
+          next = null
+        }
+        onConversationPatch?.({ pendingAnnouncement: next })
+      } catch {
+        /* keep banner if ack failed */
+      } finally {
+        if (annAcking.current === aid) annAcking.current = null
+      }
+    })()
+  }, [announceOpen, conversation, viewingAnn, onConversationPatch])
+
   const [voiceMode, setVoiceMode] = useState(false)
   const [recording, setRecording] = useState(false)
   const [willCancel, setWillCancel] = useState(false)
@@ -569,6 +609,20 @@ export function ChatPane({
         )}
       </header>
 
+      {conversation?.type === 'group' && pendingAnn && !selectMode && (
+        <button
+          type="button"
+          className="im-group-announcement"
+          onClick={openPendingAnnouncement}
+        >
+          <span className="im-group-announcement__tag">公告</span>
+          <span className="im-group-announcement__text">{pendingAnn.body}</span>
+          <span className="im-group-announcement__chevron" aria-hidden>
+            ›
+          </span>
+        </button>
+      )}
+
       <div
         className="im-messages"
         ref={listRef}
@@ -608,7 +662,8 @@ export function ChatPane({
           const voice = !m.recalled && m.type === 'voice' ? parseVoiceBody(m.body) : null
           const callInfo = !m.recalled && m.type === 'call' ? parseCallBody(m.body) : null
           const fwd = !m.recalled && m.type === 'forward' ? parseForwardBody(m.body) : null
-          const press = m.recalled || selectMode || callInfo ? null : bindPressHandlers(m)
+          const isSystem = !m.recalled && m.type === 'system'
+          const press = m.recalled || selectMode || callInfo || isSystem ? null : bindPressHandlers(m)
           const showMeta = isGroup
           const showTime = shouldShowMessageTimeDivider(
             messages[i - 1]?.createdAt,
@@ -634,6 +689,10 @@ export function ChatPane({
                     <CallIcon size="14px" />
                   )}
                   <span>{formatCallMessage(callInfo)}</span>
+                </div>
+              ) : isSystem ? (
+                <div className="im-msg-system">
+                  <span className="im-msg-system__text">{m.body}</span>
                 </div>
               ) : (
               <div
@@ -672,7 +731,22 @@ export function ChatPane({
                     if (selectable) onToggleSelect?.(m.id)
                   }}
                 >
-                <Avatar name={name} src={avatarSrc} size="sm" />
+                {onOpenSender && !selectMode ? (
+                  <button
+                    type="button"
+                    className="im-msg__avatar-btn"
+                    title="查看资料"
+                    aria-label={`查看 ${name} 的资料`}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      onOpenSender(m.senderId)
+                    }}
+                  >
+                    <Avatar name={name} src={avatarSrc} size="sm" />
+                  </button>
+                ) : (
+                  <Avatar name={name} src={avatarSrc} size="sm" />
+                )}
                 <div className="im-msg__main">
                   {showMeta && (
                     <div className="im-msg__meta">
@@ -796,7 +870,17 @@ export function ChatPane({
         })}
       </div>
 
-      {!selectMode && (
+      {conversation?.removed && !selectMode && (
+        <p className="im-group-removed-banner">
+          {conversation.removeReason === 'kicked'
+            ? '你已被移出群聊，仍可查看历史消息。删除会话后将不再显示。'
+            : conversation.removeReason === 'unfriended' || conversation.type === 'dm'
+              ? '你们已不是好友，仍可查看历史消息。重新加好友后可继续聊天。'
+              : '你已退出该群聊，仍可查看历史消息。删除会话后将不再显示。'}
+        </p>
+      )}
+
+      {!selectMode && !conversation?.removed && (
         <footer
           className="im-composer"
           onPaste={handlePaste}
@@ -1051,6 +1135,35 @@ export function ChatPane({
         originalUrl={viewer?.url || ''}
         onClose={() => setViewer(null)}
       />
+
+      <Dialog
+        visible={announceOpen && !!viewingAnn}
+        header="群公告"
+        onClose={() => {
+          setAnnounceOpen(false)
+          setViewingAnn(null)
+        }}
+        footer={null}
+        width={420}
+        className="im-ann-dialog"
+      >
+        {viewingAnn ? (
+          <div className="im-announce-view">
+            <p className="im-announce-view__body">{viewingAnn.body}</p>
+            <div className="im-announce-view__meta">
+              <span className="im-announce-view__author">
+                {viewingAnn.authorName || '管理员'}
+              </span>
+              <span className="im-announce-view__dot" aria-hidden>
+                ·
+              </span>
+              <span className="im-muted">
+                {new Date(viewingAnn.createdAt).toLocaleString()}
+              </span>
+            </div>
+          </div>
+        ) : null}
+      </Dialog>
 
       <Dialog
         visible={!!forwardDetail}

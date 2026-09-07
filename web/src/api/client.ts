@@ -8,6 +8,10 @@
   Contact,
   Conversation,
   FriendRequest,
+  GroupAnnouncement,
+  GroupJoinRequest,
+  InviteResult,
+  JoinGroupResult,
   Message,
   MessageDay,
   PublicGroup,
@@ -132,9 +136,17 @@ export function apiErrorMessage(e: unknown, fallback: string): string {
     'quotes error': '无法读取今日金句',
     'already friends': '已经是好友',
     'friend request pending': '已发送过好友申请，请等待对方处理',
+    'join request pending': '已发送过入群申请，请等待管理员处理',
+    'join not allowed': '该群不允许加入',
+    'invalid join mode': '加群方式无效',
+    'message too long': '验证信息过长',
     'not friends': '还不是好友，请先添加好友',
     'request not found': '申请不存在或已处理',
     'friend request sent': '好友申请已发送',
+    'announcement too long': '群公告过长（最多 1000 字）',
+    'empty announcement': '请填写公告内容',
+    'announcement not found': '公告不存在或已删除',
+    'group title too long': '群名称过长',
     'query required': '请输入查找内容',
     'file required': '请选择图片',
     'file too large': '图片过大（最大 10MB）',
@@ -151,6 +163,7 @@ export function apiErrorMessage(e: unknown, fallback: string): string {
     'admin cannot kick admin': '管理员不能移除其他管理员',
     'cannot change own role': '不能修改自己的身份',
     'cannot change owner role': '不能修改群主身份',
+    'already owner': '该成员已是群主',
     'invalid role': '无效的成员身份',
     'member not found': '成员不在群中',
     'invalid file': '文件无效',
@@ -263,10 +276,28 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ title, members }),
     }),
-  joinGroup: (groupNo: string) =>
-    request<Conversation>('/api/conversations/group/join', {
+  joinGroup: (groupNo: string, message = '') =>
+    request<JoinGroupResult>('/api/conversations/group/join', {
       method: 'POST',
-      body: JSON.stringify({ groupNo }),
+      body: JSON.stringify({ groupNo, message }),
+    }),
+  listGroupJoinRequests: (conversationId: string) =>
+    request<{ requests: GroupJoinRequest[] }>(
+      `/api/conversations/${conversationId}/join-requests`,
+    ),
+  acceptGroupJoinRequest: (conversationId: string, requestId: string) =>
+    request<Contact>(
+      `/api/conversations/${conversationId}/join-requests/${requestId}/accept`,
+      { method: 'POST' },
+    ),
+  rejectGroupJoinRequest: (conversationId: string, requestId: string) =>
+    request<{ message: string }>(
+      `/api/conversations/${conversationId}/join-requests/${requestId}/reject`,
+      { method: 'POST' },
+    ),
+  cancelGroupJoinRequest: (requestId: string) =>
+    request<{ message: string }>(`/api/me/group-join-requests/${requestId}/cancel`, {
+      method: 'POST',
     }),
   listGroupMembers: (id: string) =>
     request<{ members: Contact[] }>(`/api/conversations/${id}/members`),
@@ -275,6 +306,41 @@ export const api = {
       method: 'PATCH',
       body: JSON.stringify({ title }),
     }),
+  patchGroup: (
+    id: string,
+    patch: {
+      title?: string
+      joinMode?: 'anyone' | 'verify' | 'deny'
+    },
+  ) =>
+    request<Conversation>(`/api/conversations/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(patch),
+    }),
+  listAnnouncements: (conversationId: string) =>
+    request<{ announcements: GroupAnnouncement[] }>(
+      `/api/conversations/${conversationId}/announcements`,
+    ),
+  createAnnouncement: (conversationId: string, body: string, requireConfirm = false) =>
+    request<GroupAnnouncement>(`/api/conversations/${conversationId}/announcements`, {
+      method: 'POST',
+      body: JSON.stringify({ body, requireConfirm }),
+    }),
+  updateAnnouncement: (conversationId: string, announcementId: string, body: string) =>
+    request<GroupAnnouncement>(
+      `/api/conversations/${conversationId}/announcements/${announcementId}`,
+      { method: 'PATCH', body: JSON.stringify({ body }) },
+    ),
+  deleteAnnouncement: (conversationId: string, announcementId: string) =>
+    request<{ message: string }>(
+      `/api/conversations/${conversationId}/announcements/${announcementId}`,
+      { method: 'DELETE' },
+    ),
+  ackAnnouncement: (conversationId: string, announcementId: string) =>
+    request<GroupAnnouncement>(
+      `/api/conversations/${conversationId}/announcements/${announcementId}/ack`,
+      { method: 'POST' },
+    ),
   leaveGroup: (id: string) =>
     request<{ message: string }>(`/api/conversations/${id}/leave`, {
       method: 'POST',
@@ -289,6 +355,12 @@ export const api = {
     request<{ incoming: FriendRequest[]; outgoing: FriendRequest[] }>(
       '/api/contacts/friend-requests',
     ),
+  listManagedGroupJoinRequests: () =>
+    request<{ requests: GroupJoinRequest[] }>('/api/contacts/group-join-requests'),
+  removeFriend: (friendId: string) =>
+    request<{ message: string }>(`/api/contacts/friends/${friendId}`, {
+      method: 'DELETE',
+    }),
   acceptFriendRequest: (id: string) =>
     request<Contact>(`/api/contacts/friend-requests/${id}/accept`, { method: 'POST' }),
   rejectFriendRequest: (id: string) =>
@@ -477,7 +549,7 @@ export const api = {
     return data as Message
   },
   inviteGroupMembers: (id: string, memberIds: string[]) =>
-    request<Conversation>(`/api/conversations/${id}/invite`, {
+    request<InviteResult>(`/api/conversations/${id}/invite`, {
       method: 'POST',
       body: JSON.stringify({ memberIds }),
     }),
@@ -528,4 +600,20 @@ export const api = {
     }),
   qqUnbind: () =>
     request<{ message: string }>('/api/me/qq-bot', { method: 'DELETE' }),
+  dinoLeaderboard: () =>
+    request<{ scores: DinoScoreRow[] }>('/api/games/dino/leaderboard'),
+  dinoSubmitScore: (score: number) =>
+    request<{ best: number; improved: boolean; score: number }>(
+      '/api/games/dino/score',
+      { method: 'POST', body: JSON.stringify({ score }) },
+    ),
+  dinoMyBest: () => request<{ best: number }>('/api/games/dino/me'),
+}
+
+export type DinoScoreRow = {
+  rank: number
+  userId: string
+  username: string
+  score: number
+  createdAt: string
 }

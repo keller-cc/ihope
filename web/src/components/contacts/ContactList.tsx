@@ -9,14 +9,17 @@ type Props = {
   onSection: (s: Section) => void
   friends: Contact[]
   groups: Conversation[]
-  incomingCount: number
+  friendRequestCount: number
+  groupJoinCount: number
   filter: string
   selectedFriendId: string | null
   selectedGroupId: string | null
   requestsOpen?: boolean
+  groupJoinsOpen?: boolean
   onSelectFriend: (f: Contact) => void
   onSelectGroup: (g: Conversation) => void
-  onOpenRequests: () => void
+  onOpenFriendRequests: () => void
+  onOpenGroupJoins: () => void
 }
 
 function displayName(f: Contact) {
@@ -28,14 +31,17 @@ export function ContactList({
   onSection,
   friends,
   groups,
-  incomingCount,
+  friendRequestCount,
+  groupJoinCount,
   filter,
   selectedFriendId,
   selectedGroupId,
   requestsOpen,
+  groupJoinsOpen,
   onSelectFriend,
   onSelectGroup,
-  onOpenRequests,
+  onOpenFriendRequests,
+  onOpenGroupJoins,
 }: Props) {
   const q = filter.trim().toLowerCase()
   const filteredFriends = friends.filter(
@@ -55,6 +61,7 @@ export function ContactList({
           onClick={() => onSection('friends')}
         >
           好友 ({friends.length})
+          {friendRequestCount > 0 ? ` · ${friendRequestCount}` : ''}
         </button>
         <button
           type="button"
@@ -62,6 +69,7 @@ export function ContactList({
           onClick={() => onSection('groups')}
         >
           群聊 ({groups.length})
+          {groupJoinCount > 0 ? ` · ${groupJoinCount}` : ''}
         </button>
       </div>
 
@@ -70,16 +78,16 @@ export function ContactList({
           <button
             type="button"
             className={requestsOpen ? 'im-list-item is-active' : 'im-list-item'}
-            onClick={onOpenRequests}
+            onClick={onOpenFriendRequests}
           >
             <span className="im-avatar im-avatar--soft">新</span>
             <span className="im-list-item__body">
               <span className="im-list-item__row">
-                <span className="im-list-item__title">新朋友</span>
-                {incomingCount > 0 && <span className="im-badge">{incomingCount}</span>}
+                <span className="im-list-item__title">新的朋友</span>
+                {friendRequestCount > 0 && <span className="im-badge">{friendRequestCount}</span>}
               </span>
               <span className="im-list-item__preview">
-                {incomingCount > 0 ? `${incomingCount} 条待处理申请` : '添加好友与申请'}
+                {friendRequestCount > 0 ? `${friendRequestCount} 条待处理` : '好友申请'}
               </span>
             </span>
           </button>
@@ -113,6 +121,23 @@ export function ContactList({
 
       {section === 'groups' && (
         <div className="im-list">
+          <button
+            type="button"
+            className={groupJoinsOpen ? 'im-list-item is-active' : 'im-list-item'}
+            onClick={onOpenGroupJoins}
+          >
+            <span className="im-avatar im-avatar--soft">群</span>
+            <span className="im-list-item__body">
+              <span className="im-list-item__row">
+                <span className="im-list-item__title">入群申请</span>
+                {groupJoinCount > 0 && <span className="im-badge">{groupJoinCount}</span>}
+              </span>
+              <span className="im-list-item__preview">
+                {groupJoinCount > 0 ? `${groupJoinCount} 条待处理` : '管理的群待审申请'}
+              </span>
+            </span>
+          </button>
+
           {filteredGroups.length === 0 ? (
             <p className="im-empty-hint">还没有群，点 + 创建或加入</p>
           ) : (

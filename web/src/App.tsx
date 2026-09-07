@@ -1,13 +1,23 @@
 ﻿import { useEffect, useState } from 'react'
-import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
+import { BrowserRouter, Navigate, Route, Routes, useNavigate, useSearchParams } from 'react-router-dom'
 import { ConfigProvider, Loading } from 'tdesign-react'
 import zhConfig from 'tdesign-react/es/locale/zh_CN'
 import { api, getSessionSlot, getToken, setToken, type User } from '@/api'
 import { AdminPage } from './pages/AdminPage'
 import { AuthPage } from './pages/AuthPage'
 import { ChatPage } from './pages/ChatPage'
+import { DinoGamePage } from './pages/DinoGamePage'
+import { GameHubPage } from './pages/GameHubPage'
 import { VerifyPage } from './pages/VerifyPage'
 import './App.css'
+
+/** Only allow in-app relative paths (games return, etc.). */
+function safeNextPath(raw: string | null): string | null {
+  if (!raw) return null
+  if (!raw.startsWith('/') || raw.startsWith('//')) return null
+  if (raw.startsWith('/game')) return raw
+  return null
+}
 
 function SlotBadge() {
   const slot = getSessionSlot()
@@ -18,6 +28,9 @@ function SlotBadge() {
 function Home() {
   const [user, setUser] = useState<User | null>(null)
   const [booting, setBooting] = useState(true)
+  const [searchParams] = useSearchParams()
+  const navigate = useNavigate()
+  const nextPath = safeNextPath(searchParams.get('next'))
 
   useEffect(() => {
     const token = getToken()
@@ -31,6 +44,12 @@ function Home() {
       .catch(() => setToken(null))
       .finally(() => setBooting(false))
   }, [])
+
+  useEffect(() => {
+    if (!booting && user && nextPath) {
+      navigate(nextPath, { replace: true })
+    }
+  }, [booting, user, nextPath, navigate])
 
   if (booting) {
     return (
@@ -50,7 +69,12 @@ function Home() {
           onLogout={() => setUser(null)}
         />
       ) : (
-        <AuthPage onAuthed={setUser} />
+        <AuthPage
+          onAuthed={(u) => {
+            setUser(u)
+            if (nextPath) navigate(nextPath, { replace: true })
+          }}
+        />
       )}
     </>
   )
@@ -64,6 +88,9 @@ export default function App() {
           <Route path="/" element={<Home />} />
           <Route path="/verify" element={<VerifyPage />} />
           <Route path="/admin" element={<AdminPage />} />
+          <Route path="/game" element={<GameHubPage />} />
+          <Route path="/game/dinodasher" element={<DinoGamePage />} />
+          <Route path="/game/dino" element={<Navigate to="/game/dinodasher" replace />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </BrowserRouter>

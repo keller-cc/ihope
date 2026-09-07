@@ -30,16 +30,16 @@ export function FriendRequestsPane({
             ‹
           </button>
         )}
-        <h2 className="im-chat-head__title">新朋友</h2>
+        <h2 className="im-chat-head__title">新的朋友</h2>
       </header>
 
       <div className="im-friend-req__body">
         {empty ? (
-          <p className="im-empty-hint">暂无好友申请。点右上角 + 可搜索添加好友。</p>
+          <p className="im-empty-hint">暂无申请。点右上角 + 可添加好友或搜索群聊。</p>
         ) : (
           <>
             {incoming.length > 0 && (
-              <div className="im-section">待处理 · {incoming.length}</div>
+              <div className="im-section">好友申请 · {incoming.length}</div>
             )}
             {incoming.map((r) => (
               <div key={r.id} className="im-request-row">
@@ -70,7 +70,7 @@ export function FriendRequestsPane({
             ))}
 
             {outgoing.length > 0 && (
-              <div className="im-section">等待对方验证 · {outgoing.length}</div>
+              <div className="im-section">等待验证 · {outgoing.length}</div>
             )}
             {outgoing.map((r) => (
               <div key={r.id} className="im-request-row">

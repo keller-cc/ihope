@@ -32,7 +32,7 @@ func (s *Service) ListMessages(ctx context.Context, conversationID, userID strin
 }
 
 func (s *Service) ListMessagesFiltered(ctx context.Context, conversationID, userID string, opts ListMessagesOpts) ([]Message, bool, error) {
-	ok, err := s.IsMember(ctx, conversationID, userID)
+	ok, err := s.CanAccessConversation(ctx, conversationID, userID)
 	if err != nil {
 		return nil, false, err
 	}
@@ -127,7 +127,7 @@ func (s *Service) ListMessagesFiltered(ctx context.Context, conversationID, user
 }
 
 func (s *Service) ListMessageDays(ctx context.Context, conversationID, userID string) ([]MessageDay, error) {
-	ok, err := s.IsMember(ctx, conversationID, userID)
+	ok, err := s.CanAccessConversation(ctx, conversationID, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -160,7 +160,7 @@ func (s *Service) ListMessageDays(ctx context.Context, conversationID, userID st
 }
 
 func (s *Service) SearchMessages(ctx context.Context, conversationID, userID string, opts ListMessagesOpts, q string) ([]Message, bool, error) {
-	ok, err := s.IsMember(ctx, conversationID, userID)
+	ok, err := s.CanAccessConversation(ctx, conversationID, userID)
 	if err != nil {
 		return nil, false, err
 	}
@@ -307,7 +307,7 @@ func messageMatchesQuery(m Message, qLower string) bool {
 
 // MessageContext returns messages around a target id (oldest → newest).
 func (s *Service) MessageContext(ctx context.Context, conversationID, userID, messageID string, beforeN, afterN int) ([]Message, error) {
-	ok, err := s.IsMember(ctx, conversationID, userID)
+	ok, err := s.CanAccessConversation(ctx, conversationID, userID)
 	if err != nil {
 		return nil, err
 	}

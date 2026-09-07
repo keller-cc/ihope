@@ -10,6 +10,7 @@ type Props = {
   onBack: () => void
   onMessage: () => void
   onSaveRemark: (remark: string) => Promise<void>
+  onDeleteFriend?: () => void | Promise<void>
   onTogglePin?: () => void
   onToggleMute?: () => void
   onFindHistory?: () => void
@@ -22,6 +23,7 @@ export function FriendProfile({
   onBack,
   onMessage,
   onSaveRemark,
+  onDeleteFriend,
   onTogglePin,
   onToggleMute,
   onFindHistory,
@@ -29,6 +31,7 @@ export function FriendProfile({
 }: Props) {
   const [remark, setRemark] = useState(profile.remark || '')
   const [remarkOpen, setRemarkOpen] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState(false)
   const [busy, setBusy] = useState(false)
 
   useEffect(() => {
@@ -98,7 +101,41 @@ export function FriendProfile({
             发消息
           </Button>
         </div>
+
+        {onDeleteFriend && (
+          <div className="im-set-group">
+            <button
+              type="button"
+              className="im-set-cell im-set-cell--danger"
+              onClick={() => setConfirmDelete(true)}
+            >
+              <span className="im-set-cell__label">删除好友</span>
+            </button>
+          </div>
+        )}
       </div>
+
+      <Dialog
+        visible={confirmDelete}
+        header="删除好友"
+        theme="danger"
+        onClose={() => setConfirmDelete(false)}
+        onConfirm={async () => {
+          setBusy(true)
+          try {
+            await onDeleteFriend?.()
+            setConfirmDelete(false)
+          } finally {
+            setBusy(false)
+          }
+        }}
+        confirmBtn={{ content: '删除', theme: 'danger', loading: busy }}
+        cancelBtn="取消"
+      >
+        <p>
+          将「{displayName}」从好友列表中删除？删除后双方聊天记录仍保留，但需重新添加好友才能发消息。
+        </p>
+      </Dialog>
 
       <Dialog
         visible={remarkOpen}

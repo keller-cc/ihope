@@ -19,6 +19,7 @@ import (
 	"github.com/keller-cc/ihope/appserver/internal/auth"
 	"github.com/keller-cc/ihope/appserver/internal/call"
 	"github.com/keller-cc/ihope/appserver/internal/chat"
+	"github.com/keller-cc/ihope/appserver/internal/games"
 	"github.com/keller-cc/ihope/appserver/internal/hub"
 	"github.com/keller-cc/ihope/appserver/internal/qqbot"
 	"github.com/keller-cc/ihope/appserver/internal/quotes"
@@ -29,6 +30,7 @@ type Server struct {
 	auth       *auth.Service
 	chat       *chat.Service
 	admin      *admin.Service
+	gameSvc    *games.Service
 	hub        *hub.Hub
 	calls      *call.Service
 	qq         *qqbot.Service
@@ -45,6 +47,7 @@ func New(
 	authSvc *auth.Service,
 	chatSvc *chat.Service,
 	adminSvc *admin.Service,
+	gamesSvc *games.Service,
 	h *hub.Hub,
 	callSvc *call.Service,
 	qq *qqbot.Service,
@@ -54,6 +57,7 @@ func New(
 		auth:       authSvc,
 		chat:       chatSvc,
 		admin:      adminSvc,
+		gameSvc:    gamesSvc,
 		hub:        h,
 		calls:      callSvc,
 		qq:         qq,
@@ -98,6 +102,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/conversations/group", s.withAuth(s.handleCreateGroup))
 	mux.HandleFunc("POST /api/conversations/group/join", s.withAuth(s.handleJoinGroup))
 	mux.HandleFunc("GET /api/conversations/{id}/members", s.withAuth(s.handleListMembers))
+	mux.HandleFunc("GET /api/conversations/{id}/join-requests", s.withAuth(s.handleListGroupJoinRequests))
+	mux.HandleFunc("POST /api/conversations/{id}/join-requests/{rid}/accept", s.withAuth(s.handleAcceptGroupJoinRequest))
+	mux.HandleFunc("POST /api/conversations/{id}/join-requests/{rid}/reject", s.withAuth(s.handleRejectGroupJoinRequest))
+	mux.HandleFunc("POST /api/me/group-join-requests/{id}/cancel", s.withAuth(s.handleCancelGroupJoinRequest))
 	mux.HandleFunc("PATCH /api/conversations/{id}", s.withAuth(s.handlePatchConversation))
 	mux.HandleFunc("POST /api/conversations/{id}/avatar", s.withAuth(s.handleUploadGroupAvatar))
 	mux.HandleFunc("PATCH /api/conversations/{id}/member", s.withAuth(s.handlePatchMember))
@@ -108,6 +116,12 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/conversations/{id}/dissolve", s.withAuth(s.handleDissolveGroup))
 	mux.HandleFunc("PATCH /api/conversations/{id}/members/role", s.withAuth(s.handleSetMemberRole))
 	mux.HandleFunc("PATCH /api/conversations/{id}/members/title", s.withAuth(s.handleSetMemberTitle))
+	mux.HandleFunc("GET /api/conversations/{id}/announcements", s.withAuth(s.handleListAnnouncements))
+	mux.HandleFunc("POST /api/conversations/{id}/announcements", s.withAuth(s.handleCreateAnnouncement))
+	mux.HandleFunc("GET /api/conversations/{id}/announcements/{aid}", s.withAuth(s.handleGetAnnouncement))
+	mux.HandleFunc("PATCH /api/conversations/{id}/announcements/{aid}", s.withAuth(s.handleUpdateAnnouncement))
+	mux.HandleFunc("DELETE /api/conversations/{id}/announcements/{aid}", s.withAuth(s.handleDeleteAnnouncement))
+	mux.HandleFunc("POST /api/conversations/{id}/announcements/{aid}/ack", s.withAuth(s.handleAckAnnouncement))
 	mux.HandleFunc("GET /api/conversations/{id}/messages", s.withAuth(s.handleListMessages))
 	mux.HandleFunc("GET /api/conversations/{id}/messages/search", s.withAuth(s.handleSearchMessages))
 	mux.HandleFunc("GET /api/conversations/{id}/messages/days", s.withAuth(s.handleListMessageDays))
@@ -131,12 +145,17 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/contacts/friend-requests/{id}/accept", s.withAuth(s.handleAcceptFriendRequest))
 	mux.HandleFunc("POST /api/contacts/friend-requests/{id}/reject", s.withAuth(s.handleRejectFriendRequest))
 	mux.HandleFunc("POST /api/contacts/friend-requests/{id}/cancel", s.withAuth(s.handleCancelFriendRequest))
+	mux.HandleFunc("GET /api/contacts/group-join-requests", s.withAuth(s.handleListManagedGroupJoinRequests))
+	mux.HandleFunc("DELETE /api/contacts/friends/{id}", s.withAuth(s.handleRemoveFriend))
 	mux.HandleFunc("GET /api/contacts/groups", s.withAuth(s.handleListGroups))
 	mux.Handle("/uploads/", s.withUploadCache(http.StripPrefix("/uploads/", http.FileServer(http.Dir(s.uploadDir)))))
 	mux.HandleFunc("GET /api/me/qq-bot", s.withAuth(s.handleQQStatus))
 	mux.HandleFunc("POST /api/me/qq-bot/bind-code", s.withAuth(s.handleQQBindCode))
 	mux.HandleFunc("PATCH /api/me/qq-bot", s.withAuth(s.handleQQPatch))
 	mux.HandleFunc("DELETE /api/me/qq-bot", s.withAuth(s.handleQQUnbind))
+	mux.HandleFunc("GET /api/games/dino/leaderboard", s.handleDinoLeaderboard)
+	mux.HandleFunc("POST /api/games/dino/score", s.withAuth(s.handleDinoSubmitScore))
+	mux.HandleFunc("GET /api/games/dino/me", s.withAuth(s.handleDinoMyBest))
 	mux.HandleFunc("GET /api/admin/users", s.withAdmin(s.handleAdminListUsers))
 	mux.HandleFunc("DELETE /api/admin/users/{id}", s.withAdmin(s.handleAdminDeleteUser))
 	mux.HandleFunc("PATCH /api/admin/users/{id}", s.withAdmin(s.handleAdminPatchUser))
@@ -144,7 +163,16 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/admin/users/{id}/qq-bot", s.withAdmin(s.handleAdminQQUnbind))
 	mux.HandleFunc("GET /api/admin/qq-bindings", s.withAdmin(s.handleAdminListQQBindings))
 	mux.HandleFunc("GET /api/admin/conversations", s.withAdmin(s.handleAdminListConversations))
+	mux.HandleFunc("GET /api/admin/conversations/{id}", s.withAdmin(s.handleAdminGetGroup))
+	mux.HandleFunc("PATCH /api/admin/conversations/{id}", s.withAdmin(s.handleAdminPatchGroup))
+	mux.HandleFunc("POST /api/admin/conversations/{id}/kick", s.withAdmin(s.handleAdminKickMember))
+	mux.HandleFunc("POST /api/admin/conversations/{id}/members/role", s.withAdmin(s.handleAdminSetMemberRole))
+	mux.HandleFunc("POST /api/admin/conversations/{id}/transfer-owner", s.withAdmin(s.handleAdminTransferOwner))
 	mux.HandleFunc("DELETE /api/admin/conversations/{id}", s.withAdmin(s.handleAdminDeleteConversation))
+	mux.HandleFunc("GET /api/admin/group-join-requests", s.withAdmin(s.handleAdminListGroupJoins))
+	mux.HandleFunc("POST /api/admin/conversations/{id}/join-requests/{rid}/accept", s.withAdmin(s.handleAdminAcceptGroupJoin))
+	mux.HandleFunc("POST /api/admin/conversations/{id}/join-requests/{rid}/reject", s.withAdmin(s.handleAdminRejectGroupJoin))
+	mux.HandleFunc("GET /api/admin/stats", s.withAdmin(s.handleAdminStats))
 	mux.HandleFunc("GET /api/admin/domains", s.withAdmin(s.handleAdminListDomains))
 	mux.HandleFunc("POST /api/admin/domains", s.withAdmin(s.handleAdminCreateDomain))
 	mux.HandleFunc("PATCH /api/admin/domains/{id}", s.withAdmin(s.handleAdminPatchDomain))
@@ -211,6 +239,47 @@ func (s *Server) corsMiddleware(next http.Handler) http.Handler {
 
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (s *Server) handleDinoLeaderboard(w http.ResponseWriter, r *http.Request) {
+	list, err := s.gameSvc.ListDinoLeaderboard(r.Context(), 20)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "list failed")
+		return
+	}
+	if list == nil {
+		list = []games.ScoreRow{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"scores": list})
+}
+
+func (s *Server) handleDinoSubmitScore(w http.ResponseWriter, r *http.Request, userID string) {
+	var body struct {
+		Score int `json:"score"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	best, improved, err := s.gameSvc.SubmitDinoScore(r.Context(), userID, body.Score)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"best":     best,
+		"improved": improved,
+		"score":    body.Score,
+	})
+}
+
+func (s *Server) handleDinoMyBest(w http.ResponseWriter, r *http.Request, userID string) {
+	best, err := s.gameSvc.MyDinoBest(r.Context(), userID)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "query failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"best": best})
 }
 
 func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
@@ -545,17 +614,98 @@ func (s *Server) handleCreateGroup(w http.ResponseWriter, r *http.Request, userI
 func (s *Server) handleJoinGroup(w http.ResponseWriter, r *http.Request, userID string) {
 	var body struct {
 		GroupNo string `json:"groupNo"`
+		Message string `json:"message"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid json")
 		return
 	}
-	c, err := s.chat.JoinGroupByNo(r.Context(), userID, body.GroupNo)
+	res, err := s.chat.JoinGroupByNo(r.Context(), userID, body.GroupNo, body.Message)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if res.Status == "pending" && res.Request != nil {
+		managers, _ := s.chat.GroupManagerIDs(r.Context(), res.Request.ConversationID)
+		s.hub.PublishToUsers(managers, map[string]any{
+			"type":           "group.join_request",
+			"conversationId": res.Request.ConversationID,
+			"request":        res.Request,
+		})
+		writeJSON(w, http.StatusCreated, res)
+		return
+	}
+	if res.Status == "joined" && res.NewlyJoined && res.Conversation != nil {
+		name := s.chat.UsernameByID(r.Context(), userID)
+		tip := name + " 加入了群聊"
+		if name == "" {
+			tip = "有人加入了群聊"
+		}
+		if m, err := s.chat.PostSystemMessage(r.Context(), res.Conversation.ID, userID, tip); err == nil && m != nil {
+			s.afterMessage(res.Conversation.ID, userID, m)
+		}
+	}
+	writeJSON(w, http.StatusOK, res)
+}
+
+func (s *Server) handleListGroupJoinRequests(w http.ResponseWriter, r *http.Request, userID string) {
+	id := r.PathValue("id")
+	list, err := s.chat.ListGroupJoinRequests(r.Context(), id, userID)
+	if err != nil {
+		if err.Error() == "forbidden" {
+			writeErr(w, http.StatusForbidden, "forbidden")
+			return
+		}
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"requests": list})
+}
+
+func (s *Server) handleAcceptGroupJoinRequest(w http.ResponseWriter, r *http.Request, userID string) {
+	id := r.PathValue("id")
+	rid := r.PathValue("rid")
+	c, err := s.chat.AcceptGroupJoinRequest(r.Context(), id, userID, rid)
+	if err != nil {
+		if err.Error() == "forbidden" {
+			writeErr(w, http.StatusForbidden, "forbidden")
+			return
+		}
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	name := c.Username
+	tip := name + " 加入了群聊"
+	if name == "" {
+		tip = "有人加入了群聊"
+	}
+	if m, err := s.chat.PostSystemMessage(r.Context(), id, userID, tip); err == nil && m != nil {
+		s.afterMessage(id, userID, m)
+	}
 	writeJSON(w, http.StatusOK, c)
+}
+
+func (s *Server) handleRejectGroupJoinRequest(w http.ResponseWriter, r *http.Request, userID string) {
+	id := r.PathValue("id")
+	rid := r.PathValue("rid")
+	if err := s.chat.RejectGroupJoinRequest(r.Context(), id, userID, rid); err != nil {
+		if err.Error() == "forbidden" {
+			writeErr(w, http.StatusForbidden, "forbidden")
+			return
+		}
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"message": "rejected"})
+}
+
+func (s *Server) handleCancelGroupJoinRequest(w http.ResponseWriter, r *http.Request, userID string) {
+	id := r.PathValue("id")
+	if err := s.chat.CancelGroupJoinRequest(r.Context(), userID, id); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"message": "cancelled"})
 }
 
 func (s *Server) handleListMembers(w http.ResponseWriter, r *http.Request, userID string) {
@@ -575,22 +725,168 @@ func (s *Server) handleListMembers(w http.ResponseWriter, r *http.Request, userI
 func (s *Server) handlePatchConversation(w http.ResponseWriter, r *http.Request, userID string) {
 	id := r.PathValue("id")
 	var body struct {
-		Title string `json:"title"`
+		Title                  *string `json:"title"`
+		JoinMode               *string `json:"joinMode"`
+		InviteRequiresApproval *bool   `json:"inviteRequiresApproval"`
+		Announcement           *string `json:"announcement"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid json")
 		return
 	}
-	c, err := s.chat.RenameGroup(r.Context(), id, userID, body.Title)
+	joinMode := body.JoinMode
+	if joinMode == nil && body.InviteRequiresApproval != nil {
+		mode := "anyone"
+		if *body.InviteRequiresApproval {
+			mode = "verify"
+		}
+		joinMode = &mode
+	}
+	c, tipMsg, err := s.chat.PatchGroup(r.Context(), id, userID, body.Title, joinMode, body.Announcement)
 	if err != nil {
+		if err.Error() == "forbidden" {
+			writeErr(w, http.StatusForbidden, "forbidden")
+			return
+		}
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
+	}
+	if tipMsg != nil {
+		s.afterMessage(id, userID, tipMsg)
 	}
 	writeJSON(w, http.StatusOK, c)
 }
 
+func (s *Server) handleListAnnouncements(w http.ResponseWriter, r *http.Request, userID string) {
+	id := r.PathValue("id")
+	list, err := s.chat.ListAnnouncements(r.Context(), id, userID)
+	if err != nil {
+		if err.Error() == "forbidden" {
+			writeErr(w, http.StatusForbidden, "forbidden")
+			return
+		}
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"announcements": list})
+}
+
+func (s *Server) handleGetAnnouncement(w http.ResponseWriter, r *http.Request, userID string) {
+	id := r.PathValue("id")
+	aid := r.PathValue("aid")
+	a, err := s.chat.GetAnnouncement(r.Context(), id, aid, userID)
+	if err != nil {
+		if err.Error() == "forbidden" {
+			writeErr(w, http.StatusForbidden, "forbidden")
+			return
+		}
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, a)
+}
+
+func (s *Server) handleCreateAnnouncement(w http.ResponseWriter, r *http.Request, userID string) {
+	id := r.PathValue("id")
+	var body struct {
+		Body           string `json:"body"`
+		RequireConfirm *bool  `json:"requireConfirm"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	requireConfirm := false
+	if body.RequireConfirm != nil {
+		requireConfirm = *body.RequireConfirm
+	}
+	a, err := s.chat.CreateAnnouncement(r.Context(), id, userID, body.Body, requireConfirm)
+	if err != nil {
+		if err.Error() == "forbidden" {
+			writeErr(w, http.StatusForbidden, "forbidden")
+			return
+		}
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	tip := "发布了新公告"
+	if name := s.chat.UsernameByID(r.Context(), userID); name != "" {
+		tip = name + " 发布了新公告"
+	}
+	if m, err := s.chat.PostSystemMessage(r.Context(), id, userID, tip); err == nil && m != nil {
+		s.afterMessage(id, userID, m)
+	}
+	if members, err := s.chat.MemberUserIDs(r.Context(), id); err == nil {
+		s.hub.PublishToUsers(members, map[string]any{
+			"type":           "group.announcement",
+			"conversationId": id,
+			"announcement":   a,
+		})
+	}
+	writeJSON(w, http.StatusCreated, a)
+}
+
+func (s *Server) handleUpdateAnnouncement(w http.ResponseWriter, r *http.Request, userID string) {
+	id := r.PathValue("id")
+	aid := r.PathValue("aid")
+	var body struct {
+		Body string `json:"body"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	a, err := s.chat.UpdateAnnouncement(r.Context(), id, aid, userID, body.Body)
+	if err != nil {
+		if err.Error() == "forbidden" {
+			writeErr(w, http.StatusForbidden, "forbidden")
+			return
+		}
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, a)
+}
+
+func (s *Server) handleDeleteAnnouncement(w http.ResponseWriter, r *http.Request, userID string) {
+	id := r.PathValue("id")
+	aid := r.PathValue("aid")
+	if err := s.chat.DeleteAnnouncement(r.Context(), id, aid, userID); err != nil {
+		if err.Error() == "forbidden" {
+			writeErr(w, http.StatusForbidden, "forbidden")
+			return
+		}
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"message": "deleted"})
+}
+
+func (s *Server) handleAckAnnouncement(w http.ResponseWriter, r *http.Request, userID string) {
+	id := r.PathValue("id")
+	aid := r.PathValue("aid")
+	a, err := s.chat.AckAnnouncement(r.Context(), id, aid, userID)
+	if err != nil {
+		if err.Error() == "forbidden" {
+			writeErr(w, http.StatusForbidden, "forbidden")
+			return
+		}
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, a)
+}
+
 func (s *Server) handleLeaveGroup(w http.ResponseWriter, r *http.Request, userID string) {
 	id := r.PathValue("id")
+	name := s.chat.UsernameByID(r.Context(), userID)
+	tip := name + " 退出了群聊"
+	if name == "" {
+		tip = "有人退出了群聊"
+	}
+	if m, err := s.chat.PostSystemMessage(r.Context(), id, userID, tip); err == nil && m != nil {
+		s.afterMessage(id, userID, m)
+	}
 	if err := s.chat.LeaveGroup(r.Context(), id, userID); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
@@ -607,7 +903,7 @@ func (s *Server) handleInviteMembers(w http.ResponseWriter, r *http.Request, use
 		writeErr(w, http.StatusBadRequest, "invalid json")
 		return
 	}
-	c, err := s.chat.InviteToGroup(r.Context(), id, userID, body.MemberIDs)
+	res, err := s.chat.InviteToGroup(r.Context(), id, userID, body.MemberIDs)
 	if err != nil {
 		if err.Error() == "forbidden" {
 			writeErr(w, http.StatusForbidden, "forbidden")
@@ -616,7 +912,25 @@ func (s *Server) handleInviteMembers(w http.ResponseWriter, r *http.Request, use
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, c)
+	if res.Added > 0 && len(res.AddedNames) > 0 {
+		inviter := s.chat.UsernameByID(r.Context(), userID)
+		joined := strings.Join(res.AddedNames, "、")
+		tip := joined + " 加入了群聊"
+		if inviter != "" {
+			tip = inviter + " 邀请 " + joined + " 加入了群聊"
+		}
+		if m, err := s.chat.PostSystemMessage(r.Context(), id, userID, tip); err == nil && m != nil {
+			s.afterMessage(id, userID, m)
+		}
+	}
+	if res.Pending > 0 {
+		managers, _ := s.chat.GroupManagerIDs(r.Context(), id)
+		s.hub.PublishToUsers(managers, map[string]any{
+			"type":           "group.join_request",
+			"conversationId": id,
+		})
+	}
+	writeJSON(w, http.StatusOK, res)
 }
 
 func (s *Server) handleKickMember(w http.ResponseWriter, r *http.Request, userID string) {
@@ -628,10 +942,32 @@ func (s *Server) handleKickMember(w http.ResponseWriter, r *http.Request, userID
 		writeErr(w, http.StatusBadRequest, "invalid json")
 		return
 	}
+	actorName := s.chat.UsernameByID(r.Context(), userID)
+	targetName := s.chat.UsernameByID(r.Context(), body.MemberID)
+	tip := "有人被移出了群聊"
+	if actorName != "" && targetName != "" {
+		tip = actorName + " 将 " + targetName + " 移出了群聊"
+	} else if targetName != "" {
+		tip = targetName + " 被移出了群聊"
+	}
+	var sysMsg *chat.Message
+	if m, err := s.chat.PostSystemMessage(r.Context(), id, userID, tip); err == nil {
+		sysMsg = m
+		s.afterMessage(id, userID, m)
+	}
 	if err := s.chat.KickFromGroup(r.Context(), id, userID, body.MemberID); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	payload := map[string]any{
+		"type":           "group.kicked",
+		"conversationId": id,
+		"body":           "你已被移出群聊",
+	}
+	if sysMsg != nil {
+		payload["message"] = sysMsg
+	}
+	s.hub.PublishToUser(body.MemberID, payload)
 	writeJSON(w, http.StatusOK, map[string]string{"message": "ok"})
 }
 
@@ -704,6 +1040,12 @@ func (s *Server) handleAddFriend(w http.ResponseWriter, r *http.Request, userID 
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if fr != nil {
+		s.hub.PublishToUser(fr.ToUserID, map[string]any{
+			"type":    "friend.request",
+			"request": fr,
+		})
+	}
 	writeJSON(w, http.StatusCreated, fr)
 }
 
@@ -749,6 +1091,28 @@ func (s *Server) handleCancelFriendRequest(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"message": "cancelled"})
+}
+
+func (s *Server) handleListManagedGroupJoinRequests(w http.ResponseWriter, r *http.Request, userID string) {
+	list, err := s.chat.ListManagedGroupJoinRequests(r.Context(), userID)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "list failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"requests": list})
+}
+
+func (s *Server) handleRemoveFriend(w http.ResponseWriter, r *http.Request, userID string) {
+	id := r.PathValue("id")
+	if err := s.chat.RemoveFriend(r.Context(), userID, id); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	s.hub.PublishToUser(id, map[string]any{
+		"type":     "friend.removed",
+		"friendId": userID,
+	})
+	writeJSON(w, http.StatusOK, map[string]string{"message": "ok"})
 }
 
 func (s *Server) handlePatchMember(w http.ResponseWriter, r *http.Request, userID string) {
@@ -1207,6 +1571,9 @@ func (s *Server) handleRecallMessage(w http.ResponseWriter, r *http.Request, use
 
 func (s *Server) afterMessage(conversationID, userID string, m *chat.Message) {
 	s.hub.Publish(conversationID, map[string]any{"type": "message", "message": m})
+	if m != nil && m.Type == "system" {
+		return
+	}
 	if s.qq == nil || !s.qq.Enabled() {
 		return
 	}
@@ -1446,21 +1813,38 @@ func (s *Server) handleAdminDeleteUser(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleAdminPatchUser(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	var body struct {
-		FellowshipID string `json:"fellowshipId"`
+		FellowshipID   *string `json:"fellowshipId"`
+		EmailVerified  *bool   `json:"emailVerified"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid json")
 		return
 	}
-	if err := s.admin.SetUserFellowship(r.Context(), id, body.FellowshipID); err != nil {
-		switch err.Error() {
-		case "user not found":
-			writeErr(w, http.StatusNotFound, "user not found")
-		case "fellowship not found", "fellowship required":
-			writeErr(w, http.StatusBadRequest, err.Error())
-		default:
-			writeErr(w, http.StatusInternalServerError, "update failed")
+	if body.FellowshipID != nil {
+		if err := s.admin.SetUserFellowship(r.Context(), id, *body.FellowshipID); err != nil {
+			switch err.Error() {
+			case "user not found":
+				writeErr(w, http.StatusNotFound, "user not found")
+			case "fellowship not found", "fellowship required":
+				writeErr(w, http.StatusBadRequest, err.Error())
+			default:
+				writeErr(w, http.StatusInternalServerError, "update failed")
+			}
+			return
 		}
+	}
+	if body.EmailVerified != nil {
+		if err := s.admin.SetEmailVerified(r.Context(), id, *body.EmailVerified); err != nil {
+			if err.Error() == "user not found" {
+				writeErr(w, http.StatusNotFound, "user not found")
+				return
+			}
+			writeErr(w, http.StatusInternalServerError, "update failed")
+			return
+		}
+	}
+	if body.FellowshipID == nil && body.EmailVerified == nil {
+		writeErr(w, http.StatusBadRequest, "nothing to update")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"message": "updated"})
@@ -1681,6 +2065,190 @@ func (s *Server) handleAdminListConversations(w http.ResponseWriter, r *http.Req
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"conversations": list})
+}
+
+func (s *Server) handleAdminStats(w http.ResponseWriter, r *http.Request) {
+	st, err := s.admin.Stats(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "stats failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, st)
+}
+
+func (s *Server) handleAdminGetGroup(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	detail, err := s.admin.GetGroupDetail(r.Context(), id)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, detail)
+}
+
+func (s *Server) handleAdminPatchGroup(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var body struct {
+		Title                  *string `json:"title"`
+		JoinMode               *string `json:"joinMode"`
+		InviteRequiresApproval *bool   `json:"inviteRequiresApproval"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	joinMode := body.JoinMode
+	if joinMode == nil && body.InviteRequiresApproval != nil {
+		mode := "anyone"
+		if *body.InviteRequiresApproval {
+			mode = "verify"
+		}
+		joinMode = &mode
+	}
+	c, err := s.admin.PatchGroup(r.Context(), id, joinMode, body.Title)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, c)
+}
+
+func (s *Server) handleAdminKickMember(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var body struct {
+		MemberID string `json:"memberId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	targetName := s.chat.UsernameByID(r.Context(), body.MemberID)
+	tip := "有人被管理员移出了群聊"
+	if targetName != "" {
+		tip = targetName + " 被管理员移出了群聊"
+	}
+	sender := ""
+	if managers, _ := s.chat.GroupManagerIDs(r.Context(), id); len(managers) > 0 {
+		sender = managers[0]
+	} else if members, _ := s.chat.MemberUserIDs(r.Context(), id); len(members) > 0 {
+		for _, mid := range members {
+			if mid != body.MemberID {
+				sender = mid
+				break
+			}
+		}
+	}
+	if sender != "" {
+		if m, err := s.chat.PostSystemMessage(r.Context(), id, sender, tip); err == nil && m != nil {
+			s.afterMessage(id, sender, m)
+		}
+	}
+	if err := s.admin.KickGroupMember(r.Context(), id, body.MemberID); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	s.hub.PublishToUser(body.MemberID, map[string]any{
+		"type":           "group.kicked",
+		"conversationId": id,
+		"body":           "你已被管理员移出群聊",
+	})
+	writeJSON(w, http.StatusOK, map[string]string{"message": "ok"})
+}
+
+func (s *Server) handleAdminSetMemberRole(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var body struct {
+		MemberID string `json:"memberId"`
+		Role     string `json:"role"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	if err := s.admin.SetGroupMemberRole(r.Context(), id, body.MemberID, body.Role); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"message": "ok"})
+}
+
+func (s *Server) handleAdminTransferOwner(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var body struct {
+		MemberID string `json:"memberId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	newName := s.chat.UsernameByID(r.Context(), body.MemberID)
+	tip := "群主已变更"
+	if newName != "" {
+		tip = "群主已转让给 " + newName
+	}
+	sender := body.MemberID
+	if managers, _ := s.chat.GroupManagerIDs(r.Context(), id); len(managers) > 0 {
+		sender = managers[0]
+	}
+	if err := s.admin.TransferGroupOwner(r.Context(), id, body.MemberID); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if m, err := s.chat.PostSystemMessage(r.Context(), id, sender, tip); err == nil && m != nil {
+		s.afterMessage(id, sender, m)
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"message": "ok"})
+}
+
+func (s *Server) handleAdminListGroupJoins(w http.ResponseWriter, r *http.Request) {
+	list, err := s.admin.ListPendingGroupJoins(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "list failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"requests": list})
+}
+
+func (s *Server) handleAdminAcceptGroupJoin(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	rid := r.PathValue("rid")
+	var fromName string
+	if detail, err := s.admin.GetGroupDetail(r.Context(), id); err == nil {
+		for _, j := range detail.JoinRequests {
+			if j.ID == rid {
+				fromName = j.FromUsername
+				break
+			}
+		}
+	}
+	if err := s.admin.AcceptGroupJoin(r.Context(), id, rid); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	tip := "有人加入了群聊"
+	if fromName != "" {
+		tip = fromName + " 加入了群聊"
+	}
+	sender := ""
+	if managers, _ := s.chat.GroupManagerIDs(r.Context(), id); len(managers) > 0 {
+		sender = managers[0]
+	}
+	if sender != "" {
+		if m, err := s.chat.PostSystemMessage(r.Context(), id, sender, tip); err == nil && m != nil {
+			s.afterMessage(id, sender, m)
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"message": "ok"})
+}
+
+func (s *Server) handleAdminRejectGroupJoin(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	rid := r.PathValue("rid")
+	if err := s.admin.RejectGroupJoin(r.Context(), id, rid); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"message": "rejected"})
 }
 
 func (s *Server) handleAdminDeleteConversation(w http.ResponseWriter, r *http.Request) {

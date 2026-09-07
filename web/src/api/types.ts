@@ -36,6 +36,20 @@ export type User = {
   chatBg?: ChatBg | null
 }
 
+export type GroupAnnouncement = {
+  id: string
+  conversationId: string
+  body: string
+  authorId: string
+  authorName?: string
+  authorAvatarUrl?: string | null
+  requireConfirm: boolean
+  createdAt: string
+  updatedAt: string
+  acked: boolean
+  ackCount?: number
+}
+
 export type Conversation = {
   id: string
   type: string
@@ -56,6 +70,18 @@ export type Conversation = {
   pinnedAt?: string | null
   avatarUrl?: string | null
   joined?: boolean
+  joinMode?: 'anyone' | 'verify' | 'deny' | string
+  inviteRequiresApproval?: boolean
+  /** Latest announcement body preview (settings cell). */
+  announcement?: string
+  announcementCount?: number
+  /** Unconfirmed notice for current user — chat banner. */
+  pendingAnnouncement?: GroupAnnouncement | null
+  announcementUpdatedAt?: string | null
+  announcementUpdatedBy?: string | null
+  announcementAuthorName?: string
+  removed?: boolean
+  removeReason?: string
 }
 
 export type Contact = {
@@ -87,6 +113,8 @@ export type PublicGroup = {
   memberCount: number
   avatarUrl?: string | null
   joined: boolean
+  joinPending?: boolean
+  joinMode?: 'anyone' | 'verify' | 'deny' | string
 }
 
 export type FriendRequest = {
@@ -98,6 +126,30 @@ export type FriendRequest = {
   createdAt: string
   fromUser?: Contact
   toUser?: Contact
+}
+
+export type GroupJoinRequest = {
+  id: string
+  conversationId: string
+  fromUserId: string
+  status: string
+  message: string
+  createdAt: string
+  fromUser?: Contact
+  invitedBy?: Contact
+  group?: Conversation
+}
+
+export type JoinGroupResult = {
+  status: 'joined' | 'pending'
+  conversation?: Conversation
+  request?: GroupJoinRequest
+}
+
+export type InviteResult = {
+  conversation: Conversation
+  added: number
+  pending: number
 }
 
 export type Message = {

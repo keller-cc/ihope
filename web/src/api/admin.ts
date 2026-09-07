@@ -88,6 +88,53 @@ export type AdminConversation = {
   memberCount: number
   createdAt: string
   members: string
+  groupNo?: string | null
+  ownerUsername?: string
+  joinMode?: string
+  inviteRequiresApproval?: boolean
+  announcement?: string
+  pendingJoins?: number
+}
+
+export type AdminStats = {
+  users: number
+  groups: number
+  dms: number
+  pendingFriendRequests: number
+  pendingGroupJoins: number
+  unverifiedUsers: number
+  qqBound: number
+}
+
+export type AdminGroupMember = {
+  id: string
+  username: string
+  hopeId?: string | null
+  avatarUrl?: string | null
+  role: string
+  isOwner: boolean
+  memberTitle?: string
+  removed?: boolean
+}
+
+export type AdminGroupJoinRequest = {
+  id: string
+  conversationId: string
+  groupTitle: string
+  groupNo?: string | null
+  fromUserId: string
+  fromUsername: string
+  fromHopeId?: string | null
+  fromAvatarUrl?: string | null
+  message: string
+  invitedByName?: string
+  createdAt: string
+}
+
+export type AdminGroupDetail = {
+  conversation: AdminConversation
+  members: AdminGroupMember[]
+  joinRequests: AdminGroupJoinRequest[]
 }
 
 export type AdminQQBinding = {
@@ -109,12 +156,57 @@ export const adminApi = {
       method: 'PATCH',
       body: JSON.stringify({ fellowshipId }),
     }),
+  setUserEmailVerified: (id: string, emailVerified: boolean) =>
+    adminRequest<{ message: string }>(`/api/admin/users/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ emailVerified }),
+    }),
+  stats: () => adminRequest<AdminStats>('/api/admin/stats'),
   listConversations: () =>
     adminRequest<{ conversations: AdminConversation[] }>('/api/admin/conversations'),
+  getGroup: (id: string) => adminRequest<AdminGroupDetail>(`/api/admin/conversations/${id}`),
+  patchGroup: (
+    id: string,
+    patch: {
+      title?: string
+      joinMode?: 'anyone' | 'verify' | 'deny'
+    },
+  ) =>
+    adminRequest<AdminConversation>(`/api/admin/conversations/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(patch),
+    }),
+  kickGroupMember: (id: string, memberId: string) =>
+    adminRequest<{ message: string }>(`/api/admin/conversations/${id}/kick`, {
+      method: 'POST',
+      body: JSON.stringify({ memberId }),
+    }),
+  setGroupMemberRole: (id: string, memberId: string, role: 'admin' | 'member') =>
+    adminRequest<{ message: string }>(`/api/admin/conversations/${id}/members/role`, {
+      method: 'POST',
+      body: JSON.stringify({ memberId, role }),
+    }),
+  transferGroupOwner: (id: string, memberId: string) =>
+    adminRequest<{ message: string }>(`/api/admin/conversations/${id}/transfer-owner`, {
+      method: 'POST',
+      body: JSON.stringify({ memberId }),
+    }),
   deleteConversation: (id: string) =>
     adminRequest<{ message: string }>(`/api/admin/conversations/${id}`, {
       method: 'DELETE',
     }),
+  listGroupJoinRequests: () =>
+    adminRequest<{ requests: AdminGroupJoinRequest[] }>('/api/admin/group-join-requests'),
+  acceptGroupJoin: (conversationId: string, requestId: string) =>
+    adminRequest<{ message: string }>(
+      `/api/admin/conversations/${conversationId}/join-requests/${requestId}/accept`,
+      { method: 'POST' },
+    ),
+  rejectGroupJoin: (conversationId: string, requestId: string) =>
+    adminRequest<{ message: string }>(
+      `/api/admin/conversations/${conversationId}/join-requests/${requestId}/reject`,
+      { method: 'POST' },
+    ),
   listQQBindings: () =>
     adminRequest<{
       botEnabled: boolean

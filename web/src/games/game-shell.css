@@ -1,0 +1,678 @@
+.game-shell {
+  min-height: 100vh;
+  box-sizing: border-box;
+  padding: 28px 20px 48px;
+  background: #f4f6f8;
+  color: #1a1a1a;
+  font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+}
+
+.game-shell__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  max-width: 960px;
+  margin: 0 auto 24px;
+}
+
+.game-shell__head-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.game-shell__head h1 {
+  margin: 0;
+  font-size: 1.5rem;
+  font-weight: 700;
+}
+
+.game-shell__link {
+  display: inline-flex;
+  align-items: center;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  color: #111;
+  text-decoration: none;
+  font-size: 0.9rem;
+}
+
+.game-shell__link:hover {
+  border-color: #12b7f5;
+  color: #0b8ec4;
+}
+
+.game-grid {
+  list-style: none;
+  margin: 0 auto;
+  padding: 0;
+  max-width: 960px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
+}
+
+.game-card {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  border-radius: 14px;
+  background: #fff;
+  border: 1px solid #e8eaed;
+  color: inherit;
+  text-decoration: none;
+  box-shadow: 0 6px 20px rgba(15, 23, 42, 0.04);
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease,
+    transform 0.15s ease;
+}
+
+a.game-card:hover {
+  border-color: #12b7f5;
+  box-shadow: 0 10px 28px rgba(18, 183, 245, 0.12);
+  transform: translateY(-2px);
+}
+
+a.game-card:hover .game-card__cta {
+  background: #0aa0d8;
+}
+
+.game-card--disabled {
+  opacity: 0.72;
+  pointer-events: none;
+}
+
+.game-card__cover {
+  position: relative;
+  height: 160px;
+  overflow: hidden;
+  background: transparent;
+}
+
+.game-card__cover-art {
+  position: absolute;
+  inset: 0;
+}
+
+.game-card__cover--dino {
+  background:
+    linear-gradient(180deg, #e8eef3 0%, #f7f7f7 48%, #f0e8d8 48%, #e4d6b8 100%);
+}
+
+/* Sparse desert vignette — positions spaced to avoid overlap */
+.dino-cover {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.dino-cover__cloud {
+  position: absolute;
+  width: 46px;
+  height: 14px;
+  background: url('/games/dino/1x-offline-sprite.png') no-repeat -86px -2px;
+  image-rendering: pixelated;
+  opacity: 0.8;
+}
+
+.dino-cover__cloud--a {
+  top: 18px;
+  left: 24px;
+  transform: scale(1.5);
+  transform-origin: left top;
+}
+
+.dino-cover__cloud--b {
+  top: 28px;
+  right: 28px;
+  transform: scale(1.15);
+  transform-origin: right top;
+  opacity: 0.55;
+}
+
+.dino-cover__ground {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 36px;
+  height: 12px;
+  background: url('/games/dino/1x-offline-sprite.png') repeat-x -2px -54px;
+  image-rendering: pixelated;
+}
+
+.dino-cover__cactus {
+  position: absolute;
+  right: 22%;
+  bottom: 36px;
+  width: 25px;
+  height: 50px;
+  background: url('/games/dino/1x-offline-sprite.png') no-repeat -332px -2px;
+  image-rendering: pixelated;
+  transform: scale(1.7);
+  transform-origin: bottom center;
+}
+
+.dino-cover__trex {
+  position: absolute;
+  left: 16%;
+  bottom: 36px;
+  width: 44px;
+  height: 47px;
+  background: url('/games/dino/1x-offline-sprite.png') no-repeat -936px -2px;
+  image-rendering: pixelated;
+  transform: scale(2.1);
+  transform-origin: bottom left;
+  animation: dino-cover-run 0.22s steps(1) infinite;
+}
+
+@keyframes dino-cover-run {
+  0%,
+  49% {
+    background-position: -936px -2px;
+  }
+  50%,
+  100% {
+    background-position: -980px -2px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dino-cover__trex {
+    animation: none;
+  }
+}
+
+.game-card__badge {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: #374151;
+  z-index: 1;
+}
+
+.game-card__body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px 16px 8px;
+  flex: 1;
+}
+
+.game-card__subtitle {
+  margin: 0;
+  font-size: 0.75rem;
+  letter-spacing: 0.02em;
+  color: #6b7280;
+}
+
+.game-card__body h2 {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 700;
+}
+
+.game-card__desc {
+  margin: 2px 0 0;
+  font-size: 0.88rem;
+  line-height: 1.45;
+  color: #4b5563;
+}
+
+.game-card__footer {
+  padding: 8px 16px 16px;
+}
+
+.game-card__cta {
+  display: inline-flex;
+  align-items: center;
+  padding: 8px 14px;
+  border-radius: 8px;
+  background: #12b7f5;
+  color: #fff;
+  font-size: 0.88rem;
+  font-weight: 600;
+}
+
+.game-card__cta--disabled {
+  background: #e5e7eb;
+  color: #9ca3af;
+}
+
+.game-shell__head--dino {
+  justify-content: flex-end;
+  max-width: 720px;
+}
+
+.dino-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.dino-menu-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  box-sizing: border-box;
+  border-radius: 8px;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  color: #111;
+  cursor: pointer;
+}
+
+.dino-menu-btn:hover {
+  border-color: #12b7f5;
+  color: #0b8ec4;
+}
+
+.game-shell__link--accent {
+  background: #12b7f5;
+  border-color: #12b7f5;
+  color: #fff;
+  font-weight: 600;
+}
+
+.game-shell__link--accent:hover {
+  background: #0aa0d8;
+  border-color: #0aa0d8;
+  color: #fff;
+}
+
+.dino-auth-pill {
+  display: inline-flex;
+  align-items: center;
+  height: 40px;
+  padding: 0 12px;
+  border-radius: 8px;
+  border: 1px solid #e5e7eb;
+  background: #fff;
+  font-size: 0.9rem;
+  color: #6b7280;
+}
+
+.dino-auth-pill--ok {
+  border-color: #b7e4c7;
+  background: #ecfdf3;
+  color: #15803d;
+  font-weight: 600;
+}
+
+.dino-player-bar {
+  margin-bottom: 12px;
+}
+
+.dino-player {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: #fff;
+  border: 1px solid #e8eaed;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+}
+
+.dino-player__meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.dino-player__name {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #111;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dino-player__best,
+.dino-player__hint {
+  font-size: 0.8rem;
+  color: #6b7280;
+}
+
+.dino-player__best {
+  color: #0aa0d8;
+  font-weight: 600;
+}
+
+.dino-player__guest-avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: #eef2f5;
+  color: #9ca3af;
+  font-size: 1.1rem;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.dino-player__login {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 36px;
+  padding: 0 16px;
+  border-radius: 8px;
+  background: #12b7f5;
+  color: #fff;
+  font-size: 0.9rem;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.dino-player__login:hover {
+  background: #0aa0d8;
+  color: #fff;
+}
+
+.dino-settings-drawer__login {
+  display: block;
+  margin-top: 4px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #e8f7fd;
+  color: #0aa0d8;
+  font-size: 0.9rem;
+  font-weight: 600;
+  text-align: center;
+  text-decoration: none;
+}
+
+.dino-settings-drawer__login:hover {
+  background: #d6f0fb;
+}
+
+.dino-login-banner {
+  margin: 12px 0 0;
+  text-align: center;
+  font-size: 0.9rem;
+  color: #6b7280;
+}
+
+.dino-login-banner a {
+  color: #0aa0d8;
+  font-weight: 600;
+  text-decoration: none;
+  margin-right: 2px;
+}
+
+.dino-login-banner a:hover {
+  text-decoration: underline;
+}
+
+.dino-settings-drawer__body {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 4px 0;
+}
+
+.dino-settings-drawer__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  font-size: 0.95rem;
+  color: #374151;
+  cursor: pointer;
+}
+
+.dino-frame {
+  background: #fff;
+  border: 1px solid #e9ecef;
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+}
+
+/* Match dinodasher.run game frame proportions */
+.dino-frame--iframe {
+  max-width: 800px;
+  height: 250px;
+  margin: 0 auto;
+  background: #fff;
+}
+
+.dino-iframe {
+  display: block;
+  width: 100%;
+  height: 280px;
+  border: 0;
+  background: #fff;
+  transform: scale(0.9);
+  transform-origin: top center;
+}
+
+@media (max-width: 640px) {
+  .dino-frame--iframe {
+    height: 200px;
+  }
+
+  .dino-iframe {
+    height: 230px;
+    transform: scale(0.82);
+  }
+}
+
+.game-shell--dino .dino-stage {
+  position: relative;
+  max-width: none;
+  margin: 0;
+  min-height: 220px;
+  background: #f7f7f7;
+  border-radius: 0;
+  border: 0;
+  overflow: hidden;
+}
+
+.game-shell--dino .dino-stage.inverted {
+  background: #010101;
+}
+
+.game-shell--dino .offline .interstitial-wrapper {
+  position: relative;
+  max-width: 600px;
+  margin: 0 auto;
+  padding: 28px 16px 24px;
+  color: #2b2b2b;
+  min-height: 180px;
+}
+
+.game-shell--dino .offline .runner-container {
+  top: 28px;
+  left: 16px;
+  right: auto;
+  transform: none !important;
+}
+
+.game-shell--dino .offline .runner-canvas {
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+
+.game-shell--dino #offline-resources {
+  display: none;
+}
+
+.game-shell--dino .icon-offline {
+  display: none;
+}
+
+.dino-layout {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 16px;
+  max-width: 720px;
+  width: 100%;
+  margin: 0 auto;
+}
+
+.dino-play,
+.dino-board {
+  width: 100%;
+  max-width: 100%;
+  flex: 0 0 auto;
+}
+
+.dino-controls-hint {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px 10px;
+  margin-top: 14px;
+  color: #6c757d;
+  font-size: 0.9rem;
+}
+
+.dino-controls-hint__text,
+.dino-controls-hint__or {
+  color: #6c757d;
+}
+
+.dino-keys {
+  display: inline-flex;
+  gap: 6px;
+}
+
+.dino-key {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 36px;
+  min-height: 36px;
+  padding: 6px 10px;
+  border: 1px solid #dee2e6;
+  border-radius: 8px;
+  background: #fff;
+  color: #495057;
+  font-size: 0.95rem;
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+}
+
+.dino-key--space {
+  min-width: 64px;
+  letter-spacing: 0.02em;
+}
+
+.dino-score-line {
+  margin: 10px 0 0;
+  text-align: center;
+  font-size: 0.9rem;
+  color: #374151;
+}
+
+.dino-score-line__hint {
+  color: #0aa0d8;
+}
+
+.dino-score-line__login {
+  color: #0aa0d8;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.dino-score-line__login:hover {
+  text-decoration: underline;
+}
+
+.dino-board {
+  display: block;
+  box-sizing: border-box;
+  background: #fff;
+  border: 1px solid #e8eaed;
+  border-radius: 12px;
+  padding: 14px 16px;
+}
+
+.dino-board h2 {
+  margin: 0 0 10px;
+  font-size: 1rem;
+}
+
+.dino-board__mine {
+  margin: 0 0 10px;
+  font-size: 0.85rem;
+  color: #0aa0d8;
+}
+
+.dino-board__login {
+  margin: 0 0 10px;
+  font-size: 0.88rem;
+  color: #6b7280;
+}
+
+.dino-board__login a {
+  color: #0aa0d8;
+  font-weight: 600;
+  text-decoration: none;
+  margin-right: 2px;
+}
+
+.dino-board__login a:hover {
+  text-decoration: underline;
+}
+
+.dino-board__empty {
+  margin: 0;
+  font-size: 0.85rem;
+  color: #9ca3af;
+}
+
+.dino-board__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.dino-board__list li {
+  display: grid;
+  grid-template-columns: 28px 1fr auto;
+  gap: 8px;
+  align-items: center;
+  font-size: 0.9rem;
+}
+
+.dino-board__rank {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  color: #6b7280;
+}
+
+.dino-board__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dino-board__score {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}

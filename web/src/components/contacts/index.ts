@@ -1,6 +1,8 @@
 ﻿export { ContactList } from './ContactList'
 export { FriendProfile } from './FriendProfile'
+export { MemberProfile } from './MemberProfile'
 export { FriendRequestsPane } from './FriendRequestsPane'
+export { GroupJoinRequestsPane } from './GroupJoinRequestsPane'
 export { GroupProfile } from './GroupProfile'
 export { AddContactDialog } from './AddContactDialog'
 export { SessionList } from './SessionList'
