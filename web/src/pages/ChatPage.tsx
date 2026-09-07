@@ -71,8 +71,14 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
   useEffect(() => {
     callController.setUserId(user.id)
     callController.start()
-    return () => callController.stop()
+    return () => {
+      void callController.stop()
+    }
   }, [user.id])
+
+  const [callUi, setCallUi] = useState(callController.state)
+  useEffect(() => callController.subscribe(() => setCallUi({ ...callController.state })), [])
+
   const [contactSection, setContactSection] = useState<ContactSection>('friends')
   const [right, setRight] = useState<RightSurface>({ kind: 'empty' })
   const [conversations, setConversations] = useState<Conversation[]>([])
@@ -83,6 +89,11 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
   const [groupJoins, setGroupJoins] = useState<GroupJoinRequest[]>([])
   const [reqBusyId, setReqBusyId] = useState<string | null>(null)
   const [activeId, setActiveId] = useState<string | null>(null)
+
+  useEffect(() => {
+    void callController.watchConversation(activeId)
+  }, [activeId])
+
   const [messages, setMessages] = useState<Message[]>([])
   const [draft, setDraft] = useState('')
   const [filter, setFilter] = useState('')
@@ -1562,14 +1573,72 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
             }
             onVoiceCall={
               activeId
-                ? () => setCallSetup({ kind: 'voice', conversationId: activeId })
+                ? () => {
+                    const ongoing = callUi.conversationCall
+                    if (ongoing && ongoing.conversationId === activeId) {
+                      const joined = ongoing.participants.some(
+                        (p) => p.userId === user.id && p.state === 'joined',
+                      )
+                      if (joined || callUi.active?.id === ongoing.id) {
+                        callController.restore()
+                        return
+                      }
+                      void callController.joinCall(ongoing.id, { cameraOff: true }).catch((e) => {
+                        MessagePlugin.error(apiErrorMessage(e, '无法加入语音通话'))
+                      })
+                      return
+                    }
+                    setCallSetup({ kind: 'voice', conversationId: activeId })
+                  }
                 : undefined
             }
             onVideoCall={
               activeId
-                ? () => setCallSetup({ kind: 'video', conversationId: activeId })
+                ? () => {
+                    const ongoing = callUi.conversationCall
+                    if (ongoing && ongoing.conversationId === activeId) {
+                      const joined = ongoing.participants.some(
+                        (p) => p.userId === user.id && p.state === 'joined',
+                      )
+                      if (joined || callUi.active?.id === ongoing.id) {
+                        callController.restore()
+                        return
+                      }
+                      void callController.joinCall(ongoing.id, { cameraOff: true }).catch((e) => {
+                        MessagePlugin.error(apiErrorMessage(e, '无法加入视频通话'))
+                      })
+                      return
+                    }
+                    setCallSetup({ kind: 'video', conversationId: activeId })
+                  }
                 : undefined
             }
+            ongoingCall={
+              callUi.conversationCall &&
+              activeId &&
+              callUi.conversationCall.conversationId === activeId
+                ? callUi.conversationCall
+                : null
+            }
+            selfInOngoingCall={
+              !!(
+                callUi.active &&
+                activeId &&
+                callUi.active.conversationId === activeId
+              )
+            }
+            ongoingCallBusy={callUi.connecting}
+            onJoinOngoingCall={() => {
+              const id = callUi.conversationCall?.id
+              if (!id) return
+              void callController.joinCall(id, { cameraOff: true }).catch((e) => {
+                MessagePlugin.error(apiErrorMessage(e, '无法加入通话'))
+              })
+            }}
+            onLeaveOngoingCall={() => {
+              void callController.hangup()
+            }}
+            onReturnToOngoingCall={() => callController.restore()}
             onConversationPatch={(patch) => {
               if (!activeId) return
               const apply = (c: Conversation) =>
@@ -1679,12 +1748,19 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
               setCallSetup(null)
             })
             .catch((e) => {
-              MessagePlugin.error(
-                apiErrorMessage(
-                  e,
-                  result.kind === 'video' ? '无法发起视频通话' : '无法发起语音通话',
-                ),
+              const msg = apiErrorMessage(
+                e,
+                result.kind === 'video' ? '无法发起视频通话' : '无法发起语音通话',
               )
+              MessagePlugin.error(msg)
+              if (
+                String((e as { message?: string })?.message || '').includes(
+                  'conversation already has an active call',
+                ) ||
+                msg.includes('已有通话')
+              ) {
+                void callController.watchConversation(conversationId)
+              }
             })
             .finally(() => setCallSetupBusy(false))
         }}

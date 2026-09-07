@@ -13,6 +13,7 @@ import {
 } from 'tdesign-icons-react'
 import { Button, Dialog, MessagePlugin, Popup, Textarea } from 'tdesign-react'
 import { api, type Conversation, type GroupAnnouncement, type Message, type User } from '@/api'
+import type { CallRoom } from '@/lib/call/types'
 import {
   conversationTitle,
   formatFileSize,
@@ -54,6 +55,13 @@ type Props = {
   onOpenSender?: (senderId: string) => void
   onVoiceCall?: () => void
   onVideoCall?: () => void
+  /** 会话内进行中的通话（QQ 式顶栏） */
+  ongoingCall?: CallRoom | null
+  selfInOngoingCall?: boolean
+  ongoingCallBusy?: boolean
+  onJoinOngoingCall?: () => void
+  onLeaveOngoingCall?: () => void
+  onReturnToOngoingCall?: () => void
   onConversationPatch?: (patch: Partial<Conversation>) => void
   listRef: React.RefObject<HTMLDivElement | null>
   showBack: boolean
@@ -153,6 +161,12 @@ export function ChatPane({
   onOpenSender,
   onVoiceCall,
   onVideoCall,
+  ongoingCall,
+  selfInOngoingCall,
+  ongoingCallBusy,
+  onJoinOngoingCall,
+  onLeaveOngoingCall,
+  onReturnToOngoingCall,
   onConversationPatch,
   listRef,
   showBack,
@@ -601,6 +615,59 @@ export function ChatPane({
           </>
         )}
       </header>
+
+      {ongoingCall && !selectMode && (
+        <div className="im-call-banner">
+          <div className="im-call-banner__main">
+            <span className="im-call-banner__tag">
+              {ongoingCall.kind === 'video' ? '视频通话' : '语音通话'}
+            </span>
+            <span className="im-call-banner__text">
+              {ongoingCall.status === 'ringing' ? '正在呼叫' : '进行中'}
+              {` · ${
+                ongoingCall.participants.filter((p) => p.state === 'joined').length
+              } 人`}
+            </span>
+          </div>
+          <div className="im-call-banner__actions">
+            {selfInOngoingCall ? (
+              <>
+                {onReturnToOngoingCall && (
+                  <button
+                    type="button"
+                    className="im-call-banner__btn"
+                    disabled={ongoingCallBusy}
+                    onClick={onReturnToOngoingCall}
+                  >
+                    返回通话
+                  </button>
+                )}
+                {onLeaveOngoingCall && (
+                  <button
+                    type="button"
+                    className="im-call-banner__btn im-call-banner__btn--danger"
+                    disabled={ongoingCallBusy}
+                    onClick={onLeaveOngoingCall}
+                  >
+                    退出
+                  </button>
+                )}
+              </>
+            ) : (
+              onJoinOngoingCall && (
+                <button
+                  type="button"
+                  className="im-call-banner__btn im-call-banner__btn--primary"
+                  disabled={ongoingCallBusy}
+                  onClick={onJoinOngoingCall}
+                >
+                  加入
+                </button>
+              )
+            )}
+          </div>
+        </div>
+      )}
 
       {conversation?.type === 'group' && pendingAnn && !selectMode && (
         <button

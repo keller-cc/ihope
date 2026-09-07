@@ -46,6 +46,7 @@ export function GroupAnnouncementDialog({
   const ackingRef = useRef<string | null>(null)
   const listRef = useRef<HTMLDivElement | null>(null)
   const loadGen = useRef(0)
+  const loadingMoreRef = useRef(false)
 
   const applyPage = useCallback(
     (
@@ -54,7 +55,11 @@ export function GroupAnnouncementDialog({
       pageTotal: number,
       append: boolean,
     ) => {
-      setList((prev) => (append ? [...prev, ...items] : items))
+      setList((prev) => {
+        if (!append) return items
+        const seen = new Set(prev.map((x) => x.id))
+        return [...prev, ...items.filter((x) => !seen.has(x.id))]
+      })
       setHasMore(pageHasMore)
       setTotal(pageTotal)
     },
@@ -67,27 +72,36 @@ export function GroupAnnouncementDialog({
     try {
       const res = await api.listAnnouncements(group.id, { limit: PAGE_SIZE })
       if (gen !== loadGen.current) {
-        return { items: [] as GroupAnnouncement[], total: 0 }
+        return {
+          items: [] as GroupAnnouncement[],
+          total: 0,
+          pending: null as GroupAnnouncement | null,
+        }
       }
       const items = res.announcements || []
       const pageTotal = res.total ?? items.length
       applyPage(items, !!res.hasMore, pageTotal, false)
-      return { items, total: pageTotal }
+      return { items, total: pageTotal, pending: res.pending ?? null }
     } catch (e) {
       if (gen === loadGen.current) {
         MessagePlugin.error(apiErrorMessage(e, '加载公告失败'))
         applyPage([], false, 0, false)
       }
-      return { items: [] as GroupAnnouncement[], total: 0 }
+      return {
+        items: [] as GroupAnnouncement[],
+        total: 0,
+        pending: null as GroupAnnouncement | null,
+      }
     } finally {
       if (gen === loadGen.current) setLoading(false)
     }
   }, [applyPage, group.id])
 
   const loadMore = useCallback(async () => {
-    if (!hasMore || loadingMore || loading) return
+    if (!hasMore || loadingMoreRef.current || loading) return
     const last = list[list.length - 1]
     if (!last) return
+    loadingMoreRef.current = true
     setLoadingMore(true)
     const gen = loadGen.current
     try {
@@ -102,20 +116,21 @@ export function GroupAnnouncementDialog({
         MessagePlugin.error(apiErrorMessage(e, '加载更多失败'))
       }
     } finally {
+      loadingMoreRef.current = false
       if (gen === loadGen.current) setLoadingMore(false)
     }
-  }, [applyPage, group.id, hasMore, list, loading, loadingMore, total])
+  }, [applyPage, group.id, hasMore, list, loading, total])
 
   const onListScroll = () => {
     const el = listRef.current
-    if (!el || !hasMore || loadingMore) return
+    if (!el || !hasMore || loadingMoreRef.current) return
     if (el.scrollTop + el.clientHeight >= el.scrollHeight - 48) {
       void loadMore()
     }
   }
 
   useEffect(() => {
-    if (!visible || mode !== 'list' || !hasMore || loading || loadingMore) return
+    if (!visible || mode !== 'list' || !hasMore || loading || loadingMoreRef.current) return
     const el = listRef.current
     if (!el) return
     if (el.scrollHeight <= el.clientHeight + 8) {
@@ -128,12 +143,13 @@ export function GroupAnnouncementDialog({
     ackingRef.current = a.id
     try {
       const res = await api.ackAnnouncement(group.id, a.id)
+      const updated = res.announcement
       setList((prev) =>
-        prev.map((x) => (x.id === a.id ? { ...x, acked: true, ackCount: (x.ackCount || 0) + 1 } : x)),
+        prev.map((x) => (x.id === a.id ? { ...x, ...updated, acked: true } : x)),
       )
       onChanged({
         pendingAnnouncement: res.nextPending ?? null,
-        announcement: list[0]?.body || a.body,
+        announcement: list[0]?.body || updated.body || a.body,
         announcementCount: total || group.announcementCount,
       })
     } catch {
@@ -198,7 +214,7 @@ export function GroupAnnouncementDialog({
       } else {
         const a = await api.createAnnouncement(group.id, draft.trim(), false)
         MessagePlugin.success('公告已发布')
-        const { items, total: pageTotal } = await loadFirst()
+        const { total: pageTotal } = await loadFirst()
         onChanged({
           announcement: a.body,
           announcementCount: pageTotal,
@@ -221,11 +237,11 @@ export function GroupAnnouncementDialog({
       MessagePlugin.success('已删除公告')
       if (expandedId === a.id) setExpandedId(null)
       if (current?.id === a.id) setCurrent(null)
-      const { items, total: pageTotal } = await loadFirst()
+      const { items, total: pageTotal, pending } = await loadFirst()
       onChanged({
         announcement: items[0]?.body || '',
         announcementCount: pageTotal,
-        pendingAnnouncement: nextPending(items),
+        pendingAnnouncement: pending ?? nextPending(items),
       })
       setMode('list')
     } catch (e) {

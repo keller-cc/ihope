@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { SettingIcon } from 'tdesign-icons-react'
 import { Drawer, Switch } from 'tdesign-react'
 import {
   api,
@@ -172,7 +171,7 @@ export function DinoGamePage() {
             aria-expanded={settingsOpen}
             onClick={() => setSettingsOpen(true)}
           >
-            <SettingIcon size="20px" />
+            <span className="im-ico im-ico--set" aria-hidden />
           </button>
           <Link className="game-shell__link" to="/game">
             返回

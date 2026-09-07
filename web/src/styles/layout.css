@@ -250,7 +250,7 @@ html.im-kb-open .im-frame--mobile.im-frame--chat .im-tabbar {
   height: 16px;
   padding: 0 4px;
   border-radius: 999px;
-  background: #f74c31;
+  background: var(--im-color-danger);
   color: #fff;
   font-size: 0.62rem;
   font-weight: 700;

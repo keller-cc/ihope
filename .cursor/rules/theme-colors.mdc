@@ -1,0 +1,38 @@
+---
+description: 聊天界面颜色必须走「随心调」主题 token，禁止硬编码品牌色
+globs: web/src/**/*.{tsx,ts,css}
+alwaysApply: false
+---
+
+# 随心调主题色（Web IM）
+
+聊天相关 UI 的颜色以用户「随心调」为准，**不要写死**蓝/青绿等品牌色。
+
+## 权威来源
+
+| 用途 | 位置 |
+|------|------|
+| 默认 token | `web/src/styles/tokens.css`（`--im-color-*`、`--td-brand-*`） |
+| 用户主题写入 | `web/src/lib/chatBg.ts` → `chatThemeVars` / `applyBrandPalette` |
+| 挂载点 | `ChatPage` 把变量同步到壳层与 `:root`（含 Dialog / Drawer portal） |
+
+随心调改的是 **accent（主题色）**、气泡、壁纸/透明度等；主题色会覆盖整板 `--td-brand-color-*` 与 `--im-color-primary*`，从而驱动 TDesign `theme="primary"` 按钮与自定义样式。
+
+## 必须遵守
+
+1. **主操作 / 链接 / 选中 / focus**：用 `var(--im-color-primary)`（或 soft / deep），或 TDesign `theme="primary"`。
+2. **危险操作**：`var(--im-color-danger)` 或 `theme="danger"`。
+3. **次要文字**：`var(--im-color-muted)`；正文 `var(--im-color-ink)`；分割线 `var(--im-color-line)`。
+4. **禁止**在聊天 UI 里写 `#1677ff`、`#12b7f5`、`#2f6fed` 等固定「品牌蓝」作为交互色（fallback 仅允许写在 `var(--im-color-primary, …)` 第二参数，且与 `tokens.css` 默认一致）。
+5. **不要**再引入未赋值的 `--im-color-accent`；统一用 `--im-color-primary`。
+6. 群成员 / 好友资料等「发消息」主按钮：用 `<Button theme="primary" block>`，与好友资料页一致，随主题色变化。
+
+## 例外
+
+- 语义固定色可保留：在线绿点、公告条暖色提示等（非品牌主色）。
+- 游戏壳（`web/src/games/**`）可独立配色，不必跟随心调。
+
+## 改 UI 前自检
+
+- 在随心调换一个非默认主题色后，按钮、链接、hover、选中是否跟着变？
+- 新样式是否引用了 token，而不是新硬编码 HEX？

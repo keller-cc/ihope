@@ -664,7 +664,7 @@ export function GroupProfile({
                 ...group,
                 announcement: res.announcements[0]?.body || '',
                 announcementCount: res.total ?? res.announcements.length,
-                pendingAnnouncement: res.announcements.find((a) => !a.acked) || null,
+                pendingAnnouncement: res.pending ?? null,
               })
             })
         }}

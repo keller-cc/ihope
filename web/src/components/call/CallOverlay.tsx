@@ -1,11 +1,11 @@
 ﻿import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import {
-  AdjustmentIcon,
   CallIcon,
   CallOffIcon,
+  Camera2Icon,
   CameraOffIcon,
+  LoudspeakerIcon,
   Microphone1Icon,
-  SoundHighIcon,
   SoundMute1Icon,
   SoundMuteIcon,
   VideoCamera1Icon,
@@ -256,7 +256,6 @@ export function CallOverlay({ selfName, selfAvatar, resolveTitle }: Props) {
   /** false = 对方大屏、自己小窗；true = 自己大屏、对方小窗 */
   const [selfOnMain, setSelfOnMain] = useState(false)
   const [focusRemoteId, setFocusRemoteId] = useState<string | null>(null)
-  const [volumeOpen, setVolumeOpen] = useState(false)
   const room = state.active
   const isVideo = room?.kind === 'video'
   const ringing = room?.status === 'ringing'
@@ -267,7 +266,6 @@ export function CallOverlay({ selfName, selfAvatar, resolveTitle }: Props) {
   useEffect(() => {
     setSelfOnMain(false)
     setFocusRemoteId(null)
-    setVolumeOpen(false)
   }, [room?.id])
 
   useEffect(() => {
@@ -292,7 +290,7 @@ export function CallOverlay({ selfName, selfAvatar, resolveTitle }: Props) {
     return undefined
   }, [room?.id, ringing, connecting])
 
-  if (!room) return null
+  if (!room || state.minimized) return null
 
   const peer = room.participants.find((p) => p.userId !== callController.userId)
   const title =
@@ -315,10 +313,21 @@ export function CallOverlay({ selfName, selfAvatar, resolveTitle }: Props) {
   return (
     <div className={isVideo ? 'im-call-overlay im-call-overlay--video' : 'im-call-overlay'}>
       <div className="im-call-overlay__head">
-        <strong>{title}</strong>
-        <span>
-          {room.kind === 'video' ? '视频通话' : '语音通话'} · {statusText}
-        </span>
+        <div className="im-call-overlay__head-text">
+          <strong>{title}</strong>
+          <span>
+            {room.kind === 'video' ? '视频通话' : '语音通话'} · {statusText}
+          </span>
+        </div>
+        <button
+          type="button"
+          className="im-call-overlay__minimize"
+          title="最小化，回到聊天（可从顶部通话条返回）"
+          aria-label="最小化通话"
+          onClick={() => callController.minimize()}
+        >
+          最小化
+        </button>
       </div>
 
       <div
@@ -463,77 +472,75 @@ export function CallOverlay({ selfName, selfAvatar, resolveTitle }: Props) {
         )}
       </div>
 
-      <div className="im-call-overlay__bar">
-        {volumeOpen && (
-          <div className="im-call-volume" role="dialog" aria-label="音量调节">
-            <label className="im-call-volume__row">
-              <span>麦克风</span>
-              <input
-                type="range"
-                min={0}
-                max={100}
-                value={Math.round(state.micVolume * 100)}
-                disabled={state.muted}
-                onChange={(e) => callController.setMicVolume(Number(e.target.value) / 100)}
-              />
-              <em>{Math.round(state.micVolume * 100)}%</em>
-            </label>
-            <label className="im-call-volume__row">
-              <span>扬声器</span>
-              <input
-                type="range"
-                min={0}
-                max={100}
-                value={Math.round(state.speakerVolume * 100)}
-                disabled={state.speakerMuted}
-                onChange={(e) => callController.setSpeakerVolume(Number(e.target.value) / 100)}
-              />
-              <em>{Math.round(state.speakerVolume * 100)}%</em>
-            </label>
-          </div>
-        )}
+      <div className="im-call-overlay__bar im-call-overlay__bar--live">
         <button
           type="button"
-          className={state.muted ? 'im-call-ctrl is-off' : 'im-call-ctrl'}
+          className={
+            state.muted
+              ? 'im-call-ctrl im-call-ctrl--labeled is-off'
+              : 'im-call-ctrl im-call-ctrl--labeled'
+          }
           title={state.muted ? '取消静音' : '静音'}
           onClick={() => void callController.toggleMute()}
         >
-          {state.muted ? <SoundMute1Icon size="22px" /> : <Microphone1Icon size="22px" />}
+          {state.muted ? <SoundMute1Icon size="24px" /> : <Microphone1Icon size="24px" />}
+          <span className="im-call-ctrl__label">{state.muted ? '已静音' : '静音'}</span>
         </button>
         <button
           type="button"
-          className={state.speakerMuted ? 'im-call-ctrl is-off' : 'im-call-ctrl'}
-          title={state.speakerMuted ? '取消扬声器静音' : '扬声器静音'}
+          className={
+            state.speakerMuted
+              ? 'im-call-ctrl im-call-ctrl--labeled is-off'
+              : 'im-call-ctrl im-call-ctrl--labeled'
+          }
+          title={state.speakerMuted ? '打开扬声器' : '扬声器'}
           onClick={() => callController.toggleSpeaker()}
         >
-          {state.speakerMuted ? <SoundMuteIcon size="22px" /> : <SoundHighIcon size="22px" />}
+          {state.speakerMuted ? <SoundMuteIcon size="24px" /> : <LoudspeakerIcon size="24px" />}
+          <span className="im-call-ctrl__label">
+            {state.speakerMuted ? '听筒' : '扬声器'}
+          </span>
         </button>
         <button
           type="button"
-          className={volumeOpen ? 'im-call-ctrl is-active' : 'im-call-ctrl'}
-          title="调节麦克风与扬声器音量"
-          onClick={() => setVolumeOpen((v) => !v)}
+          className="im-call-ctrl im-call-ctrl--hangup im-call-ctrl--labeled"
+          title={ringing || connecting ? '取消' : '挂断'}
+          onClick={() => void callController.hangup()}
         >
-          <AdjustmentIcon size="22px" />
+          <CallOffIcon size="28px" />
+          <span className="im-call-ctrl__label">
+            {ringing || connecting ? '取消' : '挂断'}
+          </span>
         </button>
         {isVideo && (
           <button
             type="button"
-            className={state.cameraOff ? 'im-call-ctrl is-off' : 'im-call-ctrl'}
+            className={
+              state.cameraOff
+                ? 'im-call-ctrl im-call-ctrl--labeled is-off'
+                : 'im-call-ctrl im-call-ctrl--labeled'
+            }
             title={state.cameraOff ? '打开摄像头' : '关闭摄像头'}
             onClick={() => void callController.toggleCamera()}
           >
-            {state.cameraOff ? <CameraOffIcon size="22px" /> : <VideoCamera1Icon size="22px" />}
+            {state.cameraOff ? <CameraOffIcon size="24px" /> : <VideoCamera1Icon size="24px" />}
+            <span className="im-call-ctrl__label">
+              {state.cameraOff ? '摄像头关' : '摄像头'}
+            </span>
           </button>
         )}
-        <button
-          type="button"
-          className="im-call-ctrl im-call-ctrl--hangup"
-          title="挂断"
-          onClick={() => void callController.hangup()}
-        >
-          <CallOffIcon size="24px" />
-        </button>
+        {isVideo && (
+          <button
+            type="button"
+            className="im-call-ctrl im-call-ctrl--labeled"
+            title="切换摄像头"
+            aria-label="切换摄像头"
+            onClick={() => void callController.switchCamera()}
+          >
+            <Camera2Icon size="24px" />
+            <span className="im-call-ctrl__label">翻转</span>
+          </button>
+        )}
       </div>
     </div>
   )
@@ -591,7 +598,7 @@ export function IncomingCallModal({
               setAccepting(true)
               ringtone.stop()
               onOpenChat?.(incoming.conversationId)
-              void callController.acceptIncoming().catch(() => {
+              void callController.acceptIncoming({ cameraOff: true }).catch(() => {
                 setAccepting(false)
               })
             }}

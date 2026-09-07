@@ -40,7 +40,7 @@ export function CallSetupDialog({
 }: Props) {
   const isVideo = kind === 'video'
   const [muted, setMuted] = useState(false)
-  const [cameraOff, setCameraOff] = useState(false)
+  const [cameraOff, setCameraOff] = useState(true)
   const [stream, setStream] = useState<MediaStream | null>(null)
   const [prepError, setPrepError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)

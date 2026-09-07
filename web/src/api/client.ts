@@ -134,6 +134,13 @@ export function apiErrorMessage(e: unknown, fallback: string): string {
     'hope id taken': '该 IHope 号已被占用',
     'quotes disabled': '今日金句未配置',
     'quotes error': '无法读取今日金句',
+    'already in a call': '你已在通话中',
+    'conversation already has an active call': '当前会话已有通话，请从上方加入',
+    'call is full': '通话人数已满',
+    'call ended': '通话已结束',
+    'invalid kind': '通话类型无效',
+    'calls disabled': '通话功能未启用',
+    'need at least 2 members': '至少需要两名成员才能发起通话',
     'already friends': '已经是好友',
     'friend request pending': '已发送过好友申请，请等待对方处理',
     'join request pending': '已发送过入群申请，请等待管理员处理',
@@ -329,6 +336,7 @@ export const api = {
       announcements: GroupAnnouncement[]
       hasMore: boolean
       total: number
+      pending: GroupAnnouncement | null
     }>(`/api/conversations/${conversationId}/announcements${qs ? `?${qs}` : ''}`)
   },
   createAnnouncement: (conversationId: string, body: string, requireConfirm = false) =>
@@ -592,6 +600,10 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ kind }),
     }),
+  getActiveCall: (conversationId: string) =>
+    request<{ call: CallRoom | null }>(`/api/conversations/${conversationId}/calls/active`),
+  listIncomingCalls: () =>
+    request<{ calls: CallRoom[] }>('/api/calls/incoming'),
   getCall: (callId: string) => request<CallRoom>(`/api/calls/${callId}`),
   acceptCall: (callId: string) =>
     request<CallRoom>(`/api/calls/${callId}/accept`, { method: 'POST' }),

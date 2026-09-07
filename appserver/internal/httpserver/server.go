@@ -133,6 +133,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/conversations/{id}/messages/forward", s.withAuth(s.handleForwardMessages))
 	mux.HandleFunc("POST /api/conversations/{id}/messages/{mid}/recall", s.withAuth(s.handleRecallMessage))
 	mux.HandleFunc("POST /api/conversations/{id}/calls", s.withAuth(s.handleStartCall))
+	mux.HandleFunc("GET /api/conversations/{id}/calls/active", s.withAuth(s.handleActiveCall))
+	mux.HandleFunc("GET /api/calls/incoming", s.withAuth(s.handleIncomingCalls))
 	mux.HandleFunc("GET /api/calls/ice", s.withAuth(s.handleCallICE))
 	mux.HandleFunc("GET /api/calls/{id}", s.withAuth(s.handleGetCall))
 	mux.HandleFunc("POST /api/calls/{id}/accept", s.withAuth(s.handleAcceptCall))
@@ -775,10 +777,12 @@ func (s *Server) handleListAnnouncements(w http.ResponseWriter, r *http.Request,
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	pending, _ := s.chat.PendingAnnouncement(r.Context(), id, userID)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"announcements": list,
 		"hasMore":       hasMore,
 		"total":         total,
+		"pending":       pending,
 	})
 }
 

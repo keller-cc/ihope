@@ -101,6 +101,8 @@ type Service struct {
 	byID     map[string]*room
 	byConv   map[string]string // active conversation -> call id
 	userCall map[string]string // user -> active call id
+	// WS 断开后延迟挂断，避免刷新留下幽灵占用
+	disconnectTimers map[string]*time.Timer
 }
 
 func New(h *hub.Hub, mem Membership, ice []ICEServer) *Service {
@@ -108,12 +110,13 @@ func New(h *hub.Hub, mem Membership, ice []ICEServer) *Service {
 		ice = []ICEServer{{URLs: []string{"stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"}}}
 	}
 	return &Service{
-		hub:      h,
-		mem:      mem,
-		ice:      ice,
-		byID:     make(map[string]*room),
-		byConv:   make(map[string]string),
-		userCall: make(map[string]string),
+		hub:               h,
+		mem:               mem,
+		ice:               ice,
+		byID:              make(map[string]*room),
+		byConv:            make(map[string]string),
+		userCall:          make(map[string]string),
+		disconnectTimers:  make(map[string]*time.Timer),
 	}
 }
 
@@ -181,7 +184,7 @@ func (s *Service) Start(ctx context.Context, conversationID, userID, kind string
 		if m.ID == userID {
 			state = "joined"
 			audio = true
-			video = kind == "video"
+			video = false // 发起方默认关摄像头，客户端可再开
 		}
 		r.peers[m.ID] = &Peer{
 			UserID:    m.ID,
@@ -246,6 +249,97 @@ func (s *Service) Get(callID, userID string) (*Room, error) {
 	return r.snapshotLocked(), nil
 }
 
+// ActiveByConversation returns the ringing/active call in a conversation, if any.
+func (s *Service) ActiveByConversation(ctx context.Context, conversationID, userID string) (*Room, error) {
+	ok, err := s.mem.IsMember(ctx, conversationID, userID)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, ErrForbidden
+	}
+	s.mu.Lock()
+	callID, exists := s.byConv[conversationID]
+	s.mu.Unlock()
+	if !exists {
+		return nil, nil
+	}
+	r := s.getRoom(callID)
+	if r == nil {
+		return nil, nil
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.status != "ringing" && r.status != "active" {
+		return nil, nil
+	}
+	if r.peers[userID] == nil {
+		return nil, ErrForbidden
+	}
+	return r.snapshotLocked(), nil
+}
+
+const disconnectHangupDelay = 15 * time.Second
+
+// OnUserConnect cancels a pending disconnect hangup (e.g. page refresh reconnect).
+func (s *Service) OnUserConnect(userID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if t := s.disconnectTimers[userID]; t != nil {
+		t.Stop()
+		delete(s.disconnectTimers, userID)
+	}
+}
+
+// PendingInvites returns ringing/active rooms where the user is still invited (未接听).
+func (s *Service) PendingInvites(userID string) []*Room {
+	s.mu.Lock()
+	rooms := make([]*room, 0, len(s.byID))
+	for _, r := range s.byID {
+		rooms = append(rooms, r)
+	}
+	s.mu.Unlock()
+
+	var out []*Room
+	for _, r := range rooms {
+		r.mu.Lock()
+		if (r.status == "ringing" || r.status == "active") && r.peers[userID] != nil && r.peers[userID].State == "invited" {
+			out = append(out, r.snapshotLocked())
+		}
+		r.mu.Unlock()
+	}
+	return out
+}
+
+// ResyncInvites re-pushes call.invite so a newly logged-in client shows accept/reject UI.
+func (s *Service) ResyncInvites(userID string) {
+	for _, snap := range s.PendingInvites(userID) {
+		s.hub.PublishToUser(userID, map[string]any{
+			"type": "call.invite",
+			"call": snap,
+		})
+	}
+}
+
+// OnUserDisconnect schedules hangup if the user does not reconnect soon.
+func (s *Service) OnUserDisconnect(userID string) {
+	s.mu.Lock()
+	if old := s.disconnectTimers[userID]; old != nil {
+		old.Stop()
+	}
+	s.disconnectTimers[userID] = time.AfterFunc(disconnectHangupDelay, func() {
+		s.mu.Lock()
+		callID := s.userCall[userID]
+		delete(s.disconnectTimers, userID)
+		s.mu.Unlock()
+		if callID == "" {
+			return
+		}
+		_ = s.Hangup(context.Background(), callID, userID)
+	})
+	s.mu.Unlock()
+}
+
 func (s *Service) Accept(ctx context.Context, callID, userID string) (*Room, error) {
 	r := s.getRoom(callID)
 	if r == nil {
@@ -292,7 +386,7 @@ func (s *Service) Accept(ctx context.Context, callID, userID string) (*Room, err
 	}
 	p.State = "joined"
 	p.Audio = true
-	p.Video = r.kind == "video"
+	p.Video = false // 加入/接听默认不开摄像头
 	if r.status == "ringing" {
 		r.status = "active"
 		now := time.Now().UTC()
@@ -423,6 +517,7 @@ func (s *Service) Hangup(ctx context.Context, callID, userID string) error {
 		endNow = true
 	}
 	peerSnap := peerCopy(p)
+	roomSnap := r.snapshotLocked()
 	r.mu.Unlock()
 
 	s.mu.Lock()
@@ -434,6 +529,7 @@ func (s *Service) Hangup(ctx context.Context, callID, userID string) error {
 			"type":   "call.peer_left",
 			"callId": callID,
 			"peer":   peerSnap,
+			"call":   roomSnap,
 		})
 	}
 

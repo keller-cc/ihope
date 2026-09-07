@@ -31,6 +31,32 @@ func (s *Server) handleStartCall(w http.ResponseWriter, r *http.Request, userID 
 	writeJSON(w, http.StatusCreated, room)
 }
 
+func (s *Server) handleActiveCall(w http.ResponseWriter, r *http.Request, userID string) {
+	if s.calls == nil {
+		writeErr(w, http.StatusServiceUnavailable, "calls disabled")
+		return
+	}
+	room, err := s.calls.ActiveByConversation(r.Context(), r.PathValue("id"), userID)
+	if err != nil {
+		writeCallErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"call": room})
+}
+
+func (s *Server) handleIncomingCalls(w http.ResponseWriter, r *http.Request, userID string) {
+	if s.calls == nil {
+		writeErr(w, http.StatusServiceUnavailable, "calls disabled")
+		return
+	}
+	_ = r
+	list := s.calls.PendingInvites(userID)
+	if list == nil {
+		list = []*call.Room{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"calls": list})
+}
+
 func (s *Server) handleGetCall(w http.ResponseWriter, r *http.Request, userID string) {
 	if s.calls == nil {
 		writeErr(w, http.StatusServiceUnavailable, "calls disabled")
@@ -123,9 +149,18 @@ func (s *Server) handleUserWS(w http.ResponseWriter, r *http.Request) {
 
 	s.hub.UserOnline(userID)
 	defer s.hub.UserOffline(userID)
+	if s.calls != nil {
+		s.calls.OnUserConnect(userID)
+		defer s.calls.OnUserDisconnect(userID)
+	}
 
 	ch := s.hub.SubscribeUser(userID)
 	defer s.hub.UnsubscribeUser(userID, ch)
+
+	// 订阅就绪后再补发未接来电，刚登录可看到接听/拒绝
+	if s.calls != nil {
+		s.calls.ResyncInvites(userID)
+	}
 
 	done := make(chan struct{})
 	go func() {

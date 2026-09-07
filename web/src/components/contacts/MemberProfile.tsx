@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { ChevronRightIcon } from 'tdesign-icons-react'
-import { Dialog, Input, MessagePlugin } from 'tdesign-react'
+import { Button, Dialog, Input, MessagePlugin } from 'tdesign-react'
 import { api, apiErrorMessage, type Contact, type Conversation } from '@/api'
 import { Avatar } from '@/components/Avatar'
 
@@ -164,17 +164,15 @@ export function MemberProfile({
         </div>
 
         {!isSelf && (
-          <div className="im-set-group">
+          <div className="im-set-actions">
             {isFriend ? (
-              <button type="button" className="im-set-cell" onClick={onMessage}>
-                <span className="im-set-cell__label">发消息</span>
-                <ChevronRightIcon size="16px" className="im-set-cell__arrow" />
-              </button>
+              <Button theme="primary" block onClick={onMessage}>
+                发消息
+              </Button>
             ) : (
-              <button type="button" className="im-set-cell" onClick={() => setAddOpen(true)}>
-                <span className="im-set-cell__label">加好友</span>
-                <ChevronRightIcon size="16px" className="im-set-cell__arrow" />
-              </button>
+              <Button theme="primary" variant="outline" block onClick={() => setAddOpen(true)}>
+                加好友
+              </Button>
             )}
           </div>
         )}

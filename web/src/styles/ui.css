@@ -16,7 +16,11 @@
 }
 
 .im-avatar:not(:has(img)) {
-  background: linear-gradient(145deg, #5ec8f0, var(--im-color-primary));
+  background: linear-gradient(
+    145deg,
+    color-mix(in srgb, var(--im-color-primary) 55%, #fff),
+    var(--im-color-primary)
+  );
 }
 
 .im-avatar--sm {
@@ -205,7 +209,7 @@
   height: 18px;
   padding: 0 5px;
   border-radius: 999px;
-  background: #f74c31;
+  background: var(--im-color-danger);
   color: #fff;
   font-size: 0.68rem;
   font-weight: 700;
