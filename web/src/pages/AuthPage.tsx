@@ -48,8 +48,22 @@ export function AuthPage({ onAuthed }: Props) {
   }
 
   const onRegister = async () => {
-    if (!email.trim() || !username.trim()) {
+    const emailVal = email.trim()
+    const usernameVal = username.trim()
+    if (!emailVal || !usernameVal) {
       MessagePlugin.warning('请填写邮箱和用户名')
+      return
+    }
+    if (!emailVal.includes('@')) {
+      MessagePlugin.warning(
+        usernameVal.includes('@')
+          ? '邮箱和用户名好像填反了：上面填邮箱（含 @），下面填用户名'
+          : '请填写有效邮箱，例如 alice@example.com',
+      )
+      return
+    }
+    if (usernameVal.includes('@')) {
+      MessagePlugin.warning('用户名不要填邮箱，请填写显示名称（如 alice）')
       return
     }
     if (!fellowshipCode.trim()) {
@@ -67,12 +81,12 @@ export function AuthPage({ onAuthed }: Props) {
     setBusy(true)
     try {
       const res = await api.register(
-        email.trim(),
-        username.trim(),
+        emailVal,
+        usernameVal,
         regPassword,
         fellowshipCode.trim(),
       )
-      setPendingEmail(email.trim())
+      setPendingEmail(emailVal)
       setDevToken(res.devVerifyToken || '')
       setMode('pending')
       MessagePlugin.success('验证邮件已发送')
