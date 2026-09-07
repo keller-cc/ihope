@@ -8,10 +8,18 @@
 
 | 文件 | 是否提交 Git | 说明 |
 |------|--------------|------|
-| `cloudflared.exe` | 是 | Windows 64-bit 客户端（仓库内自带） |
+| `cloudflared.exe` | 否 | Windows 客户端，请自行安装（见下方） |
 | `config.yml` | 是 | Tunnel 入口与 hostname（本项目已配置） |
 | `config.yml.example` | 是 | 配置模板（换 tunnel 时参考） |
 | `.cloudflared/*.json` | 否 | Tunnel 凭证，**切勿提交** |
+
+### 安装 cloudflared（Windows）
+
+任选其一：
+
+- 官网：https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/install-and-setup/installation/
+- GitHub Releases：下载 `cloudflared-windows-amd64.exe`，重命名为 `cloudflared.exe` 放到本目录，或加入 `PATH`
+- `winget install --id Cloudflare.cloudflared`
 
 ---
 

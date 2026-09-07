@@ -90,7 +90,7 @@ docker compose up -d --force-recreate nginx
 
 无需在 VPS 开放 80/443；Tunnel 出站连 Cloudflare。
 
-**本机 Windows 内测**（无 VPS）：见 [deploy/cloudflared/README.md](../deploy/cloudflared/README.md)（仓库已含 `cloudflared.exe` 与 `config.yml`）。
+**本机 Windows 内测**（无 VPS）：见 [deploy/cloudflared/README.md](../deploy/cloudflared/README.md)（需自行安装 `cloudflared`，仓库仅含 `config.yml`）。
 
 ### 简要步骤
 

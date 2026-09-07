@@ -67,7 +67,7 @@ uploads/
 coverage/
 *.coverprofile
 
-# Cloudflare Tunnel：凭证勿提交；cloudflared.exe 例外可提交
+# Cloudflare Tunnel：凭证与二进制勿提交（请自行安装 cloudflared）
 deploy/cloudflared/.cloudflared/
 deploy/cloudflared/config.local.yml
-!deploy/cloudflared/cloudflared.exe
+deploy/cloudflared/cloudflared.exe

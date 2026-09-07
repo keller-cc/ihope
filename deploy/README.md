@@ -16,9 +16,8 @@ deploy/
 ├── README.md                 # 本说明
 ├── cloudflared/              # Cloudflare Tunnel（Windows 本地穿透）
 │   ├── README.md
-│   ├── cloudflared.exe       # 已纳入 Git
 │   ├── config.yml
-│   └── .cloudflared/         # 凭证 JSON（勿提交）
+│   └── .cloudflared/         # 凭证 JSON（勿提交；cloudflared 请自行安装）
 ├── docker-compose.dev.yml    # 本地开发：只启动 PostgreSQL
 ├── docker-compose.yml        # 生产：postgres + backend + nginx（80+443）
 ├── nginx.conf                # 仅 HTTP 验收用（compose 默认挂 nginx-ssl.conf）
@@ -37,7 +36,7 @@ deploy/
 | `nginx.conf` | 是 | 仅 HTTP 反代（本地验收；生产用 nginx-ssl.conf） |
 | `nginx-ssl.conf.example` | 是 | HTTPS 443（Cloudflare Origin 证书路径） |
 | `nginx-ssl-certbot.conf.example` | 是 | HTTPS 443（certbot / Let's Encrypt） |
-| `cloudflared/` | 部分 | Tunnel 客户端与配置；`.cloudflared/*.json` 勿提交 |
+| `cloudflared/` | 部分 | Tunnel 配置；`cloudflared.exe` / `.cloudflared/*.json` 勿提交 |
 | `.env` | 否 | 从项目根 `.env.example` 复制 |
 | `data/postgres/` | 否 | dev 卷数据，删目录 = 重置库 |
 
