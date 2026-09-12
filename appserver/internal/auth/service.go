@@ -46,13 +46,14 @@ type RegisterResult struct {
 }
 
 type Options struct {
-	JWTSecret       string
-	AccessTTL       time.Duration
-	AppPublicURL    string
-	EmailVerifyTTL  time.Duration
-	MailDriver      string
-	Mailer          *mail.Sender
-	FellowshipCode  string
+	JWTSecret         string
+	AccessTTL         time.Duration
+	AppPublicURL      string
+	EmailVerifyTTL    time.Duration
+	UnverifiedUserTTL time.Duration
+	MailDriver        string
+	Mailer            *mail.Sender
+	FellowshipCode    string
 }
 
 type Service struct {
@@ -80,6 +81,8 @@ func (s *Service) Register(ctx context.Context, email, username, password, fello
 	if !ValidatePassword(password) {
 		return nil, errors.New("password must be at least 6 characters")
 	}
+	// Free email/username held by accounts that never verified and aged out.
+	_, _ = s.PurgeStaleUnverified(ctx)
 	hash, err := HashPassword(password)
 	if err != nil {
 		return nil, err
@@ -116,6 +119,26 @@ func (s *Service) Register(ctx context.Context, email, username, password, fello
 	}, nil
 }
 
+func (s *Service) unverifiedTTL() time.Duration {
+	if s.opt.UnverifiedUserTTL > 0 {
+		return s.opt.UnverifiedUserTTL
+	}
+	return 24 * time.Hour
+}
+
+// PurgeStaleUnverified deletes accounts that never verified and are older than UnverifiedUserTTL (default 1 day).
+func (s *Service) PurgeStaleUnverified(ctx context.Context) (int64, error) {
+	cutoff := time.Now().Add(-s.unverifiedTTL())
+	tag, err := s.pool.Exec(ctx, `
+		DELETE FROM users
+		WHERE email_verified = FALSE AND created_at < $1
+	`, cutoff)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
 func (s *Service) ResendVerification(ctx context.Context, email string) (status string, devToken string, err error) {
 	email = NormalizeEmail(email)
 	if !ValidateEmail(email) {
@@ -140,6 +163,67 @@ func (s *Service) ResendVerification(ctx context.Context, email string) (status 
 		return "", "", err
 	}
 	return "sent", devToken, nil
+}
+
+// ChangeUnverifiedEmail updates the email for an unverified account (typo fix) and sends a new link.
+func (s *Service) ChangeUnverifiedEmail(ctx context.Context, login, password, newEmail string) (devToken string, err error) {
+	login = strings.TrimSpace(login)
+	newEmail = NormalizeEmail(newEmail)
+	if !ValidateEmail(newEmail) {
+		return "", errors.New("invalid email")
+	}
+	_, _ = s.PurgeStaleUnverified(ctx)
+
+	var id string
+	var curEmail string
+	var verified bool
+	var hash string
+	if LooksLikeHopeID(login) {
+		err = s.pool.QueryRow(ctx, `
+			SELECT id::text, email, email_verified, password_hash FROM users WHERE hope_id = $1 LIMIT 1
+		`, login).Scan(&id, &curEmail, &verified, &hash)
+	} else {
+		err = s.pool.QueryRow(ctx, `
+			SELECT id::text, email, email_verified, password_hash FROM users
+			WHERE email = lower($1) OR username = $1 LIMIT 1
+		`, login).Scan(&id, &curEmail, &verified, &hash)
+	}
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", ErrInvalidCredentials
+		}
+		return "", err
+	}
+	if !CheckPassword(hash, password) {
+		return "", ErrInvalidCredentials
+	}
+	if verified {
+		return "", errors.New("email already verified")
+	}
+	if curEmail == newEmail {
+		return s.sendEmailVerification(ctx, id, newEmail)
+	}
+
+	var taken bool
+	if err := s.pool.QueryRow(ctx, `
+		SELECT EXISTS(SELECT 1 FROM users WHERE email = $1 AND id <> $2::uuid)
+	`, newEmail, id).Scan(&taken); err != nil {
+		return "", err
+	}
+	if taken {
+		return "", ErrEmailTaken
+	}
+
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE users SET email = $2 WHERE id = $1::uuid AND email_verified = FALSE
+	`, id, newEmail)
+	if err != nil {
+		return "", err
+	}
+	if tag.RowsAffected() == 0 {
+		return "", errors.New("email already verified")
+	}
+	return s.sendEmailVerification(ctx, id, newEmail)
 }
 
 func (s *Service) VerifyEmail(ctx context.Context, token string) error {

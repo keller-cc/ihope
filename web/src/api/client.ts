@@ -76,10 +76,14 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
       const err = new Error((data as { error?: string }).error || res.statusText) as Error & {
         code?: string
         email?: string
+        username?: string
       }
       err.code = (data as { error?: string }).error
       if (typeof (data as { email?: string }).email === 'string') {
         err.email = (data as { email?: string }).email
+      }
+      if (typeof (data as { username?: string }).username === 'string') {
+        err.username = (data as { username?: string }).username
       }
       throw err
     }
@@ -131,6 +135,9 @@ export function apiErrorMessage(e: unknown, fallback: string): string {
     email_not_verified: '请先完成邮箱验证',
     'invalid verify token': '验证链接无效或已过期',
     'resend failed': '发送验证邮件失败，请稍后重试',
+    'change email failed': '更换邮箱失败，请稍后重试',
+    'email already verified': '该邮箱已验证，请直接登录',
+    'invalid email': '请填写有效邮箱',
     unauthorized: '请重新登录',
     forbidden: '没有权限',
     'user not found': '用户不存在',
@@ -220,6 +227,18 @@ export const api = {
       body: JSON.stringify({ email }),
       signal: ctrl.signal,
     }).finally(() => window.clearTimeout(timer))
+  },
+  changeUnverifiedEmail: (login: string, password: string, newEmail: string) => {
+    const ctrl = new AbortController()
+    const timer = window.setTimeout(() => ctrl.abort(), 20_000)
+    return request<{ status: 'sent'; email: string; devVerifyToken?: string }>(
+      '/api/auth/change-unverified-email',
+      {
+        method: 'POST',
+        body: JSON.stringify({ login, password, newEmail }),
+        signal: ctrl.signal,
+      },
+    ).finally(() => window.clearTimeout(timer))
   },
   verifyEmail: (token: string) =>
     request<{ message: string }>('/api/auth/verify-email', {

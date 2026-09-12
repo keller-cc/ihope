@@ -83,6 +83,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/auth/register", s.handleRegister)
 	mux.HandleFunc("POST /api/auth/login", s.handleLogin)
 	mux.HandleFunc("POST /api/auth/resend-verification", s.handleResendVerification)
+	mux.HandleFunc("POST /api/auth/change-unverified-email", s.handleChangeUnverifiedEmail)
 	mux.HandleFunc("GET /api/auth/verify-email", s.handleVerifyEmailGET)
 	mux.HandleFunc("POST /api/auth/verify-email", s.handleVerifyEmailPOST)
 	mux.HandleFunc("GET /api/me", s.withAuth(s.handleMe))
@@ -329,8 +330,13 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		}
 		if errors.Is(err, auth.ErrEmailNotVerified) {
 			payload := map[string]any{"error": "email_not_verified"}
-			if u != nil && u.Email != "" {
-				payload["email"] = u.Email
+			if u != nil {
+				if u.Email != "" {
+					payload["email"] = u.Email
+				}
+				if u.Username != "" {
+					payload["username"] = u.Username
+				}
 			}
 			writeJSON(w, http.StatusForbidden, payload)
 			return
@@ -358,6 +364,42 @@ func (s *Server) handleResendVerification(w http.ResponseWriter, r *http.Request
 		return
 	}
 	out := map[string]any{"status": status}
+	if dev != "" {
+		out["devVerifyToken"] = dev
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) handleChangeUnverifiedEmail(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Login    string `json:"login"`
+		Password string `json:"password"`
+		NewEmail string `json:"newEmail"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	dev, err := s.auth.ChangeUnverifiedEmail(r.Context(), body.Login, body.Password, body.NewEmail)
+	if err != nil {
+		switch {
+		case errors.Is(err, auth.ErrInvalidCredentials):
+			writeErr(w, http.StatusUnauthorized, "invalid credentials")
+		case errors.Is(err, auth.ErrEmailTaken):
+			writeErr(w, http.StatusConflict, "email taken")
+		case err.Error() == "email already verified":
+			writeErr(w, http.StatusConflict, "email already verified")
+		case err.Error() == "invalid email":
+			writeErr(w, http.StatusBadRequest, "invalid email")
+		default:
+			writeErr(w, http.StatusInternalServerError, "change email failed")
+		}
+		return
+	}
+	out := map[string]any{
+		"status": "sent",
+		"email":  auth.NormalizeEmail(body.NewEmail),
+	}
 	if dev != "" {
 		out["devVerifyToken"] = dev
 	}

@@ -7,8 +7,7 @@ type Props = {
 }
 
 type Mode = 'login' | 'register' | 'pending'
-
-type ApiErr = Error & { code?: string; email?: string }
+type ApiErr = Error & { code?: string; email?: string; username?: string }
 
 const RESEND_COOLDOWN_SEC = 60
 
@@ -24,6 +23,7 @@ export function AuthPage({ onAuthed }: Props) {
   const [fellowshipCode, setFellowshipCode] = useState('')
   const [pendingEmail, setPendingEmail] = useState('')
   const [pendingUsername, setPendingUsername] = useState('')
+  const [pendingPassword, setPendingPassword] = useState('')
   const [devToken, setDevToken] = useState('')
   const [resendWait, setResendWait] = useState(0)
 
@@ -33,39 +33,40 @@ export function AuthPage({ onAuthed }: Props) {
     return () => window.clearTimeout(id)
   }, [resendWait])
 
-  const startResendCooldown = () => setResendWait(RESEND_COOLDOWN_SEC)
-
-  const goLogin = (preferUsername?: string) => {
-    const name = (preferUsername ?? pendingUsername).trim()
-    setLogin(name || pendingEmail)
+  const goLogin = () => {
+    setLogin(pendingUsername || pendingEmail)
     setMode('login')
   }
 
-  const sendVerifyMail = async (addr: string, opts?: { alreadyRegistered?: boolean }) => {
-    const res = await api.resendVerification(addr)
-    if (res.status === 'sent') {
-      if (res.devVerifyToken) setDevToken(res.devVerifyToken)
-      startResendCooldown()
-      MessagePlugin.success(
-        opts?.alreadyRegistered
-          ? '该邮箱已注册但未验证，验证邮件已重新发送'
-          : '验证邮件已发送，请查收邮箱',
-      )
-      return
-    }
-    if (res.status === 'already_verified') {
-      goLogin()
-      MessagePlugin.success('该邮箱已验证，请直接登录')
-      return
-    }
-    MessagePlugin.warning('未找到该邮箱对应的未验证账号')
-  }
-
-  const enterPending = (addr: string, name = '') => {
+  const enterPending = (addr: string, name: string, pwd: string) => {
     setPendingEmail(addr.trim())
     setPendingUsername(name.trim())
+    setPendingPassword(pwd)
     setDevToken('')
     setMode('pending')
+  }
+
+  const sendOrUpdateMail = async (addr: string) => {
+    const account = pendingUsername || pendingEmail || login
+    if (pendingPassword && account) {
+      const res = await api.changeUnverifiedEmail(account, pendingPassword, addr)
+      setPendingEmail(res.email)
+      if (res.devVerifyToken) setDevToken(res.devVerifyToken)
+    } else {
+      const res = await api.resendVerification(addr)
+      if (res.status === 'already_verified') {
+        goLogin()
+        MessagePlugin.success('该邮箱已验证，请直接登录')
+        return
+      }
+      if (res.status !== 'sent') {
+        MessagePlugin.warning('未找到该邮箱对应的未验证账号')
+        return
+      }
+      if (res.devVerifyToken) setDevToken(res.devVerifyToken)
+    }
+    setResendWait(RESEND_COOLDOWN_SEC)
+    MessagePlugin.success('验证邮件已发送，请查收邮箱')
   }
 
   const onLogin = async () => {
@@ -82,18 +83,17 @@ export function AuthPage({ onAuthed }: Props) {
     } catch (e) {
       const err = e as ApiErr
       if (err.code === 'email_not_verified') {
-        const addr =
-          (typeof err.email === 'string' && err.email.trim()) ||
-          (login.includes('@') ? login.trim() : '')
+        const addr = err.email?.trim() || (login.includes('@') ? login.trim() : '')
+        const name = err.username?.trim() || (!login.includes('@') ? login.trim() : '')
         if (!addr) {
-          MessagePlugin.warning('请先完成邮箱验证。请使用注册邮箱登录以重发验证邮件。')
+          MessagePlugin.warning('请先完成邮箱验证')
           return
         }
-        enterPending(addr)
+        enterPending(addr, name, password)
         try {
-          await sendVerifyMail(addr)
-        } catch (resendErr) {
-          MessagePlugin.error(apiErrorMessage(resendErr, '验证邮件发送失败，请稍后重试'))
+          await sendOrUpdateMail(addr)
+        } catch (err2) {
+          MessagePlugin.error(apiErrorMessage(err2, '验证邮件发送失败'))
         }
       } else {
         MessagePlugin.error(apiErrorMessage(e, '登录失败'))
@@ -111,15 +111,11 @@ export function AuthPage({ onAuthed }: Props) {
       return
     }
     if (!emailVal.includes('@')) {
-      MessagePlugin.warning(
-        usernameVal.includes('@')
-          ? '邮箱和用户名好像填反了：上面填邮箱（含 @），下面填用户名'
-          : '请填写有效邮箱，例如 alice@example.com',
-      )
+      MessagePlugin.warning('请填写有效邮箱')
       return
     }
     if (usernameVal.includes('@')) {
-      MessagePlugin.warning('用户名不要填邮箱，请填写显示名称（如 alice）')
+      MessagePlugin.warning('用户名不要填邮箱')
       return
     }
     if (!fellowshipCode.trim()) {
@@ -136,24 +132,19 @@ export function AuthPage({ onAuthed }: Props) {
     }
     setBusy(true)
     try {
-      const res = await api.register(
-        emailVal,
-        usernameVal,
-        regPassword,
-        fellowshipCode.trim(),
-      )
-      enterPending(emailVal, usernameVal)
+      const res = await api.register(emailVal, usernameVal, regPassword, fellowshipCode.trim())
+      enterPending(emailVal, usernameVal, regPassword)
       setDevToken(res.devVerifyToken || '')
-      startResendCooldown()
+      setResendWait(RESEND_COOLDOWN_SEC)
       MessagePlugin.success('验证邮件已发送，请查收邮箱')
     } catch (e) {
       const err = e as ApiErr
       if (err.code === 'email taken') {
-        enterPending(emailVal, usernameVal)
+        enterPending(emailVal, usernameVal, regPassword)
         try {
-          await sendVerifyMail(emailVal, { alreadyRegistered: true })
-        } catch (resendErr) {
-          MessagePlugin.error(apiErrorMessage(resendErr, '重新发送失败，请稍后重试'))
+          await sendOrUpdateMail(emailVal)
+        } catch (err2) {
+          MessagePlugin.error(apiErrorMessage(err2, '发送失败'))
         }
       } else {
         MessagePlugin.error(apiErrorMessage(e, '注册失败'))
@@ -163,15 +154,16 @@ export function AuthPage({ onAuthed }: Props) {
     }
   }
 
-  const onResend = async () => {
-    if (!pendingEmail) {
-      MessagePlugin.warning('缺少注册邮箱，请返回登录后使用邮箱登录')
+  const onSendVerify = async () => {
+    const addr = pendingEmail.trim()
+    if (!addr.includes('@')) {
+      MessagePlugin.warning('请填写有效邮箱')
       return
     }
     if (resendWait > 0) return
     setBusy(true)
     try {
-      await sendVerifyMail(pendingEmail)
+      await sendOrUpdateMail(addr)
     } catch (e) {
       MessagePlugin.error(apiErrorMessage(e, '发送失败'))
     } finally {
@@ -305,25 +297,24 @@ export function AuthPage({ onAuthed }: Props) {
         {mode === 'pending' && (
           <div className="im-auth__panel">
             <h2 className="im-auth__heading">验证邮箱</h2>
-            <p className="im-auth__lead">
-              {pendingEmail ? (
-                <>
-                  请查收发送至 <strong>{pendingEmail}</strong> 的验证链接，完成后即可登录。
-                </>
-              ) : (
-                <>请查收验证邮件，完成后即可登录。</>
-              )}
-            </p>
+            <p className="im-auth__lead">查收验证链接后即可登录。若邮箱写错可直接修改再发送。</p>
             <div className="im-auth-fields">
+              <Input
+                size="large"
+                placeholder="邮箱"
+                clearable
+                value={pendingEmail}
+                onChange={(v) => setPendingEmail(String(v))}
+              />
               <Button
                 size="large"
                 theme="primary"
                 block
                 loading={busy}
-                disabled={!pendingEmail || resendWait > 0}
-                onClick={() => void onResend()}
+                disabled={resendWait > 0}
+                onClick={() => void onSendVerify()}
               >
-                {resendWait > 0 ? `${resendWait} 秒后可重新发送` : '重新发送验证邮件'}
+                {resendWait > 0 ? `${resendWait} 秒后可再发送` : '发送验证邮件'}
               </Button>
               {devToken && (
                 <div className="im-dev-verify">
@@ -340,7 +331,7 @@ export function AuthPage({ onAuthed }: Props) {
                   </Button>
                 </div>
               )}
-              <Button size="large" variant="outline" block onClick={() => goLogin()}>
+              <Button size="large" variant="outline" block onClick={goLogin}>
                 返回登录
               </Button>
             </div>

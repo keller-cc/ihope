@@ -49,17 +49,19 @@ func main() {
 	})
 
 	authSvc := auth.NewService(pool, auth.Options{
-		JWTSecret:      cfg.JWTSecret,
-		AccessTTL:      cfg.JWTAccessTTL,
-		AppPublicURL:   cfg.AppPublicURL,
-		EmailVerifyTTL: cfg.EmailVerifyTTL,
-		MailDriver:     cfg.MailDriver,
-		Mailer:         mailer,
-		FellowshipCode: cfg.FellowshipCode,
+		JWTSecret:         cfg.JWTSecret,
+		AccessTTL:         cfg.JWTAccessTTL,
+		AppPublicURL:      cfg.AppPublicURL,
+		EmailVerifyTTL:    cfg.EmailVerifyTTL,
+		UnverifiedUserTTL: cfg.UnverifiedUserTTL,
+		MailDriver:        cfg.MailDriver,
+		Mailer:            mailer,
+		FellowshipCode:    cfg.FellowshipCode,
 	})
 	if err := authSvc.EnsureFellowshipsBootstrapped(ctx); err != nil {
 		log.Fatalf("fellowship bootstrap: %v", err)
 	}
+	go runUnverifiedUserCleanup(authSvc, cfg.UnverifiedUserTTL)
 	chatSvc := chat.NewService(pool, cfg.MessageEncryptionKey)
 	if err := chatSvc.BackfillGroupNos(ctx); err != nil {
 		log.Printf("backfill group nos: %v", err)
@@ -140,4 +142,26 @@ func main() {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	_ = httpSrv.Shutdown(shutdownCtx)
+}
+
+func runUnverifiedUserCleanup(authSvc *auth.Service, ttl time.Duration) {
+	if ttl <= 0 {
+		ttl = 24 * time.Hour
+	}
+	run := func() {
+		n, err := authSvc.PurgeStaleUnverified(context.Background())
+		if err != nil {
+			log.Printf("purge unverified users: %v", err)
+			return
+		}
+		if n > 0 {
+			log.Printf("purged %d unverified user(s) older than %s", n, ttl)
+		}
+	}
+	run()
+	ticker := time.NewTicker(time.Hour)
+	defer ticker.Stop()
+	for range ticker.C {
+		run()
+	}
 }
