@@ -154,14 +154,22 @@
   min-width: 0;
 }
 
-/* 操作列贴齐内容，去掉右侧留白 */
+/* 操作列：左侧留出与「注册」等列的间距 */
 .im-admin-table .t-table__th--fixed-right,
 .im-admin-table .t-table__td--fixed-right,
 .im-admin-table th[class*='t-table__cell--fixed-right'],
 .im-admin-table td[class*='t-table__cell--fixed-right'] {
-  padding-left: 6px !important;
-  padding-right: 6px !important;
+  padding-left: 14px !important;
+  padding-right: 8px !important;
   text-align: center !important;
+}
+
+/* 紧挨操作列的上一列（如「注册」）右侧留白，避免贴住分隔线 */
+.im-admin-table .t-table__th:has(+ .t-table__th--fixed-right),
+.im-admin-table .t-table__td:has(+ .t-table__td--fixed-right),
+.im-admin-table th:has(+ th[class*='t-table__cell--fixed-right']),
+.im-admin-table td:has(+ td[class*='t-table__cell--fixed-right']) {
+  padding-right: 16px !important;
 }
 
 .im-admin-mono {
