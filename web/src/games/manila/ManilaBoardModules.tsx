@@ -1,4 +1,4 @@
-import type { ManilaMatch } from '@/api'
+import type { ManilaMatch, ManilaWare } from '@/api'
 import { PRICE_MARKER, shareSrc, type ManilaRoleTag } from './assets'
 import {
   BOARD_MARKET,
@@ -228,18 +228,19 @@ export function MarketPlate({ match }: { match: ManilaMatch }) {
         <div className="manila-market-hit__face">
           <div className="manila-market-hit__grid" role="table">
             {m.wares.map((ware) => {
-              const price = match.market?.[ware] ?? 0
+              const w = ware as ManilaWare
+              const price = match.market?.[w] ?? 0
               return (
-                <div key={ware} className="manila-market-hit__row" role="row">
-                  <div className="manila-market-hit__ware" role="rowheader" title={WARE_LABEL[ware]}>
-                    <img src={shareSrc(ware)} alt={WARE_LABEL[ware] || ware} draggable={false} />
+                <div key={w} className="manila-market-hit__row" role="row">
+                  <div className="manila-market-hit__ware" role="rowheader" title={WARE_LABEL[w]}>
+                    <img src={shareSrc(w)} alt={WARE_LABEL[w] || w} draggable={false} />
                   </div>
                   <div className="manila-market-hit__track" role="cell">
                     {valueCols.map((value) => {
                       const here = price === value
                       return (
                         <span
-                          key={`${ware}-${value}`}
+                          key={`${w}-${value}`}
                           className={`manila-market-hit__cell${here ? ' is-here' : ''}`}
                           aria-current={here ? 'true' : undefined}
                         >
