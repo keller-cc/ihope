@@ -563,25 +563,6 @@ func (s *Service) AdminSetPassword(ctx context.Context, userID, newPassword stri
 	return nil
 }
 
-// ResendVerificationByUserID sends a verify mail for an unverified account.
-func (s *Service) ResendVerificationByUserID(ctx context.Context, userID string) (devToken string, err error) {
-	var email string
-	var verified bool
-	err = s.pool.QueryRow(ctx, `
-		SELECT email, email_verified FROM users WHERE id = $1
-	`, userID).Scan(&email, &verified)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return "", errors.New("user not found")
-	}
-	if err != nil {
-		return "", err
-	}
-	if verified {
-		return "", errors.New("email already verified")
-	}
-	return s.sendEmailVerification(ctx, userID, email)
-}
-
 func (s *Service) SetChatTheme(ctx context.Context, userID string, patch *ChatTheme) (*User, error) {
 	u, err := s.UserByID(ctx, userID)
 	if err != nil {

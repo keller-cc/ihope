@@ -168,11 +168,6 @@ export const adminApi = {
       method: 'POST',
       body: JSON.stringify({ password }),
     }),
-  resendUserVerification: (id: string) =>
-    adminRequest<{ status: string; devVerifyToken?: string }>(
-      `/api/admin/users/${id}/resend-verification`,
-      { method: 'POST' },
-    ),
   stats: () => adminRequest<AdminStats>('/api/admin/stats'),
   listConversations: () =>
     adminRequest<{ conversations: AdminConversation[] }>('/api/admin/conversations'),

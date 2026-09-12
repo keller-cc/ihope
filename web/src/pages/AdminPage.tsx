@@ -214,21 +214,6 @@ export function AdminPage() {
     }
   }
 
-  const resendVerification = (user: AdminUser) => {
-    confirmAction({
-      header: '重发验证邮件',
-      body: `向「${user.username}」(${user.email}) 发送验证邮件？`,
-      confirm: '发送',
-      success: '验证邮件已发送',
-      onOk: async () => {
-        const res = await adminApi.resendUserVerification(user.id)
-        if (res.devVerifyToken) {
-          MessagePlugin.info(`开发验证码：${res.devVerifyToken}`)
-        }
-      },
-    })
-  }
-
   const submitAdminPassword = async () => {
     if (!passwordDialog) return
     const pwd = passwordDialog.password
@@ -473,16 +458,6 @@ export function AdminPage() {
                   >
                     {row.emailVerified ? '取消验证' : '验证邮箱'}
                   </Button>
-                  {!row.emailVerified && (
-                    <Button
-                      size="small"
-                      variant="text"
-                      theme="primary"
-                      onClick={() => resendVerification(row)}
-                    >
-                      重发验证
-                    </Button>
-                  )}
                   <Button
                     size="small"
                     variant="text"
@@ -1040,7 +1015,7 @@ export function AdminPage() {
       </>
     )
   }
-
+
 
   return (
     <div className="im-admin">

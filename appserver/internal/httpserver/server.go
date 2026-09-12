@@ -179,7 +179,6 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/admin/users/{id}", s.withAdmin(s.handleAdminDeleteUser))
 	mux.HandleFunc("PATCH /api/admin/users/{id}", s.withAdmin(s.handleAdminPatchUser))
 	mux.HandleFunc("POST /api/admin/users/{id}/password", s.withAdmin(s.handleAdminSetPassword))
-	mux.HandleFunc("POST /api/admin/users/{id}/resend-verification", s.withAdmin(s.handleAdminResendVerification))
 	mux.HandleFunc("POST /api/admin/users/{id}/qq-bind-code", s.withAdmin(s.handleAdminQQBindCode))
 	mux.HandleFunc("DELETE /api/admin/users/{id}/qq-bot", s.withAdmin(s.handleAdminQQUnbind))
 	mux.HandleFunc("GET /api/admin/qq-bindings", s.withAdmin(s.handleAdminListQQBindings))
@@ -2099,27 +2098,6 @@ func (s *Server) handleAdminSetPassword(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"message": "password updated"})
-}
-
-func (s *Server) handleAdminResendVerification(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	dev, err := s.auth.ResendVerificationByUserID(r.Context(), id)
-	if err != nil {
-		switch err.Error() {
-		case "user not found":
-			writeErr(w, http.StatusNotFound, "user not found")
-		case "email already verified":
-			writeErr(w, http.StatusConflict, "email already verified")
-		default:
-			writeErr(w, http.StatusInternalServerError, "resend failed")
-		}
-		return
-	}
-	out := map[string]any{"status": "sent"}
-	if dev != "" {
-		out["devVerifyToken"] = dev
-	}
-	writeJSON(w, http.StatusOK, out)
 }
 
 func (s *Server) handleAdminListDomains(w http.ResponseWriter, r *http.Request) {
