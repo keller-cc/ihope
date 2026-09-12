@@ -27,6 +27,7 @@ type Config struct {
 	SMTPUser              string
 	SMTPPass              string
 	EmailVerifyTTL        time.Duration
+	PasswordResetTTL      time.Duration
 	UnverifiedUserTTL     time.Duration
 	QQBotEnabled          bool
 	QQBotAppID            string
@@ -82,6 +83,7 @@ func Load() Config {
 		SMTPUser:              env("SMTP_USER", ""),
 		SMTPPass:              env("SMTP_PASS", ""),
 		EmailVerifyTTL:        time.Duration(envInt("EMAIL_VERIFY_TTL_MIN", 1440)) * time.Minute,
+		PasswordResetTTL:      time.Duration(envInt("PASSWORD_RESET_TTL_MIN", 60)) * time.Minute,
 		UnverifiedUserTTL:     time.Duration(envInt("UNVERIFIED_USER_TTL_HOURS", 24)) * time.Hour,
 		QQBotEnabled:          envBool("QQ_BOT_ENABLED", false),
 		QQBotAppID:            strings.TrimSpace(env("QQ_BOT_APP_ID", "")),

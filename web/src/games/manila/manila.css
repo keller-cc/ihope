@@ -1,0 +1,4256 @@
+/* Manila — modern casual card UI (lobby / waiting / rules / play) */
+
+.manila-shell {
+  --manila-ink: #1c1917;
+  --manila-muted: #78716c;
+  --manila-surface: #fffdf8;
+  --manila-surface-strong: #ffffff;
+  --manila-line: #e7e5e4;
+  --manila-accent: #0f766e;
+  --manila-accent-deep: #0d9488;
+  --manila-accent-soft: #ccfbf1;
+  --manila-on-accent: #fff;
+  --manila-danger: #b91c1c;
+  --manila-cost: #f59e0b;
+  --manila-gain: #059669;
+  --manila-sea: #0e7490;
+  --manila-sea-mid: #14b8a6;
+
+  box-sizing: border-box;
+  position: relative;
+  /* #root is overflow:hidden — shell must be the scrollport */
+  height: 100%;
+  max-height: 100dvh;
+  min-height: 0;
+  padding: 20px 16px 48px;
+  color: var(--manila-ink);
+  font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  overflow-x: hidden;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  background:
+    radial-gradient(120% 80% at 10% -10%, #5eead4 0%, transparent 45%),
+    radial-gradient(90% 60% at 100% 0%, #67e8f9 0%, transparent 40%),
+    linear-gradient(180deg, #ecfeff 0%, #f0fdfa 40%, #fff7ed 100%);
+}
+
+.manila-shell *,
+.manila-shell *::before,
+.manila-shell *::after {
+  box-sizing: border-box;
+}
+
+.manila-shell--play {
+  padding: 0 0 48px;
+  background: linear-gradient(180deg, #134e4a 0%, #0f766e 18%, #ecfeff 18%, #f8fafc 100%);
+}
+
+.manila-sky,
+.manila-waves {
+  display: none;
+}
+
+/* —— Header —— */
+.manila-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  max-width: 960px;
+  margin: 0 auto 18px;
+}
+
+.manila-shell--play .manila-head {
+  max-width: none;
+  margin: 0;
+  padding: 12px 14px;
+  color: var(--manila-on-accent);
+  background: color-mix(in srgb, #0f172a 35%, transparent);
+}
+
+.manila-eyebrow {
+  margin: 0 0 4px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--manila-accent);
+}
+
+.manila-shell--play .manila-eyebrow {
+  color: #99f6e4;
+}
+
+.manila-head h1 {
+  margin: 0;
+  font-size: clamp(1.45rem, 4vw, 1.9rem);
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+.manila-head-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.manila-link {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--manila-line);
+  background: var(--manila-surface-strong);
+  color: var(--manila-ink);
+  text-decoration: none;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.manila-link--accent {
+  border-color: transparent;
+  background: var(--manila-accent);
+  color: var(--manila-on-accent);
+}
+
+.manila-shell--play .manila-link {
+  border-color: color-mix(in srgb, #fff 30%, transparent);
+  background: color-mix(in srgb, #0f172a 35%, transparent);
+  color: #fff;
+}
+
+.manila-conn {
+  font-size: 0.78rem;
+  font-weight: 700;
+  opacity: 0.75;
+}
+
+.manila-conn.is-on {
+  color: #6ee7b7;
+  opacity: 1;
+}
+
+.manila-muted {
+  color: var(--manila-muted);
+  font-size: 0.9rem;
+}
+
+/* —— Buttons / fields —— */
+.manila-btn {
+  appearance: none;
+  border: none;
+  border-radius: 12px;
+  padding: 10px 16px;
+  font-size: 0.95rem;
+  font-weight: 700;
+  cursor: pointer;
+  background: var(--manila-accent);
+  color: var(--manila-on-accent);
+}
+
+.manila-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.manila-btn--ghost {
+  background: var(--manila-surface-strong);
+  color: var(--manila-ink);
+  border: 1px solid var(--manila-line);
+}
+
+.manila-text-btn {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--manila-accent);
+  font-weight: 700;
+  cursor: pointer;
+  padding: 4px 6px;
+}
+
+.manila-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 0.85rem;
+  font-weight: 700;
+  margin: 10px 0;
+}
+
+.manila-field select,
+.manila-field input,
+.manila-join-row input,
+.manila-bid-input input {
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--manila-line);
+  font-size: 1rem;
+  font-weight: 600;
+  background: #fff;
+}
+
+.manila-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 0;
+  font-size: 0.9rem;
+}
+
+/* —— Lobby —— */
+.manila-lobby {
+  max-width: 960px;
+  margin: 0 auto;
+  display: grid;
+  gap: 14px;
+}
+
+@media (min-width: 820px) {
+  .manila-lobby {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .manila-panel--list {
+    grid-column: 1 / -1;
+  }
+}
+
+.manila-panel,
+.manila-card,
+.manila-waiting,
+.manila-rules {
+  background: color-mix(in srgb, var(--manila-surface) 92%, #fff);
+  border: 1px solid color-mix(in srgb, var(--manila-line) 80%, transparent);
+  border-radius: 18px;
+  padding: 16px;
+  box-shadow: 0 10px 28px color-mix(in srgb, #0f172a 8%, transparent);
+}
+
+.manila-panel h2,
+.manila-card__title,
+.manila-section-title {
+  margin: 0 0 12px;
+  font-size: 1.05rem;
+  font-weight: 800;
+}
+
+.manila-section-title {
+  max-width: 960px;
+  margin: 8px auto 10px;
+  padding: 0 14px;
+  color: var(--manila-ink);
+}
+
+.manila-join-row {
+  display: flex;
+  gap: 8px;
+}
+
+.manila-join-row input {
+  flex: 1;
+}
+
+.manila-list-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.manila-room-list,
+.manila-history-list,
+.manila-seats,
+.manila-berth-list,
+.manila-events {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.manila-room-list li button,
+.manila-history-list li,
+.manila-seat {
+  width: 100%;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px;
+  margin-bottom: 8px;
+  border-radius: 14px;
+  border: 1px solid var(--manila-line);
+  background: #fff;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+}
+
+.manila-history-list li {
+  cursor: default;
+}
+
+.manila-room-code {
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.manila-history-meta,
+.manila-history-rank {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--manila-muted);
+}
+
+/* —— Waiting —— */
+.manila-waiting {
+  max-width: 640px;
+  margin: 0 auto;
+}
+
+.manila-waiting-meta {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 12px;
+  font-weight: 700;
+}
+
+.manila-seat {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  cursor: default;
+}
+
+.manila-seat.is-away {
+  opacity: 0.55;
+}
+
+.manila-waiting-actions {
+  margin-top: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.manila-waiting-settings {
+  display: grid;
+  gap: 8px;
+}
+
+/* —— Rules —— */
+.manila-rules {
+  max-width: 720px;
+  margin: 0 auto;
+}
+
+.manila-rules-lead {
+  color: var(--manila-muted);
+  line-height: 1.55;
+}
+
+.manila-rule-block {
+  margin: 10px 0;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: #fff;
+  border: 1px solid var(--manila-line);
+}
+
+.manila-rule-block summary {
+  cursor: pointer;
+  font-weight: 800;
+}
+
+.manila-rule-block p {
+  margin: 8px 0 0;
+  line-height: 1.55;
+  color: #44403c;
+}
+
+.manila-sources {
+  margin-top: 18px;
+}
+
+.manila-sources h2 {
+  font-size: 1rem;
+}
+
+.manila-sources a {
+  color: var(--manila-accent);
+}
+
+/* —— Play: player rail —— */
+.manila-shell--play .manila-players {
+  display: none;
+}
+
+.manila-rail {
+  display: flex;
+  gap: 8px;
+  padding: 10px 12px;
+  overflow-x: auto;
+  background: color-mix(in srgb, #0f172a 55%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, #fff 12%, transparent);
+}
+
+.manila-rail-card {
+  flex: 0 0 auto;
+  width: min(168px, 42vw);
+  border-radius: 14px;
+  padding: 8px 10px;
+  background: color-mix(in srgb, #fff 94%, transparent);
+  border: 1px solid color-mix(in srgb, #0f172a 8%, transparent);
+  box-shadow: 0 6px 16px color-mix(in srgb, #0f172a 16%, transparent);
+}
+
+.manila-rail-card.is-me {
+  border-color: var(--manila-accent);
+}
+
+.manila-rail-card.is-hm {
+  background: linear-gradient(160deg, #fef3c7, #fff);
+}
+
+.manila-rail-card.is-turn {
+  box-shadow: 0 0 0 2px #f59e0b;
+}
+
+.manila-rail-card__inner {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.manila-rail-card__top {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.manila-rail-card__avatar {
+  width: 28px;
+  height: 28px;
+  object-fit: contain;
+}
+
+.manila-rail-card__name {
+  display: block;
+  font-size: 0.85rem;
+  max-width: 7.5rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.manila-rail-card__tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.manila-tag {
+  font-size: 0.65rem;
+  font-weight: 800;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: #e7e5e4;
+}
+
+.manila-tag--me {
+  background: var(--manila-accent-soft);
+  color: var(--manila-accent);
+}
+
+.manila-tag--hm {
+  background: #fde68a;
+}
+
+.manila-tag--turn {
+  background: #fdba74;
+}
+
+.manila-rail-card__stats {
+  display: flex;
+  gap: 10px;
+}
+
+.manila-rail-stat {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.8rem;
+}
+
+.manila-rail-stat__ico {
+  width: 22px;
+  height: 22px;
+  object-fit: contain;
+}
+
+.manila-cash {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  vertical-align: middle;
+  font-variant-numeric: tabular-nums;
+  font-weight: 800;
+}
+
+.manila-cash__ico {
+  width: 1.15em;
+  height: 1.15em;
+  object-fit: contain;
+  flex-shrink: 0;
+}
+
+.manila-cash em {
+  font-style: normal;
+}
+
+.manila-btn .manila-cash,
+.manila-actions h3 .manila-cash,
+.manila-loanboard__hint .manila-cash,
+.manila-pricelist__now .manila-cash {
+  gap: 2px;
+}
+
+.manila-pad__economy .manila-cash {
+  padding: 1px 5px;
+  border-radius: 6px;
+  font-size: 0.78rem;
+}
+
+.manila-pad__economy .manila-cash.is-cost {
+  color: #92400e;
+  background: color-mix(in srgb, var(--manila-cost) 28%, #fff);
+}
+
+.manila-pad__economy .manila-cash.is-gain {
+  color: #065f46;
+  background: color-mix(in srgb, var(--manila-gain) 22%, #fff);
+}
+
+.manila-rail-stat em {
+  font-style: normal;
+  font-weight: 800;
+}
+
+.manila-rail-card__shares {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.manila-rail-empty {
+  font-size: 0.7rem;
+  color: var(--manila-muted);
+}
+
+.manila-rail-share {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent !important;
+  box-shadow: none;
+}
+
+.manila-rail-share.is-secret {
+  background: transparent !important;
+  opacity: 0.95;
+}
+
+.manila-rail-share img {
+  width: 1.7rem;
+  height: 1.7rem;
+  object-fit: contain;
+  border: none !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.manila-rail-share em {
+  font-style: normal;
+  font-size: 0.7rem;
+  font-weight: 800;
+}
+
+.manila-lobby,
+.manila-waiting,
+.manila-rules,
+.manila-board {
+  /* ensure content can grow past viewport so shell scrolls */
+  flex-shrink: 0;
+}
+
+.manila-board {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 12px 12px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.manila-turn-banner {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  display: grid;
+  gap: 2px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: #fff;
+  border: 2px solid var(--manila-line);
+  box-shadow: 0 4px 16px color-mix(in srgb, #0f172a 10%, transparent);
+}
+
+.manila-turn-banner.is-urgent {
+  border-color: var(--manila-accent);
+  background: linear-gradient(180deg, #f0fdfa 0%, #fff 70%);
+  animation: manila-pulse-border 1.6s ease-in-out infinite;
+}
+
+@keyframes manila-pulse-border {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--manila-accent) 35%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--manila-accent) 18%, transparent);
+  }
+}
+
+.manila-turn-banner__phase {
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  color: var(--manila-accent);
+  text-transform: uppercase;
+}
+
+.manila-turn-banner__msg {
+  font-size: 1.05rem;
+  font-weight: 800;
+  color: var(--manila-ink);
+}
+
+.manila-turn-banner__detail {
+  font-size: 0.82rem;
+  color: var(--manila-muted);
+}
+
+.manila-board__chrome {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 14px;
+  background: #fff;
+  border: 1px solid var(--manila-line);
+}
+
+.manila-phase-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  font-size: 0.85rem;
+  font-weight: 650;
+}
+
+.manila-phase-pill {
+  display: inline-flex;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--manila-accent-soft);
+  color: var(--manila-accent);
+  font-weight: 800;
+  font-size: 0.78rem;
+}
+
+.manila-place-hint {
+  color: var(--manila-accent-deep);
+  font-weight: 800;
+}
+
+.manila-market__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+@media (min-width: 640px) {
+  .manila-market__grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+.manila-market__item {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-rows: auto auto;
+  column-gap: 8px;
+  row-gap: 2px;
+  padding: 10px;
+  border-radius: 12px;
+  background: #fff;
+  border: 1px solid var(--manila-line);
+  align-items: center;
+}
+
+.manila-market__badge {
+  width: 28px;
+  height: 28px;
+  grid-row: 1 / span 2;
+  object-fit: contain;
+  border: none !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.manila-market__item strong {
+  font-size: 0.85rem;
+}
+
+.manila-market__item em {
+  font-style: normal;
+  font-weight: 800;
+  color: var(--manila-accent);
+}
+
+.manila-market__item small {
+  grid-column: 2;
+  color: var(--manila-muted);
+  font-size: 0.72rem;
+}
+
+.manila-voyage {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.manila-voyage__grid {
+  display: grid;
+  gap: 10px;
+}
+
+@media (min-width: 720px) {
+  .manila-voyage__grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+.manila-ship-card__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.manila-ship-card__head > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.manila-ship-card__art {
+  width: 56px;
+  height: 56px;
+  object-fit: contain;
+  border-radius: 12px;
+  background: #ecfeff;
+}
+
+.manila-ship-card__die {
+  width: 28px;
+  height: 28px;
+}
+
+.manila-ship-card__track {
+  position: relative;
+  height: 18px;
+  border-radius: 999px;
+  background: #e7e5e4;
+  overflow: hidden;
+  margin-bottom: 10px;
+}
+
+.manila-ship-card__bar {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--manila-sea-mid), var(--manila-accent));
+  transition: width 0.35s ease;
+}
+
+.manila-ship-card__pos {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-size: 0.72rem;
+  font-weight: 800;
+  color: var(--manila-ink);
+}
+
+.manila-ship-card.is-sail {
+  animation: manila-sail 0.45s ease;
+}
+
+@keyframes manila-sail {
+  from {
+    transform: translateY(4px);
+    opacity: 0.7;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+
+.manila-ship-card__deck {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.manila-docks {
+  display: grid;
+  gap: 10px;
+}
+
+@media (min-width: 720px) {
+  .manila-docks {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+.manila-berth-row,
+.manila-shore-slot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--manila-line);
+}
+
+.manila-berth-row:last-child,
+.manila-shore-slot:last-child {
+  border-bottom: none;
+}
+
+.manila-berth-row__label {
+  width: 2.8rem;
+  font-weight: 800;
+  font-size: 0.85rem;
+}
+
+.manila-berth-row__ship {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.85rem;
+  font-weight: 700;
+  margin-left: auto;
+}
+
+.manila-berth-row__ship img {
+  width: 28px;
+  height: 28px;
+  object-fit: contain;
+}
+
+.manila-shore-slots,
+.manila-pirate-slots {
+  display: flex;
+  flex-direction: column;
+}
+
+.manila-shore-slot > span {
+  flex: 1;
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+/* —— Spots (legacy block; live styles further below on modular board) —— */
+.manila-spot {
+  appearance: none;
+  border: none;
+  background: transparent;
+  border-radius: 999px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: default;
+}
+
+.manila-spot.is-clickable {
+  cursor: pointer;
+}
+
+.manila-spot.is-taken {
+  border: none;
+  background: transparent;
+}
+
+.manila-spot__meeple {
+  width: 28px;
+  height: 28px;
+  object-fit: contain;
+}
+
+.manila-spot__pay {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  align-items: center;
+}
+
+.manila-spot__chip {
+  font-size: 0.65rem;
+  font-weight: 800;
+  line-height: 1;
+  font-style: normal;
+}
+
+.manila-spot__chip--cost {
+  color: #9a3412;
+}
+
+.manila-spot__chip--gain {
+  color: #a16207;
+}
+
+/* —— Start picker —— */
+.manila-start-picker__hint {
+  margin: 0 0 10px;
+  font-size: 0.85rem;
+  color: var(--manila-muted);
+}
+
+.manila-start-picker__wheels {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.manila-start-picker__col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  min-width: 72px;
+}
+
+.manila-start-picker__name {
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.manila-start-picker__spin {
+  width: 36px;
+  height: 28px;
+  border-radius: 8px;
+  border: 1px solid var(--manila-line);
+  background: #fff;
+  cursor: pointer;
+  font-weight: 800;
+}
+
+.manila-start-picker__spin:disabled {
+  opacity: 0.4;
+}
+
+.manila-start-picker__value {
+  font-size: 1.4rem;
+  font-weight: 900;
+  font-variant-numeric: tabular-nums;
+}
+
+.manila-start-picker__foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 12px;
+  font-weight: 800;
+}
+
+.manila-start-picker__foot .is-ok {
+  color: var(--manila-gain);
+}
+
+.manila-start-picker__foot .is-bad {
+  color: var(--manila-danger);
+}
+
+/* —— Actions / events —— */
+.manila-board__docked-ui {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-bottom: 8px;
+}
+
+.manila-actions {
+  padding: 14px;
+  border-radius: 16px;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, #fffdf8 92%, transparent), #fffdf8),
+    #f5e6c8;
+  border: 2px solid color-mix(in srgb, #92400e 28%, var(--manila-line));
+  box-shadow: 0 6px 16px color-mix(in srgb, #0f172a 8%, transparent);
+}
+
+.manila-actions h3 {
+  margin: 0 0 8px;
+}
+
+.manila-actions__row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 8px 0;
+}
+
+.manila-actions__cap {
+  margin: 0 0 4px;
+  font-size: 0.75rem;
+}
+
+.manila-actions__row--bid {
+  align-items: flex-end;
+}
+
+.manila-bid-input {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--manila-muted);
+}
+
+.manila-bid-input input {
+  width: 7.5rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 800;
+}
+
+.manila-events {
+  max-height: 9rem;
+  overflow: auto;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: color-mix(in srgb, #fff 88%, transparent);
+  border: 1px solid var(--manila-line);
+  font-size: 0.78rem;
+  color: #57534e;
+}
+
+.manila-events li {
+  padding: 3px 0;
+  border-bottom: 1px solid #f5f5f4;
+}
+
+.manila-events li:last-child {
+  border-bottom: none;
+}
+
+.manila-ware-pick {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin: 10px 0;
+}
+
+@media (min-width: 560px) {
+  .manila-ware-pick {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+.manila-ware-pick__btn {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 10px 8px;
+  border-radius: 14px;
+  border: 2px solid var(--manila-line);
+  background: #fff;
+  cursor: pointer;
+  font: inherit;
+}
+
+.manila-ware-pick__btn.is-selected {
+  border-color: var(--manila-accent);
+  background: var(--manila-accent-soft);
+}
+
+.manila-ware-pick__ship {
+  width: 48px;
+  height: 48px;
+  object-fit: contain;
+}
+
+.manila-ware-pick__ord {
+  position: absolute;
+  top: 6px;
+  left: 8px;
+  width: 1.4rem;
+  height: 1.4rem;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  background: var(--manila-accent);
+  color: #fff;
+  font-size: 0.75rem;
+  font-weight: 800;
+}
+
+.manila-ware-pick__hint {
+  font-size: 0.7rem;
+  color: var(--manila-muted);
+}
+
+.manila-actions--live {
+  border-width: 2px;
+  border-color: var(--manila-accent);
+  background: linear-gradient(180deg, #f0fdfa 0%, #fff 55%);
+}
+
+.manila-actions--live h3 {
+  color: var(--manila-accent-deep);
+}
+
+/* —— Physical tabletop layout —— */
+.manila-tabletop {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+  border-radius: 18px;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, #fff 82%, #fef3c7) 0%, #fffdf8 100%);
+  border: 2px solid color-mix(in srgb, #92400e 22%, var(--manila-line));
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, #fff 70%, transparent),
+    0 14px 36px color-mix(in srgb, #0f172a 14%, transparent);
+}
+
+.manila-tabletop__market {
+  padding: 10px 12px;
+  border-radius: 14px;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, #fef3c7 40%, transparent), transparent),
+    #fffdf8;
+  border: 2px solid color-mix(in srgb, #92400e 30%, var(--manila-line));
+}
+
+.manila-tabletop__market h2 {
+  margin: 0 0 8px;
+  font-size: 0.92rem;
+  color: #7c2d12;
+}
+
+.manila-pricelist__rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.manila-pricelist__row {
+  display: grid;
+  grid-template-columns: minmax(7.5rem, 1.1fr) minmax(0, 2.2fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 8px 10px;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, #92400e 18%, var(--manila-line));
+  background: color-mix(in srgb, #fff 88%, #fef3c7);
+}
+
+.manila-pricelist__ware {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.manila-pricelist__card {
+  width: 36px;
+  height: 48px;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, #78350f 25%, transparent);
+  flex-shrink: 0;
+}
+
+.manila-pricelist__icon {
+  width: 1.85rem;
+  height: 1.85rem;
+  object-fit: contain;
+  flex-shrink: 0;
+  border: none !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  filter: none;
+}
+
+.manila-pricelist__ware strong {
+  display: block;
+  font-size: 0.88rem;
+}
+
+.manila-pricelist__ware span {
+  font-size: 0.72rem;
+  color: var(--manila-muted);
+}
+
+.manila-pricelist__track {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-width: 0;
+}
+
+/* Neutral track; current price shown by marker icon (not border/color shift) */
+.manila-pricelist__cell {
+  position: relative;
+  flex: 1 1 2.4rem;
+  min-width: 2.2rem;
+  text-align: center;
+  padding: 10px 4px 6px;
+  border-radius: 8px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  border: 1px solid color-mix(in srgb, #92400e 16%, transparent);
+  background: color-mix(in srgb, #fef3c7 55%, #fff);
+  color: var(--manila-ink);
+}
+
+.manila-pricelist__marker {
+  position: absolute;
+  left: 50%;
+  top: -6px;
+  width: 18px;
+  height: 18px;
+  transform: translateX(-50%);
+  object-fit: contain;
+  pointer-events: none;
+  filter: drop-shadow(0 1px 2px color-mix(in srgb, #0f172a 35%, transparent));
+  z-index: 2;
+}
+
+.manila-pricelist__val {
+  position: relative;
+  z-index: 1;
+}
+
+.manila-pricelist__cell.is-here {
+  background: #fffbeb;
+  border-color: color-mix(in srgb, #b45309 45%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, #fbbf24 55%, transparent);
+}
+
+.manila-pricelist__now {
+  font-style: normal;
+  font-weight: 900;
+  font-size: 0.95rem;
+  min-width: 2.8rem;
+  text-align: center;
+  padding: 4px 8px;
+  border-radius: 8px;
+  color: var(--manila-ink);
+  background: color-mix(in srgb, #fef3c7 70%, #fff);
+  border: 1px solid color-mix(in srgb, #92400e 20%, transparent);
+}
+
+.manila-pricelist__cap {
+  margin: 8px 0 0;
+  font-size: 0.72rem;
+  color: #92400e;
+}
+
+@media (max-width: 640px) {
+  .manila-pricelist__row {
+    grid-template-columns: 1fr auto;
+    grid-template-areas:
+      'ware now'
+      'track track';
+  }
+  .manila-pricelist__ware {
+    grid-area: ware;
+  }
+  .manila-pricelist__track {
+    grid-area: track;
+  }
+  .manila-pricelist__now {
+    grid-area: now;
+  }
+  .manila-pricelist__card {
+    width: 28px;
+    height: 38px;
+  }
+  .manila-pricelist__icon {
+    width: 32px;
+    height: 32px;
+  }
+}
+
+.manila-bid-custom {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: flex-end;
+  margin: 10px 0;
+}
+
+.manila-bid-custom .manila-field {
+  margin: 0;
+}
+
+.manila-bid-custom input {
+  width: 8rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 800;
+}
+
+/* —— Loan / mortgage board —— */
+.manila-loanboard {
+  border-radius: 16px;
+  border: 2px solid color-mix(in srgb, #92400e 40%, transparent);
+  background-color: #f5e6c8;
+  background-size: cover;
+  background-position: center;
+  overflow: hidden;
+  box-shadow: 0 8px 20px color-mix(in srgb, #0f172a 12%, transparent);
+}
+
+.manila-loanboard__toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 0;
+  background: color-mix(in srgb, #78350f 55%, transparent);
+  color: #fff7ed;
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
+  text-align: left;
+}
+
+.manila-loanboard__toggle em {
+  margin-left: 8px;
+  font-style: normal;
+  font-size: 0.75rem;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, #fbbf24 85%, #fff);
+  color: #78350f;
+}
+
+.manila-loanboard__toggle strong {
+  font-size: 0.8rem;
+  opacity: 0.9;
+}
+
+.manila-loanboard__body {
+  padding: 12px 14px 14px;
+  background: color-mix(in srgb, #fffdf8 88%, transparent);
+}
+
+.manila-loanboard__hint {
+  margin: 0 0 10px;
+  font-size: 0.78rem;
+  color: #78716c;
+}
+
+.manila-loanboard__cols {
+  display: grid;
+  gap: 12px;
+}
+
+@media (min-width: 640px) {
+  .manila-loanboard__cols {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+.manila-loanboard__cols h4 {
+  margin: 0 0 8px;
+  font-size: 0.85rem;
+  color: #7c2d12;
+}
+
+.manila-loanboard__cards {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.manila-share-tile {
+  appearance: none;
+  width: auto;
+  min-width: 3.6rem;
+  padding: 6px 4px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  overflow: visible;
+  cursor: pointer;
+  font: inherit;
+  text-align: center;
+  transition: none;
+}
+
+.manila-share-tile img {
+  display: block;
+  width: 2.8rem;
+  height: 2.8rem;
+  margin: 0 auto;
+  aspect-ratio: 1;
+  object-fit: contain;
+  border: none !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.manila-share-tile span,
+.manila-share-tile em {
+  display: block;
+  font-size: 0.7rem;
+  font-weight: 800;
+  line-height: 1.2;
+  padding: 2px 4px;
+}
+
+.manila-share-tile em {
+  font-style: normal;
+  color: var(--manila-muted);
+  padding-bottom: 6px;
+}
+
+.manila-share-tile:hover:not(:disabled) {
+  transform: translateY(-2px);
+  border-color: transparent;
+  outline: none;
+}
+
+.manila-share-tile.is-enc {
+  border-color: transparent;
+  opacity: 0.85;
+}
+
+.manila-share-tile:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.manila-loanboard__confirm {
+  display: grid;
+  grid-template-columns: 4.2rem minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+  padding: 12px;
+  border-radius: 12px;
+  border: 2px solid var(--manila-accent);
+  background: #f0fdfa;
+}
+
+.manila-loanboard__confirm > img {
+  width: 3.6rem;
+  height: 3.6rem;
+  aspect-ratio: 1;
+  object-fit: contain;
+  border-radius: 0;
+  border: none;
+  background: transparent;
+}
+
+.manila-loanboard__confirm-body {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.manila-loanboard__confirm-body strong {
+  display: block;
+  margin: 0;
+  font-size: 0.92rem;
+  line-height: 1.35;
+  word-break: break-word;
+}
+
+.manila-loanboard__confirm-body p {
+  margin: 0;
+  font-size: 0.8rem;
+  line-height: 1.45;
+  color: var(--manila-muted);
+}
+
+.manila-loanboard__confirm-acts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.manila-share-tile__repay {
+  width: 100%;
+  padding: 4px 6px;
+  font-size: 0.72rem;
+}
+
+/* Modern ship token — cool slate shell, one accent for profit */
+.manila-ship-token {
+  --ship-shell: #0f172a;
+  --ship-face: #f8fafc;
+  --ship-line: color-mix(in srgb, #94a3b8 55%, transparent);
+  --ship-accent: #0d9488;
+  position: relative;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 5px 8px;
+  border-radius: 14px 14px 18px 18px;
+  background: linear-gradient(180deg, #1e293b 0%, #0f172a 100%);
+  border: 1px solid var(--ship-line);
+  box-shadow: 0 6px 14px color-mix(in srgb, #0f172a 35%, transparent);
+  color: var(--ship-face);
+  pointer-events: none;
+}
+
+.manila-ship-token--art {
+  pointer-events: auto;
+  flex-direction: row;
+  align-items: center;
+  padding: 0;
+  gap: 4px;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  border-radius: 0;
+  color: inherit;
+}
+
+.manila-ship-token--art .manila-ship-seat,
+.manila-ship-token--art .manila-ship-token__profit-btn {
+  pointer-events: auto;
+}
+
+.manila-ship-token--nutmeg {
+  --ship-accent: #0d9488;
+}
+.manila-ship-token--silk {
+  --ship-accent: #0891b2;
+}
+.manila-ship-token--ginseng {
+  --ship-accent: #64748b;
+}
+.manila-ship-token--jade {
+  --ship-accent: #14b8a6;
+}
+
+.manila-ship-token.is-sail {
+  animation: manila-sail-bob 0.45s ease-in-out infinite alternate;
+}
+
+.manila-ship-token__profit {
+  font-size: 0.78rem;
+  font-weight: 900;
+  letter-spacing: 0.02em;
+  color: #ecfdf5;
+  background: var(--ship-accent);
+  padding: 2px 8px;
+  border-radius: 999px;
+  line-height: 1.2;
+}
+
+.manila-ship-token__id {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 0.55rem;
+  font-weight: 700;
+  opacity: 0.92;
+}
+
+.manila-ship-token__id img {
+  width: 12px;
+  height: 12px;
+  object-fit: contain;
+}
+
+.manila-ship-token__seats {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+  margin-top: 2px;
+  pointer-events: auto;
+}
+
+.manila-ship-token__dot {
+  appearance: none;
+  pointer-events: auto;
+  width: 1.55rem;
+  height: 1.55rem;
+  min-width: 1.55rem;
+  min-height: 1.55rem;
+  padding: 0;
+  margin: 0;
+  border-radius: 999px;
+  border: 1.5px solid color-mix(in srgb, #e2e8f0 55%, transparent);
+  background: color-mix(in srgb, #334155 80%, transparent);
+  color: #e2e8f0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: default;
+  flex: none;
+}
+
+.manila-ship-token__dot em {
+  font-style: normal;
+  font-size: 0.62rem;
+  font-weight: 800;
+}
+
+.manila-ship-token__dot img {
+  width: 1.05rem;
+  height: 1.05rem;
+  object-fit: contain;
+}
+
+.manila-ship-token__dot.is-live {
+  cursor: pointer;
+  border-color: #fbbf24;
+  box-shadow: 0 0 0 2px color-mix(in srgb, #fbbf24 35%, transparent);
+}
+
+.manila-ship-token__dot.is-taken {
+  background: color-mix(in srgb, #0f172a 70%, #334155);
+}
+
+.manila-ship-token__die {
+  position: absolute;
+  right: -0.35rem;
+  top: -0.35rem;
+  width: 1.15rem;
+  height: 1.15rem;
+  border-radius: 4px;
+  background: #fff;
+  color: #0f172a;
+  font-size: 0.65rem;
+  font-weight: 900;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 1px 3px #0f172a;
+}
+
+.manila-plate__berth-ship .manila-ship-token {
+  transform: scale(0.72);
+  transform-origin: center;
+}
+
+.manila-plate__ship {
+  width: min(22%, 4.4rem) !important;
+}
+
+.manila-dice-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, #0f172a 45%, transparent);
+  pointer-events: none;
+}
+
+.manila-dice-overlay__panel {
+  padding: 16px 20px;
+  border-radius: 16px;
+  background: color-mix(in srgb, #fff 92%, #ecfeff);
+  box-shadow: 0 12px 40px color-mix(in srgb, #0f172a 35%, transparent);
+  text-align: center;
+}
+
+.manila-dice-overlay__panel > p {
+  margin: 0 0 10px;
+  font-weight: 800;
+  color: #0f766e;
+}
+
+.manila-dice-overlay__row {
+  display: flex;
+  gap: 14px;
+  justify-content: center;
+  align-items: center;
+}
+
+.manila-share-tile-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: stretch;
+}
+
+.manila-share-tile__acts {
+  display: flex;
+  gap: 4px;
+}
+
+.manila-share-tile__acts .manila-btn {
+  flex: 1;
+  padding: 4px 6px;
+  font-size: 0.72rem;
+}
+
+.manila-pilot-grid {
+  display: grid;
+  gap: 10px;
+  margin: 10px 0;
+}
+
+.manila-pilot-row {
+  padding: 8px 10px;
+  border-radius: 12px;
+  background: color-mix(in srgb, #fff 70%, #fef3c7);
+  border: 1px solid var(--manila-line);
+}
+
+.manila-pilot-row strong {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 0.85rem;
+}
+
+.manila-btn.is-on,
+.manila-btn--ghost.is-on {
+  border-color: var(--manila-accent);
+  background: var(--manila-accent-soft);
+  color: var(--manila-accent-deep);
+}
+
+.manila-plunder-list {
+  display: grid;
+  gap: 10px;
+  margin: 10px 0;
+}
+
+.manila-plunder-card {
+  padding: 10px;
+  border-radius: 12px;
+  border: 1px solid var(--manila-line);
+  background: #fff;
+}
+
+.manila-plunder-card strong {
+  display: block;
+  margin-bottom: 8px;
+}
+
+.manila-sea__lanes {
+  overflow: visible;
+}
+
+.manila-tabletop__main {
+  display: grid;
+  grid-template-columns: minmax(7.5rem, 1fr) minmax(0, 2.4fr) minmax(7.5rem, 1fr);
+  gap: 10px;
+  align-items: stretch;
+  overflow: visible;
+}
+
+@media (max-width: 760px) {
+  .manila-tabletop__main {
+    grid-template-columns: 1fr;
+  }
+}
+
+.manila-tabletop__dock {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border-radius: 14px;
+  background: color-mix(in srgb, #fef3c7 55%, #fff);
+  border: 1px dashed color-mix(in srgb, #92400e 28%, transparent);
+}
+
+.manila-tabletop__dock--yard {
+  background: color-mix(in srgb, #e7e5e4 55%, #fff);
+}
+
+.manila-tabletop__dock h3 {
+  margin: 0;
+  font-size: 0.85rem;
+  text-align: center;
+}
+
+.manila-berth {
+  display: grid;
+  gap: 6px;
+  padding: 6px;
+  border-radius: 12px;
+  background: color-mix(in srgb, #fff 70%, transparent);
+}
+
+.manila-berth__ship {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 2.4rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.manila-berth__ship img {
+  width: 40px;
+  height: 40px;
+  object-fit: contain;
+  filter: drop-shadow(0 2px 4px color-mix(in srgb, #0f172a 25%, transparent));
+}
+
+.manila-tabletop__sea {
+  position: relative;
+  min-height: 420px;
+  border-radius: 16px;
+  overflow: visible;
+  border: 1px solid color-mix(in srgb, #0e7490 35%, transparent);
+  background: #0e7490;
+}
+
+.manila-sea__bg {
+  position: absolute;
+  inset: 0;
+  background-size: cover;
+  background-position: center top;
+  opacity: 0.92;
+  pointer-events: none;
+  border-radius: inherit;
+}
+
+.manila-sea__scale {
+  position: absolute;
+  left: 6px;
+  top: 36px;
+  bottom: 28px;
+  z-index: 2;
+  width: 1.6rem;
+  pointer-events: none;
+}
+
+.manila-sea__scale span {
+  position: absolute;
+  left: 0;
+  transform: translateY(50%);
+  font-size: 0.65rem;
+  font-weight: 800;
+  color: #fff;
+  text-shadow: 0 1px 2px #0f172a;
+}
+
+.manila-sea__lanes {
+  position: relative;
+  z-index: 3;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  height: 100%;
+  min-height: 420px;
+  padding: 8px 8px 24px 28px;
+}
+
+.manila-lane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.manila-lane__head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px;
+  border-radius: 10px;
+  background: color-mix(in srgb, #0f172a 42%, transparent);
+  color: #fff;
+  font-size: 0.72rem;
+}
+
+.manila-lane__head img {
+  width: 16px;
+  height: 16px;
+}
+
+.manila-lane__head strong {
+  flex: 1;
+  font-size: 0.75rem;
+}
+
+.manila-lane__track {
+  position: relative;
+  flex: 1;
+  margin-top: 6px;
+  border-radius: 12px;
+  background: color-mix(in srgb, #022c22 18%, transparent);
+  border: 1px solid color-mix(in srgb, #fff 18%, transparent);
+}
+
+.manila-lane__ship {
+  position: absolute;
+  left: 50%;
+  width: 78%;
+  max-width: 108px;
+  transform: translate(-50%, 50%);
+  transition: bottom 0.35s ease;
+  display: block;
+  z-index: 5;
+  pointer-events: none;
+}
+
+.manila-lane__ship.is-sail {
+  animation: manila-sail-bob 0.45s ease-in-out infinite alternate;
+}
+
+@keyframes manila-sail-bob {
+  from {
+    filter: brightness(1);
+  }
+  to {
+    filter: brightness(1.12);
+  }
+}
+
+.manila-lane__hull {
+  position: relative;
+  width: 100%;
+}
+
+.manila-lane__ship > img:first-child,
+.manila-lane__hull > img:first-child {
+  display: block;
+  width: 100%;
+  height: auto;
+  filter: drop-shadow(0 4px 8px color-mix(in srgb, #0f172a 40%, transparent));
+}
+
+.manila-lane__profit {
+  display: none;
+}
+
+.manila-lane__die {
+  position: absolute;
+  right: -2px;
+  top: -2px;
+  width: 22px;
+  height: 22px;
+}
+
+/* Seats stacked bow → stern so meeples fit */
+.manila-lane__deck {
+  pointer-events: auto;
+  position: absolute;
+  left: 50%;
+  top: 18%;
+  bottom: 22%;
+  width: 42%;
+  max-width: 2.6rem;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  flex-wrap: nowrap;
+  align-items: stretch;
+  justify-content: space-evenly;
+  gap: 3px;
+  z-index: 6;
+}
+
+.manila-lane__deck--4 {
+  top: 14%;
+  bottom: 18%;
+  max-width: 100%;
+}
+
+.manila-pad--deck {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 1.7rem;
+  width: 100%;
+  padding: 2px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  border-radius: 999px;
+  background: color-mix(in srgb, #fffbeb 82%, transparent);
+  border: 2px solid #a8a29e;
+}
+
+.manila-pad--deck .manila-pad__economy {
+  grid-column: auto;
+  transform: scale(0.85);
+  transform-origin: center;
+}
+
+.manila-pad--deck .manila-pad__hole,
+.manila-pad--deck > img {
+  width: 22px;
+  height: 22px;
+  object-fit: contain;
+}
+
+.manila-pad--deck .manila-pad__hole {
+  margin: 0;
+  border-radius: 999px;
+}
+
+.manila-sea__caption {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 4px;
+  z-index: 4;
+  margin: 0;
+  text-align: center;
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: #ecfeff;
+  text-shadow: 0 1px 2px #0f172a;
+  pointer-events: none;
+}
+
+.manila-tabletop__shore {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr;
+  gap: 10px;
+}
+
+@media (max-width: 560px) {
+  .manila-tabletop__shore {
+    grid-template-columns: 1fr;
+  }
+}
+
+.manila-shore-block {
+  padding: 10px;
+  border-radius: 14px;
+  background: color-mix(in srgb, #fee2e2 40%, #fff);
+  border: 1px solid color-mix(in srgb, #b91c1c 18%, var(--manila-line));
+}
+
+.manila-shore-block:last-child {
+  background: color-mix(in srgb, #dbeafe 45%, #fff);
+  border-color: color-mix(in srgb, #1d4ed8 18%, var(--manila-line));
+}
+
+.manila-shore-block h3 {
+  margin: 0 0 8px;
+  font-size: 0.85rem;
+}
+
+.manila-shore-block__pads {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.manila-pad {
+  appearance: none;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-rows: auto auto;
+  gap: 2px 6px;
+  min-width: 4.8rem;
+  padding: 8px 10px;
+  border-radius: 12px;
+  border: 2px solid #a8a29e;
+  background: linear-gradient(180deg, #fffbeb 0%, #fef3c7 100%);
+  color: var(--manila-ink);
+  font: inherit;
+  text-align: left;
+  cursor: default;
+  transition:
+    transform 0.12s ease,
+    box-shadow 0.12s ease,
+    border-color 0.12s ease;
+}
+
+.manila-pad--deck {
+  /* vertical stack on ship — sized in .manila-lane__deck rules */
+  grid-template-columns: 1fr;
+}
+
+.manila-pad--deck .manila-pad__economy {
+  grid-column: 1;
+}
+
+.manila-pad--pirate {
+  background: linear-gradient(180deg, #fff1f2 0%, #fecdd3 100%);
+  border-color: #fb7185;
+}
+
+.manila-pad--pilot {
+  background: linear-gradient(180deg, #eff6ff 0%, #bfdbfe 100%);
+  border-color: #60a5fa;
+}
+
+.manila-pad--insurance {
+  background: linear-gradient(180deg, #f5f3ff 0%, #ddd6fe 100%);
+  border-color: #a78bfa;
+}
+
+.manila-pad--port,
+.manila-pad--shipyard {
+  background: linear-gradient(180deg, #fff7ed 0%, #fed7aa 100%);
+  border-color: #fb923c;
+}
+
+.manila-pad__name {
+  grid-column: 1;
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.manila-pad__economy {
+  grid-column: 1;
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  font-size: 0.78rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.manila-pad__economy em {
+  font-style: normal;
+  padding: 1px 5px;
+  border-radius: 6px;
+}
+
+.manila-pad__economy .is-cost {
+  color: #92400e;
+  background: color-mix(in srgb, var(--manila-cost) 28%, #fff);
+}
+
+.manila-pad__economy .is-gain {
+  color: #065f46;
+  background: color-mix(in srgb, var(--manila-gain) 22%, #fff);
+}
+
+.manila-pad__token {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  align-self: center;
+  width: 28px;
+  height: 28px;
+}
+
+.manila-pad__token img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.manila-pad__hole {
+  display: block;
+  width: 22px;
+  height: 22px;
+  margin: 3px;
+  border-radius: 999px;
+  border: 2px dashed #a8a29e;
+  background: color-mix(in srgb, #fff 55%, transparent);
+}
+
+.manila-pad.is-taken {
+  opacity: 0.92;
+  border-style: solid;
+  border-color: #78716c;
+}
+
+.manila-pad.is-live {
+  cursor: pointer;
+  border-color: var(--manila-accent);
+  box-shadow: none;
+  animation: none;
+}
+
+.manila-pad.is-live:hover {
+  border-color: color-mix(in srgb, var(--manila-accent) 80%, #000);
+}
+
+.manila-pad.is-live:disabled {
+  cursor: default;
+}
+
+@keyframes manila-pad-glow {
+  0%,
+  100% {
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--manila-accent) 30%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--manila-accent) 45%, transparent);
+  }
+}
+
+.manila-start-picker--onboard {
+  margin: 0;
+  padding: 12px;
+  border-radius: 14px;
+  background: #fff;
+  border: 2px solid var(--manila-accent);
+}
+
+.manila-board__docked-ui {
+  scroll-margin-top: 12px;
+}
+
+.manila-board__docked-ui.is-focus > .manila-actions--live,
+.manila-board__docked-ui.is-focus > .manila-actions:first-child {
+  border-width: 2px;
+  border-color: var(--manila-accent);
+}
+
+/* —— Full plate board (iPhone 9:19.5, website map_bg) —— */
+.manila-plate {
+  --manila-pad-size: 3.35rem;
+  position: relative;
+  width: 100%;
+  max-width: min(420px, 100%);
+  margin: 0 auto;
+  aspect-ratio: 9 / 19.5;
+  border-radius: 16px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, #0e7490 35%, transparent);
+  background: #0e7490;
+  box-shadow: 0 8px 24px color-mix(in srgb, #0f172a 18%, transparent);
+}
+
+.manila-plate__bg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center top;
+  pointer-events: none;
+  user-select: none;
+}
+
+.manila-plate__scale {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 3;
+  width: 1.35rem;
+  pointer-events: none;
+}
+
+.manila-plate__scale--left {
+  left: 28%;
+}
+
+.manila-plate__scale--right {
+  right: 28%;
+  left: auto;
+}
+
+.manila-plate__scale span {
+  position: absolute;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 0.55rem;
+  font-weight: 800;
+  color: #fff;
+  text-shadow: 0 1px 2px #0f172a;
+  line-height: 1;
+}
+
+.manila-plate__zones {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.manila-plate__zone {
+  position: absolute;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 0.62rem;
+  font-weight: 800;
+  color: #1c1917;
+  background: color-mix(in srgb, #fffbeb 88%, transparent);
+  border: 1px solid color-mix(in srgb, #78350f 28%, transparent);
+  box-shadow: 0 1px 3px color-mix(in srgb, #0f172a 20%, transparent);
+  white-space: nowrap;
+}
+
+.manila-plate__zone--pirate {
+  left: 8%;
+  top: 5%;
+  background: color-mix(in srgb, #fee2e2 90%, #fff);
+  border-color: color-mix(in srgb, #b91c1c 30%, transparent);
+}
+
+.manila-plate__zone--port {
+  left: 2%;
+  top: 22%;
+  writing-mode: vertical-rl;
+  padding: 8px 3px;
+}
+
+.manila-plate__zone--yard {
+  right: 2%;
+  top: 22%;
+  left: auto;
+  writing-mode: vertical-rl;
+  padding: 8px 3px;
+  background: color-mix(in srgb, #e7e5e4 90%, #fff);
+}
+
+.manila-plate__zone--pilot-s {
+  left: 12%;
+  bottom: 7%;
+  top: auto;
+  background: color-mix(in srgb, #dbeafe 90%, #fff);
+}
+
+.manila-plate__zone--pilot-l {
+  left: 50%;
+  bottom: 7%;
+  top: auto;
+  transform: translateX(-50%);
+  background: color-mix(in srgb, #dbeafe 90%, #fff);
+}
+
+.manila-plate__zone--ins {
+  right: 8%;
+  left: auto;
+  bottom: 7%;
+  top: auto;
+  background: color-mix(in srgb, #fef9c3 90%, #fff);
+}
+
+.manila-plate__pad {
+  position: absolute;
+  z-index: 6;
+  transform: translate(-50%, -50%);
+  width: var(--manila-pad-size);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.manila-plate__pad-ico {
+  width: 1.55rem;
+  height: 1.55rem;
+  object-fit: contain;
+  filter: drop-shadow(0 1px 2px color-mix(in srgb, #0f172a 35%, transparent));
+  pointer-events: none;
+}
+
+.manila-plate__pad-ico--pirate {
+  width: 2.2rem;
+  height: 2.2rem;
+}
+
+.manila-plate__pad .manila-pad {
+  width: var(--manila-pad-size);
+  min-width: var(--manila-pad-size);
+  height: var(--manila-pad-size);
+  min-height: var(--manila-pad-size);
+  padding: 4px;
+  font-size: 0.62rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  grid-template-columns: none;
+  grid-template-rows: none;
+}
+
+.manila-plate__pad .manila-pad__name {
+  font-size: 0.58rem;
+  line-height: 1.1;
+  text-align: center;
+}
+
+.manila-plate__pad .manila-pad__economy {
+  transform: scale(0.85);
+}
+
+.manila-plate__pad .manila-pad__token img,
+.manila-plate__pad .manila-pad__hole {
+  width: 1.15rem;
+  height: 1.15rem;
+}
+
+.manila-pad__token--stack {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 1px;
+  max-width: 100%;
+}
+
+.manila-pad__token--stack img {
+  width: 0.95rem !important;
+  height: 0.95rem !important;
+}
+
+/* Port / yard per-berth variation */
+.manila-plate__pad--port_A .manila-pad {
+  border-color: #b45309;
+  background: linear-gradient(160deg, #fff7ed, #ffedd5);
+}
+.manila-plate__pad--port_B .manila-pad {
+  border-color: #c2410c;
+  background: linear-gradient(160deg, #fffbeb, #fed7aa);
+}
+.manila-plate__pad--port_C .manila-pad {
+  border-color: #9a3412;
+  background: linear-gradient(200deg, #ffedd5, #fdba74);
+}
+.manila-plate__pad--shipyard_A .manila-pad {
+  border-color: #57534e;
+  background: linear-gradient(160deg, #fafaf9, #e7e5e4);
+}
+.manila-plate__pad--shipyard_B .manila-pad {
+  border-color: #78716c;
+  background: linear-gradient(160deg, #f5f5f4, #d6d3d1);
+}
+.manila-plate__pad--shipyard_C .manila-pad {
+  border-color: #44403c;
+  background: linear-gradient(200deg, #e7e5e4, #a8a29e);
+}
+
+.manila-plate__berth-ship {
+  position: absolute;
+  z-index: 4;
+  width: 2.6rem;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.manila-plate__berth-ship img {
+  display: block;
+  width: 100%;
+  height: auto;
+  filter: drop-shadow(0 2px 4px color-mix(in srgb, #0f172a 35%, transparent));
+}
+
+.manila-plate__ship {
+  position: absolute;
+  z-index: 5;
+  width: min(20%, 4.8rem);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.manila-plate__ship.is-sail {
+  animation: manila-sail-bob 0.45s ease-in-out infinite alternate;
+}
+
+.manila-plate__ship .manila-lane__hull {
+  width: 100%;
+}
+
+.manila-plate__ship .manila-lane__hull > img:first-child {
+  display: block;
+  width: 100%;
+  height: auto;
+  filter: drop-shadow(0 4px 8px color-mix(in srgb, #0f172a 40%, transparent));
+}
+
+.manila-plate__ship-tag {
+  position: absolute;
+  left: 50%;
+  top: -1rem;
+  transform: translateX(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 5px;
+  border-radius: 999px;
+  font-size: 0.52rem;
+  font-weight: 800;
+  color: #fff;
+  background: color-mix(in srgb, #0f172a 62%, transparent);
+  white-space: nowrap;
+}
+
+.manila-plate__ship-tag img {
+  width: 11px;
+  height: 11px;
+}
+
+/* Ghost seat hits — costs painted on ship art, no pad chrome */
+.manila-lane__deck--ghost {
+  background: transparent;
+  border: none;
+  width: 46%;
+  max-width: 2.2rem;
+  top: 22%;
+  bottom: 18%;
+}
+
+.manila-seat-hit {
+  appearance: none;
+  flex: 1 1 0;
+  min-height: 1.2rem;
+  width: 100%;
+  padding: 0;
+  margin: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  cursor: default;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: auto;
+}
+
+.manila-seat-hit img {
+  width: 1.15rem;
+  height: 1.15rem;
+  object-fit: contain;
+  filter: drop-shadow(0 1px 2px #0f172a);
+}
+
+.manila-seat-hit.is-live {
+  cursor: pointer;
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, #fbbf24 70%, transparent);
+}
+
+.manila-seat-hit.is-live:hover {
+  background: color-mix(in srgb, #fff 28%, transparent);
+}
+
+.manila-plate-fallback {
+  margin-top: 8px;
+  border-radius: 12px;
+  border: 1px dashed var(--manila-line);
+  background: color-mix(in srgb, #fff 70%, #fef3c7);
+  padding: 6px 10px;
+}
+
+.manila-plate-fallback > summary {
+  cursor: pointer;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--manila-muted);
+}
+
+.manila-plate-fallback[open] {
+  padding-bottom: 10px;
+}
+
+.manila-plate-fallback .manila-tabletop__shore {
+  margin-top: 8px;
+  grid-template-columns: 1fr 1fr;
+}
+
+.manila-cash__ico {
+  background: transparent;
+}
+
+@media (max-width: 720px) {
+  .manila-rail-card {
+    width: min(148px, 48vw);
+  }
+
+  .manila-plate {
+    max-width: 100%;
+    border-radius: 12px;
+    --manila-pad-size: 3.05rem;
+  }
+
+  .manila-plate__zone {
+    font-size: 0.55rem;
+    padding: 2px 5px;
+  }
+
+  .manila-plate__ship {
+    width: min(24%, 4.2rem);
+  }
+
+  .manila-plate__scale--left {
+    left: 26%;
+  }
+
+  .manila-plate__scale--right {
+    right: 26%;
+  }
+
+  .manila-tabletop__market {
+    padding: 8px 10px;
+  }
+
+  .manila-plate-fallback .manila-tabletop__shore {
+    grid-template-columns: 1fr;
+  }
+}
+
+.manila-turn-banner.is-sticky {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  margin-bottom: 10px;
+}
+
+@media (min-width: 960px) {
+  .manila-plate {
+    max-width: 440px;
+  }
+
+  .manila-plate__ship {
+    width: min(18%, 5.2rem);
+  }
+}
+
+/* —— Spot wells: one size for port / yard / pirate / pilots / ship seats —— */
+.manila-spot {
+  --spot: 2.1rem;
+  appearance: none;
+  width: var(--spot);
+  height: var(--spot);
+  min-width: var(--spot);
+  min-height: var(--spot);
+  padding: 0;
+  margin: 0;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: #1c1917;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: default;
+  flex: none;
+  position: relative;
+  box-shadow: none;
+  outline: none;
+}
+
+.manila-spot__role {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+}
+
+.manila-spot__role img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  pointer-events: none;
+  filter: drop-shadow(0 1px 2px color-mix(in srgb, #0f172a 28%, transparent));
+}
+
+.manila-spot__badge {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.manila-spot__badge img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  pointer-events: none;
+}
+
+.manila-spot__badge em {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  font-style: normal;
+  font-family: Georgia, 'Times New Roman', 'Cambria', serif;
+  font-size: 0.82rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  text-align: center;
+  color: #2a1408;
+  text-shadow:
+    0 1px 0 color-mix(in srgb, #fff6e0 55%, transparent),
+    0 0 1px color-mix(in srgb, #1a0a04 35%, transparent);
+}
+
+.manila-spot__badge--pay em {
+  color: #3a2208;
+}
+
+/* Beside-pad chips: pay + role icons (never covering the well) */
+.manila-spot__outer {
+  position: absolute;
+  inset: auto;
+  left: 50%;
+  bottom: calc(100% + 2px);
+  width: var(--spot);
+  height: var(--spot);
+  transform: translateX(-50%);
+  z-index: 2;
+  pointer-events: none;
+}
+
+.manila-spot__outer.manila-spot__badge {
+  display: grid;
+  place-items: center;
+}
+
+.manila-spot__outer.manila-spot__role {
+  inset: auto;
+}
+
+.manila-spot__outer.manila-spot__role img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.manila-spot--pay-right .manila-spot__outer {
+  left: calc(100% + 3px);
+  bottom: 0;
+  transform: none;
+}
+
+.manila-spot--pay-left .manila-spot__outer {
+  left: auto;
+  right: calc(100% + 3px);
+  bottom: 0;
+  transform: none;
+}
+
+.manila-spot--pay-up-right .manila-spot__outer {
+  /* Further upper-left vs prior up-right */
+  left: calc(100% - 0.35rem);
+  bottom: calc(100% + 0.35rem);
+  transform: none;
+}
+
+.manila-spot--pay-on .manila-spot__badge--pay em {
+  color: #3a2208;
+}
+
+.manila-spot--pay-right .manila-spot__outer.manila-spot__outer--stack,
+.manila-spot--pay-left .manila-spot__outer.manila-spot__outer--stack {
+  bottom: calc(100% + 2px);
+}
+
+.manila-spot--pay-right .manila-spot__outer.manila-spot__role {
+  bottom: 0;
+}
+
+.manila-spot--pay-left .manila-spot__outer.manila-spot__role {
+  bottom: 0;
+}
+
+.manila-spot__dual,
+.manila-spot__well,
+.manila-spot__ring,
+.manila-spot__chip,
+.manila-spot__inner {
+  display: none !important;
+}
+
+.manila-spot__meeple {
+  position: relative;
+  z-index: 3;
+  width: 98% !important;
+  height: 98% !important;
+  object-fit: contain;
+  pointer-events: none;
+  background: transparent !important;
+  mix-blend-mode: normal;
+  filter: drop-shadow(0 1px 2px color-mix(in srgb, #0f172a 35%, transparent));
+}
+
+.manila-spot.is-live {
+  cursor: pointer;
+}
+
+.manila-spot.is-live:hover,
+.manila-spot.is-live:focus-visible {
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, #ca8a04 70%, transparent);
+}
+
+.manila-spot.is-taken {
+  opacity: 1;
+  background: transparent;
+}
+
+.manila-tabletop--modular {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.manila-board-stage {
+  --spot: 2.1rem;
+  /* Hull width on board; length follows art. Slimmer shell via scaleX on punt only. */
+  --manila-ship: 6.2%;
+  --manila-ship-slim: 0.78;
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  min-height: min(88vh, 720px);
+  max-height: none;
+  border-radius: 0;
+  overflow: visible;
+  isolation: isolate;
+  background: #2a6b63;
+}
+
+.manila-board-stage__bg {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background-size: 100% 100%;
+  background-position: center top;
+  background-repeat: no-repeat;
+  pointer-events: none;
+}
+
+.manila-board-grid {
+  display: none;
+}
+
+.manila-sea-canvas {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  overflow: visible;
+  border: none;
+  background: transparent;
+  pointer-events: none;
+}
+
+.manila-sea-canvas > * {
+  pointer-events: auto;
+}
+
+.manila-sea-canvas__bg {
+  display: none;
+}
+
+.manila-sea-canvas__ship {
+  position: absolute;
+  z-index: 5;
+  width: var(--manila-ship, 7.0%);
+  /* rotate comes from inline style (start-berth 走势); nudge on token */
+  transition:
+    top 0.45s ease,
+    left 0.45s ease,
+    transform 0.45s ease;
+}
+
+/* Original PNG ship: art carries seats/profit; outside pill + transparent hits */
+.manila-ship-token--art {
+  position: relative;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  width: 100%;
+}
+
+.manila-ship-token__profit-btn {
+  display: none !important;
+}
+
+.manila-ship-token__profit-onbow {
+  position: absolute;
+  left: 50%;
+  top: 8.5%;
+  z-index: 4;
+  transform: translate(-50%, -50%);
+  min-width: 0;
+  width: max-content;
+  max-width: 95%;
+  padding: 0.16em 0.32em;
+  border-radius: 0.35rem;
+  /* Fixed readable size — not scaled with slim hull */
+  font-size: clamp(0.85rem, 2.1vmin, 1.15rem);
+  font-weight: 900;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.01em;
+  line-height: 1.05;
+  color: #1c0a02;
+  background: linear-gradient(180deg, #ffe08a 0%, #f5b942 55%, #e09a1e 100%);
+  border: 2px solid #7a3f0c;
+  box-shadow:
+    0 0 0 1.5px rgba(255, 248, 220, 0.85),
+    0 2px 5px rgba(15, 23, 42, 0.45);
+  text-align: center;
+  pointer-events: none;
+  text-shadow: 0 1px 0 rgba(255, 251, 235, 0.95);
+}
+
+.manila-ship-token[data-seats='4'] .manila-ship-token__profit-onbow {
+  top: 8.2%;
+}
+
+.manila-ship-token.is-compact .manila-ship-token__profit-onbow {
+  font-size: clamp(0.72rem, 1.8vmin, 0.95rem);
+  padding: 0.12em 0.24em;
+  border-width: 1.5px;
+}
+
+.manila-ship-token__hull {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+
+.manila-ship-token__punt {
+  position: relative;
+  z-index: 0;
+  display: block;
+  width: 100%;
+  height: auto;
+  object-fit: contain;
+  /* Slim hull only — overlays (profit/cargo/meeple) stay unscaled */
+  transform: scaleX(var(--manila-ship-slim, 0.78));
+  transform-origin: center center;
+  pointer-events: none;
+  filter: drop-shadow(0 2px 4px color-mix(in srgb, #0f172a 30%, transparent));
+  background: transparent !important;
+}
+
+.manila-ship-token__art {
+  display: none;
+}
+
+.manila-ship-token__cargo {
+  position: absolute;
+  left: 50%;
+  top: 79.5%;
+  z-index: 1;
+  /* Fixed size — not tied to hull width/height */
+  width: clamp(1.45rem, 3.4vmin, 2.05rem);
+  height: clamp(1.45rem, 3.4vmin, 2.05rem);
+  aspect-ratio: 1;
+  transform: translate(-50%, -50%);
+  object-fit: contain;
+  object-position: center;
+  pointer-events: none;
+  background: transparent !important;
+  filter: drop-shadow(0 1px 2px color-mix(in srgb, #0f172a 25%, transparent));
+}
+
+.manila-ship-token[data-seats='4'] .manila-ship-token__cargo {
+  top: 88%;
+}
+
+.manila-ship-token.is-compact .manila-ship-token__cargo {
+  width: clamp(1.3rem, 3vmin, 1.85rem);
+  height: clamp(1.3rem, 3vmin, 1.85rem);
+}
+
+.manila-ship-seat__cost {
+  font-size: 0.55rem;
+  font-weight: 900;
+  color: #1c1917;
+  text-shadow: 0 0 2px #fff;
+  pointer-events: none;
+}
+
+.manila-tip-fixed {
+  position: fixed;
+  top: max(12px, env(safe-area-inset-top));
+  left: max(12px, env(safe-area-inset-left));
+  z-index: 60;
+  width: min(15.5rem, calc(100vw - 24px));
+  display: grid;
+  gap: 2px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: color-mix(in srgb, #0f172a 72%, transparent);
+  color: #f8fafc;
+  border: 1px solid color-mix(in srgb, #fde68a 45%, transparent);
+  box-shadow: 0 8px 24px color-mix(in srgb, #0f172a 35%, transparent);
+  backdrop-filter: blur(8px);
+  pointer-events: auto;
+}
+
+.manila-tip-fixed.is-urgent {
+  border-color: #fbbf24;
+  box-shadow: 0 0 0 2px color-mix(in srgb, #f59e0b 35%, transparent);
+}
+
+.manila-tip-fixed__phase {
+  font-size: 0.68rem;
+  font-weight: 700;
+  opacity: 0.85;
+}
+
+.manila-tip-fixed__msg {
+  font-size: 0.88rem;
+  font-weight: 800;
+  line-height: 1.25;
+}
+
+.manila-tip-fixed__detail {
+  font-size: 0.72rem;
+  opacity: 0.9;
+  line-height: 1.35;
+}
+
+.manila-tip-fixed__act {
+  appearance: none;
+  margin-top: 6px;
+  justify-self: start;
+  border: 1px solid color-mix(in srgb, #fff 35%, transparent);
+  background: color-mix(in srgb, #fff 12%, transparent);
+  color: #fff;
+  border-radius: 8px;
+  padding: 4px 8px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.manila-action-center {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px;
+  pointer-events: none;
+  background: color-mix(in srgb, #0f172a 18%, transparent);
+}
+
+.manila-action-center__panel {
+  pointer-events: auto;
+  width: min(100%, 22rem);
+  max-height: min(70%, 420px);
+  overflow: auto;
+  border-radius: 14px;
+  box-shadow: 0 12px 40px color-mix(in srgb, #0f172a 40%, transparent);
+}
+
+.manila-action-center__panel .manila-actions {
+  margin: 0;
+}
+
+.manila-ship-seat {
+  appearance: none;
+  position: absolute;
+  width: 34%;
+  aspect-ratio: 1;
+  transform: translate(-50%, -50%);
+  padding: 0;
+  margin: 0;
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  cursor: default;
+  display: grid;
+  place-items: center;
+}
+
+.manila-ship-seat.is-live {
+  cursor: pointer;
+  border-color: #a16207;
+  background: color-mix(in srgb, #fef3c7 35%, transparent);
+  box-shadow: none;
+  animation: none;
+}
+
+.manila-ship-seat img {
+  width: 85%;
+  height: 85%;
+  object-fit: contain;
+  pointer-events: none;
+}
+
+.manila-ship-token--art.is-compact {
+  width: 100%;
+}
+
+.manila-ship-token--art.is-compact .manila-ship-token__profit-btn {
+  display: none;
+}
+
+.manila-ship-token--art .manila-ship-token__die {
+  position: absolute;
+  right: -0.2rem;
+  top: -0.2rem;
+  z-index: 3;
+}
+
+.manila-action-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 55;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 12px;
+  pointer-events: none;
+}
+
+.manila-action-modal__backdrop {
+  display: none;
+}
+
+.manila-action-modal__panel {
+  position: relative;
+  z-index: 1;
+  width: min(100%, 26rem);
+  max-height: min(52vh, 420px);
+  overflow: auto;
+  pointer-events: auto;
+  border-radius: 16px 16px 12px 12px;
+  box-shadow: 0 -8px 32px color-mix(in srgb, #0f172a 28%, transparent);
+}
+
+.manila-action-modal__chrome {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px 0;
+  background: #fff;
+  border-radius: 16px 16px 0 0;
+}
+
+.manila-action-modal__chrome span {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--manila-muted);
+}
+
+.manila-action-fab {
+  position: sticky;
+  bottom: 12px;
+  z-index: 40;
+  display: flex;
+  justify-content: center;
+  margin: 8px 12px;
+}
+
+.manila-action-fab .manila-btn {
+  box-shadow: 0 6px 20px color-mix(in srgb, #0f172a 22%, transparent);
+}
+
+.manila-sea-canvas__scale {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 2;
+  width: 1.2rem;
+  pointer-events: none;
+}
+
+.manila-sea-canvas__scale--left {
+  left: 4px;
+}
+
+.manila-sea-canvas__scale--right {
+  right: 4px;
+  left: auto;
+}
+
+.manila-sea-canvas__scale span {
+  position: absolute;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 0.55rem;
+  font-weight: 800;
+  color: #fff;
+  text-shadow: 0 1px 2px #0f172a;
+}
+
+.manila-sea-canvas__ship {
+  width: var(--manila-ship, 7.0%);
+}
+
+.manila-ship-seat-wrap {
+  position: absolute;
+  z-index: 5;
+  transform: translate(-50%, -50%);
+}
+
+/* Meeples stay world-upright; cost pads still follow hull */
+.manila-sea-canvas__ship .manila-ship-seat-wrap:has(.manila-spot__meeple),
+.manila-dock__ship .manila-ship-seat-wrap:has(.manila-spot__meeple) {
+  transform: translate(-50%, -50%) rotate(calc(-1 * var(--ship-rot, 0deg)));
+}
+
+.manila-sea-canvas__ship .manila-spot__meeple,
+.manila-dock__ship .manila-spot__meeple {
+  /* Upright handled on seat-wrap; keep identity here */
+  transform: none;
+  transform-origin: center center;
+  width: auto !important;
+  height: 92% !important;
+  max-width: 92% !important;
+  aspect-ratio: 1 !important;
+  object-fit: contain !important;
+}
+
+/* Same spot size as shore pads — independent of hull width */
+.manila-ship-seat-wrap .manila-spot {
+  --spot: 2.1rem;
+  width: var(--spot);
+  height: var(--spot);
+  aspect-ratio: 1;
+  flex: none;
+}
+
+.manila-ship-seat-wrap .manila-spot__meeple {
+  width: auto !important;
+  height: 92% !important;
+  max-width: 92% !important;
+  aspect-ratio: 1 !important;
+  object-fit: contain !important;
+  object-position: center !important;
+}
+
+.manila-dock {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  pointer-events: none;
+  border-radius: 0;
+  padding: 0;
+  background: transparent;
+  border: none;
+  min-height: 0;
+  backdrop-filter: none;
+}
+
+.manila-dock--yard {
+  background: transparent;
+}
+
+.manila-dock h3 {
+  display: none;
+}
+
+.manila-dock__berth {
+  /* Spot/ship carry their own absolute % coords on the stage. */
+  position: static;
+  display: contents;
+  pointer-events: none;
+}
+
+.manila-dock__letter {
+  position: absolute;
+  z-index: 4;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  font-family: Georgia, 'Times New Roman', serif;
+  font-weight: 700;
+  font-size: clamp(1.45rem, 4.2vmin, 2.2rem);
+  line-height: 1;
+  color: rgba(248, 244, 230, 0.92);
+  text-shadow:
+    0 0 2px rgba(20, 40, 48, 0.75),
+    1px 0 0 rgba(28, 48, 56, 0.55),
+    -1px 0 0 rgba(28, 48, 56, 0.55),
+    0 1px 0 rgba(28, 48, 56, 0.55),
+    0 -1px 0 rgba(28, 48, 56, 0.55);
+  letter-spacing: 0.02em;
+  user-select: none;
+}
+
+.manila-dock__letter--yard {
+  /* same size as port — keep class for targeting only */
+  font-size: inherit;
+}
+
+.manila-dock__spot,
+.manila-dock__ship {
+  position: absolute;
+  z-index: 6;
+  pointer-events: auto;
+}
+
+.manila-dock__spot {
+  transform: translate(-50%, -50%);
+}
+
+.manila-dock__spot--warped {
+  transform: none; /* inline matrix3d from padSpotStyle */
+  display: grid;
+  place-items: center;
+}
+
+.manila-dock__spot--warped .manila-spot {
+  width: 100%;
+  height: 100%;
+  --spot: min(100%, 2.4rem);
+}
+
+.manila-dock__berth--port {
+  flex-direction: column;
+}
+
+.manila-dock__berth--yard {
+  flex-direction: row-reverse;
+}
+
+.manila-dock__ship {
+  /* coverBerthStyle: position + rotate; size scales with board (covers start berths) */
+  width: var(--manila-ship, 7.0%);
+  height: auto;
+  pointer-events: none;
+}
+
+.manila-dock__ship .manila-ship-token {
+  width: 100%;
+  height: auto;
+  max-width: none;
+}
+
+.manila-dock__ship--warped,
+.manila-dock__ship-orient {
+  display: none;
+}
+
+.manila-dock__empty {
+  display: none;
+}
+
+.manila-sea-start {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 4px);
+  transform: translateX(-50%);
+  z-index: 8;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 6px;
+  border-radius: 10px;
+  background: color-mix(in srgb, #0f172a 55%, transparent);
+  border: 1px dashed color-mix(in srgb, #fff 55%, transparent);
+  color: #fff;
+  pointer-events: auto;
+}
+
+.manila-sea-start__spin {
+  appearance: none;
+  border: none;
+  background: color-mix(in srgb, #fff 18%, transparent);
+  color: #fff;
+  width: 1.6rem;
+  height: 1.15rem;
+  border-radius: 6px;
+  font-size: 0.65rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+}
+
+.manila-sea-start__spin:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.manila-sea-start__val {
+  font-size: 0.95rem;
+  font-weight: 900;
+  line-height: 1.1;
+  min-width: 1.2rem;
+  text-align: center;
+}
+
+.manila-start-confirm {
+  position: absolute;
+  left: 50%;
+  bottom: 10px;
+  transform: translateX(-50%);
+  z-index: 12;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: 12px;
+  background: color-mix(in srgb, #0f172a 62%, transparent);
+  border: 1px dashed color-mix(in srgb, #fde68a 70%, transparent);
+  color: #f8fafc;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.manila-start-confirm .is-ok {
+  color: #86efac;
+}
+
+.manila-start-confirm .is-bad {
+  color: #fca5a5;
+}
+
+.manila-shore-row {
+  display: none !important;
+}
+
+.manila-track-nums {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+}
+
+.manila-track-nums li {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  font-size: 0.72rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  color: #fff;
+  text-shadow:
+    0 0 3px #0f172a,
+    0 1px 2px #0f172a;
+  line-height: 1;
+}
+
+.manila-market-hit {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  pointer-events: none;
+}
+
+.manila-board-stage.has-pending-place .manila-spot.is-live {
+  opacity: 0.55;
+}
+
+.manila-spot.is-pending {
+  opacity: 1 !important;
+  outline: 2px solid #fbbf24;
+  outline-offset: 3px;
+  box-shadow: 0 0 0 4px rgba(251, 191, 36, 0.35);
+  z-index: 8;
+}
+
+.manila-place-bar__pawn {
+  width: 1.6rem;
+  height: 1.6rem;
+  object-fit: contain;
+  filter: drop-shadow(0 1px 2px rgba(15, 23, 42, 0.45));
+}
+
+.manila-fx-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  pointer-events: none;
+}
+
+.manila-fx-meeple {
+  position: fixed;
+  width: 2rem;
+  height: 2rem;
+  margin: -1rem 0 0 -1rem;
+  object-fit: contain;
+  filter: drop-shadow(0 4px 8px rgba(15, 23, 42, 0.45));
+  transition: left linear, top linear;
+  z-index: 81;
+}
+
+.manila-fx-meeple.is-flying {
+  /* position driven by left/top transition */
+}
+
+.manila-fx-sail {
+  position: fixed;
+  z-index: 70;
+  width: min(7vw, 4.2rem);
+  height: auto;
+  margin: 0;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  filter: drop-shadow(0 6px 12px rgba(15, 23, 42, 0.4));
+  animation: manila-fx-sail-in 0.75s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+@keyframes manila-fx-sail-in {
+  from {
+    transform: translate(-50%, -50%) scale(0.92);
+    opacity: 0.95;
+  }
+  to {
+    transform: translate(calc(-50% + var(--sail-to-x, 0px)), calc(-50% + var(--sail-to-y, 0px)))
+      scale(1);
+    opacity: 0.15;
+  }
+}
+
+.manila-market-hit__panel {
+  position: absolute;
+  z-index: 4;
+  pointer-events: none;
+}
+
+.manila-market-hit__face {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  padding: 0.28rem 0.32rem;
+  overflow: hidden;
+  border-radius: 0.35rem;
+  background: #4a2e18;
+  background-image: linear-gradient(180deg, #7a5130 0%, #4a2e18 45%, #2c1a0e 100%);
+  opacity: 1;
+  isolation: isolate;
+  box-shadow:
+    inset 0 0 0 2px rgba(232, 196, 140, 0.6),
+    inset 0 1px 0 rgba(255, 244, 220, 0.25),
+    0 10px 24px rgba(15, 23, 42, 0.5);
+}
+
+.manila-market-hit__grid {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  gap: 0.12rem;
+}
+
+.manila-market-hit__row {
+  flex: 1 1 0;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 0.35rem;
+  min-height: 0;
+  padding: 0.06rem 0.1rem;
+  border-radius: 0.28rem;
+  background: rgba(255, 244, 220, 0.06);
+  box-shadow: inset 0 0 0 1px rgba(232, 196, 140, 0.18);
+}
+
+.manila-market-hit__row:nth-child(even) {
+  background: rgba(0, 0, 0, 0.14);
+}
+
+.manila-market-hit__ware {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+
+.manila-market-hit__ware img {
+  display: block;
+  width: clamp(2.2rem, 5.8vmin, 3.4rem);
+  height: clamp(2.2rem, 5.8vmin, 3.4rem);
+  object-fit: contain;
+  border-radius: 50%;
+  background: rgba(255, 248, 232, 0.14);
+  box-shadow:
+    0 0 0 1.5px rgba(232, 196, 140, 0.55),
+    0 2px 4px rgba(0, 0, 0, 0.35);
+}
+
+.manila-market-hit__track {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  align-items: center;
+  gap: 0.12rem;
+  min-width: 0;
+  height: 100%;
+}
+
+.manila-market-hit__cell {
+  position: relative;
+  display: grid;
+  place-items: center;
+  height: 78%;
+  min-height: 1.15rem;
+  border-radius: 0.28rem;
+  background: rgba(20, 12, 6, 0.28);
+  box-shadow: inset 0 0 0 1px rgba(255, 236, 200, 0.12);
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  font-size: clamp(0.78rem, 1.7vmin, 1.05rem);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+  color: rgba(255, 244, 220, 0.78);
+}
+
+.manila-market-hit__cell em {
+  position: relative;
+  z-index: 1;
+  font-style: normal;
+  line-height: 1;
+}
+
+.manila-market-hit__cell.is-here {
+  color: #1a1208;
+  background: linear-gradient(180deg, #ffe7b0 0%, #e0b56a 100%);
+  box-shadow:
+    inset 0 0 0 1.5px rgba(120, 72, 24, 0.55),
+    0 0 0 1px rgba(255, 220, 150, 0.55),
+    0 2px 6px rgba(0, 0, 0, 0.35);
+}
+
+.manila-market-hit__pin {
+  position: absolute;
+  right: -0.15rem;
+  bottom: -0.2rem;
+  z-index: 2;
+  width: 0.85rem;
+  height: 0.85rem;
+  object-fit: contain;
+  pointer-events: none;
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.45));
+}
+
+.manila-board-hits {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  pointer-events: none;
+}
+
+.manila-board-hits .manila-module {
+  pointer-events: auto;
+}
+
+.manila-module--hit {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  padding: 0;
+  margin: 0;
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+
+.manila-module--hit h3,
+.manila-module--hit .manila-module__ico {
+  display: none !important;
+}
+
+.manila-pirate-seats {
+  position: absolute;
+  inset: 0;
+  z-index: 7;
+  pointer-events: none;
+}
+
+.manila-pirate-seats__seat {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  pointer-events: auto;
+  z-index: 7;
+}
+
+.manila-module--pirate-overlay {
+  display: none !important;
+}
+
+.manila-pirate-ship__art {
+  display: none !important;
+}
+
+.manila-module--pirate-overlay h3,
+.manila-module--pirate-overlay .manila-module__ico {
+  display: none !important;
+}
+
+.manila-module--pirate-overlay {
+  position: absolute;
+  z-index: 8;
+  transform: translate(-50%, -50%);
+  width: min(62%, 16rem);
+  padding: 0;
+  background: transparent !important;
+  border: none !important;
+  backdrop-filter: none;
+}
+
+.manila-module--pirate-overlay h3,
+.manila-module--pirate-overlay .manila-module__ico {
+  display: none !important;
+}
+
+.manila-pirate-ship {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+}
+
+.manila-pirate-ship__art {
+  display: block;
+  width: 100%;
+  height: auto;
+  object-fit: contain;
+  pointer-events: none;
+  filter: drop-shadow(0 2px 4px color-mix(in srgb, #0f172a 35%, transparent));
+}
+
+.manila-pirate-ship__seat {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  z-index: 2;
+}
+
+.manila-sea-canvas__scale {
+  display: none !important;
+}
+
+/* Flat share tags: no CSS ring / plate (alpha rim is in the PNG) */
+.manila-share-pick__card,
+.manila-share-pick__tag,
+.manila-share-tile img,
+.manila-rail-share img,
+.manila-pricelist__icon,
+.manila-loanboard__confirm img,
+.manila-ship-token__id img {
+  border-radius: 0 !important;
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  object-fit: contain;
+}
+
+.manila-module {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 6px;
+  border-radius: 12px;
+  background: color-mix(in srgb, #fff 80%, #fef3c7);
+  border: 1px solid var(--manila-line);
+}
+
+.manila-module--pirate:not(.manila-module--pirate-overlay) {
+  background: color-mix(in srgb, #fee2e2 55%, #fff);
+}
+
+.manila-module--hit,
+.manila-module--pirate-overlay,
+.manila-module.manila-module--pilot_small,
+.manila-module.manila-module--pilot_large,
+.manila-module.manila-module--insurance {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  padding: 0;
+  gap: 2px;
+}
+
+.manila-module h3 {
+  margin: 0;
+  font-size: 0.72rem;
+}
+
+.manila-module__ico {
+  width: 1.8rem;
+  height: 1.8rem;
+  object-fit: contain;
+}
+
+.manila-module__crew {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  justify-content: center;
+  min-height: 1rem;
+}
+
+.manila-module__crew img {
+  width: 1rem;
+  height: 1rem;
+}
+
+/* Heading rotation is applied on .manila-dock__ship / sea canvas wrapper */
+.manila-ship-token--port,
+.manila-ship-token--yard {
+  transform: none;
+}
+
+.manila-ship-token--sea {
+  transform: translateY(var(--ship-nudge, 0));
+  transition: transform 0.55s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.manila-ship-token.is-compact {
+  padding: 4px 3px 5px;
+  gap: 2px;
+}
+
+.manila-ship-token.is-compact .manila-ship-token__profit {
+  font-size: 0.65rem;
+  padding: 1px 6px;
+}
+
+.manila-action-modal {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  top: auto;
+  z-index: 55;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 12px;
+  pointer-events: none;
+  max-height: none;
+}
+
+.manila-action-modal__backdrop {
+  display: none !important;
+}
+
+.manila-action-modal__panel {
+  position: relative;
+  z-index: 1;
+  width: min(100%, 26rem);
+  max-height: min(48vh, 400px);
+  overflow: auto;
+  pointer-events: auto;
+  border-radius: 16px;
+  box-shadow: 0 -8px 32px color-mix(in srgb, #0f172a 28%, transparent);
+  background: #fff;
+}
+
+.manila-action-modal__panel .manila-actions {
+  margin: 0;
+}
+
+.manila-place-bar {
+  position: sticky;
+  bottom: 8px;
+  z-index: 35;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 8px 0;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: color-mix(in srgb, #ecfeff 92%, #fff);
+  border: 2px solid var(--manila-accent);
+  box-shadow: 0 6px 18px color-mix(in srgb, #0f172a 12%, transparent);
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.manila-board__docked-ui--wait .manila-actions {
+  opacity: 0.92;
+}
+
+@media (max-width: 720px) {
+  .manila-board-stage {
+    min-height: min(70vh, 640px);
+  }
+
+  .manila-board-grid {
+    display: none;
+  }
+
+  .manila-shore-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .manila-sea-canvas__ship,
+  .manila-dock__ship {
+    width: var(--manila-ship, 7.0%);
+  }
+
+  .manila-spot {
+    --spot: 2.1rem;
+  }
+}
+
+/* Share pick tiles (buy / load) */
+.manila-share-pick {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.manila-share-pick__btn {
+  appearance: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 6px;
+  border-radius: 12px;
+  border: 1px solid transparent !important;
+  background: transparent !important;
+  cursor: pointer;
+  position: relative;
+  box-shadow: none !important;
+}
+
+.manila-share-pick__btn.is-selected {
+  border-color: var(--manila-accent) !important;
+  background: color-mix(in srgb, var(--manila-accent) 10%, transparent) !important;
+}
+
+.manila-share-pick__btn.is-soldout {
+  opacity: 0.55;
+}
+
+.manila-share-pick__btn.is-soldout .manila-share-pick__stock {
+  color: var(--manila-muted);
+}
+
+.manila-share-pick__acts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.manila-share-pick__card,
+.manila-share-pick__tag {
+  width: 3.4rem;
+  height: 3.4rem;
+  object-fit: contain;
+  border: none !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.manila-share-tile img {
+  width: 2.8rem;
+  height: 2.8rem;
+  object-fit: contain;
+  border: none !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+}
+
+.manila-rail-share.is-card img,
+.manila-rail-share.is-tag img,
+.manila-rail-share img {
+  width: 1.7rem !important;
+  height: 1.7rem !important;
+  aspect-ratio: 1 !important;
+  border-radius: 0 !important;
+  object-fit: contain !important;
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+
+.manila-pricelist__icon {
+  width: 1.85rem;
+  height: 1.85rem;
+  object-fit: contain;
+  border-radius: 0 !important;
+  background: transparent !important;
+  border: none !important;
+}
+
+.manila-loanboard__confirm img {
+  width: 3rem;
+  height: 3rem;
+  object-fit: contain;
+  border-radius: 0 !important;
+  background: transparent !important;
+  border: none !important;
+}
+
+.manila-rail-share,
+.manila-rail-share.is-secret {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  padding: 0;
+}
+
+.manila-share-pick__stock {
+  font-style: normal;
+  font-size: 0.72rem;
+  font-weight: 800;
+  color: var(--manila-accent);
+}
+
+.manila-share-pick__btn:disabled .manila-share-pick__stock {
+  color: var(--manila-muted);
+}
+
+.manila-share-pick__ord {
+  position: absolute;
+  top: 6px;
+  left: 8px;
+  width: 1.2rem;
+  height: 1.2rem;
+  border-radius: 999px;
+  background: var(--manila-accent);
+  color: #fff;
+  font-size: 0.7rem;
+  font-weight: 900;
+  display: grid;
+  place-items: center;
+}
+
+.manila-loanboard.is-forced {
+  outline: 2px solid #f59e0b;
+  outline-offset: 2px;
+}
+
+.manila-loanboard.is-forced .manila-loanboard__toggle {
+  background: color-mix(in srgb, #fef3c7 80%, #fff);
+}
+
+.manila-rail-stat--pawn {
+  align-items: center;
+}
+
+.manila-rail-stat--pawn .manila-rail-stat__ico {
+  outline: none !important;
+  background: transparent !important;
+  border: none !important;
+  border-radius: 0 !important;
+}
+
+.manila-rail-pawn-stack {
+  display: inline-flex;
+  align-items: center;
+  flex-direction: row;
+}
+
+.manila-rail-pawn-stack__ico {
+  width: 1.35rem;
+  height: 1.35rem;
+  object-fit: contain;
+  background: transparent !important;
+  border: none !important;
+  outline: none !important;
+  box-shadow: none !important;
+  filter: drop-shadow(0 1px 1px color-mix(in srgb, #0f172a 25%, transparent));
+}
+
+.manila-rail-pawn-stack__more,
+.manila-rail-pawn__zero {
+  font-style: normal;
+  font-size: 0.72rem;
+  font-weight: 800;
+  margin-left: 2px;
+  color: var(--manila-muted);
+}
+
+.manila-rail-share.is-card img,
+.manila-rail-share.is-tag img {
+  width: 1.7rem !important;
+  height: 1.7rem !important;
+  aspect-ratio: 1 !important;
+  border-radius: 0 !important;
+  object-fit: contain !important;
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+
+.manila-rail-share.is-enc::after {
+  content: '押';
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  font-size: 0.55rem;
+  font-weight: 900;
+  line-height: 1;
+  padding: 1px 3px;
+  border-radius: 4px;
+  background: #b45309;
+  color: #fff;
+}
+
+.manila-rail-share {
+  position: relative;
+  background: transparent;
+}
+
+.manila-rail-share.is-secret {
+  background: transparent;
+  opacity: 0.92;
+}
+
+.manila-shell--play .manila-board {
+  max-width: none;
+  width: 100%;
+  margin: 0;
+  padding: 8px 0 0;
+}
+
+.manila-shell--play .manila-tabletop--modular {
+  max-width: none;
+}
+
+.manila-shell--play .manila-tabletop__market {
+  padding-inline: 12px;
+}
+
+.manila-shell--play .manila-shore-row {
+  padding-inline: 8px;
+}
+
+.manila-shell--play .manila-board__docked-ui,
+.manila-shell--play .manila-place-bar,
+.manila-shell--play .manila-turn-banner {
+  margin-inline: 12px;
+}
+
+
+/* —— Board preview (static mockup) —— */
+.manila-preview-page {
+  min-height: 100vh;
+  padding: 12px 16px 28px;
+  background:
+    radial-gradient(ellipse at 30% 10%, #1a4a52 0%, transparent 50%),
+    linear-gradient(180deg, #0c2a30 0%, #163e46 40%, #0f2f36 100%);
+  color: #f1f5f9;
+}
+
+.manila-preview-page__bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  max-width: 960px;
+  margin: 0 auto 14px;
+}
+
+.manila-preview-page__bar h1 {
+  margin: 0 0 4px;
+  font-size: 1.35rem;
+  font-weight: 800;
+}
+
+.manila-preview-page__bar p {
+  margin: 0;
+  max-width: 36rem;
+  font-size: 0.82rem;
+  line-height: 1.4;
+  opacity: 0.85;
+}
+
+.manila-preview-page__links {
+  display: flex;
+  gap: 10px;
+}
+
+.manila-preview-page__links a {
+  color: #fde68a;
+  font-weight: 700;
+  font-size: 0.85rem;
+  text-decoration: none;
+}
+
+.manila-preview-page__links a:hover {
+  text-decoration: underline;
+}
+
+.manila-preview-page__stage-wrap {
+  max-width: min(96vw, 900px);
+  margin: 0 auto;
+}
+
+.manila-preview-page__effect {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 12px;
+  box-shadow: 0 16px 48px color-mix(in srgb, #000 45%, transparent);
+  background: transparent;
+}
+
+.manila-board-stage--preview {
+  width: 100%;
+  min-height: 0;
+  max-height: none;
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 16px 48px color-mix(in srgb, #000 45%, transparent);
+}
+
+.manila-preview-page__legend {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  z-index: 12;
+  margin: 0;
+  padding: 6px 8px;
+  list-style: none;
+  border-radius: 8px;
+  background: color-mix(in srgb, #0f172a 62%, transparent);
+  color: #e2e8f0;
+  font-size: 0.65rem;
+  font-weight: 700;
+  line-height: 1.35;
+  pointer-events: none;
+}

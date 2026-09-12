@@ -22,6 +22,7 @@ var (
 	ErrUsernameTaken         = errors.New("username taken")
 	ErrEmailNotVerified      = errors.New("email not verified")
 	ErrInvalidVerifyToken    = errors.New("invalid verify token")
+	ErrInvalidResetToken     = errors.New("invalid reset token")
 	ErrInvalidFellowshipCode = errors.New("invalid fellowship code")
 	ErrInvalidHopeID = errors.New("invalid hope id")
 	ErrHopeIDTaken   = errors.New("hope id taken")
@@ -50,6 +51,7 @@ type Options struct {
 	AccessTTL         time.Duration
 	AppPublicURL      string
 	EmailVerifyTTL    time.Duration
+	PasswordResetTTL  time.Duration
 	UnverifiedUserTTL time.Duration
 	MailDriver        string
 	Mailer            *mail.Sender
@@ -374,6 +376,210 @@ func (s *Service) SetUsername(ctx context.Context, userID, username string) (*Us
 		return nil, err
 	}
 	return s.UserByID(ctx, userID)
+}
+
+func (s *Service) ChangePassword(ctx context.Context, userID, currentPassword, newPassword string) error {
+	if !ValidatePassword(currentPassword) || !ValidatePassword(newPassword) {
+		return ErrInvalidCredentials
+	}
+	var hash string
+	err := s.pool.QueryRow(ctx, `SELECT password_hash FROM users WHERE id = $1`, userID).Scan(&hash)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrInvalidCredentials
+		}
+		return err
+	}
+	if !CheckPassword(hash, currentPassword) {
+		return ErrInvalidCredentials
+	}
+	newHash, err := HashPassword(newPassword)
+	if err != nil {
+		return err
+	}
+	_, err = s.pool.Exec(ctx, `UPDATE users SET password_hash = $2 WHERE id = $1`, userID, newHash)
+	return err
+}
+
+// ChangeEmail updates email for a logged-in user; requires re-verification.
+func (s *Service) ChangeEmail(ctx context.Context, userID, currentPassword, newEmail string) (devToken string, err error) {
+	newEmail = NormalizeEmail(newEmail)
+	if !ValidateEmail(newEmail) {
+		return "", errors.New("invalid email")
+	}
+	if !ValidatePassword(currentPassword) {
+		return "", ErrInvalidCredentials
+	}
+
+	var hash string
+	var curEmail string
+	err = s.pool.QueryRow(ctx, `
+		SELECT email, password_hash FROM users WHERE id = $1
+	`, userID).Scan(&curEmail, &hash)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", ErrInvalidCredentials
+		}
+		return "", err
+	}
+	if !CheckPassword(hash, currentPassword) {
+		return "", ErrInvalidCredentials
+	}
+	if curEmail == newEmail {
+		return "", errors.New("same email")
+	}
+
+	var taken bool
+	if err := s.pool.QueryRow(ctx, `
+		SELECT EXISTS(SELECT 1 FROM users WHERE email = $1 AND id <> $2::uuid)
+	`, newEmail, userID).Scan(&taken); err != nil {
+		return "", err
+	}
+	if taken {
+		return "", ErrEmailTaken
+	}
+
+	_, err = s.pool.Exec(ctx, `
+		UPDATE users SET email = $2, email_verified = FALSE WHERE id = $1
+	`, userID, newEmail)
+	if err != nil {
+		return "", err
+	}
+	return s.sendEmailVerification(ctx, userID, newEmail)
+}
+
+func (s *Service) resetTTL() time.Duration {
+	if s.opt.PasswordResetTTL > 0 {
+		return s.opt.PasswordResetTTL
+	}
+	return time.Hour
+}
+
+// ForgotPassword always returns success to the client; returns dev token only for log mail driver.
+func (s *Service) ForgotPassword(ctx context.Context, email string) (devToken string, err error) {
+	email = NormalizeEmail(email)
+	if !ValidateEmail(email) {
+		return "", nil
+	}
+	var id string
+	err = s.pool.QueryRow(ctx, `SELECT id::text FROM users WHERE email = $1`, email).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	plain, tokenHash, err := NewVerifyToken()
+	if err != nil {
+		return "", err
+	}
+	expires := time.Now().Add(s.resetTTL())
+	_, _ = s.pool.Exec(ctx, `
+		UPDATE password_reset_tokens SET used_at = now()
+		WHERE user_id = $1 AND used_at IS NULL
+	`, id)
+	_, err = s.pool.Exec(ctx, `
+		INSERT INTO password_reset_tokens (token_hash, user_id, expires_at)
+		VALUES ($1, $2, $3)
+	`, tokenHash, id, expires)
+	if err != nil {
+		return "", err
+	}
+	base := strings.TrimRight(s.opt.AppPublicURL, "/")
+	resetURL := fmt.Sprintf("%s/reset-password?token=%s", base, plain)
+	if s.opt.Mailer != nil {
+		if err := s.opt.Mailer.SendPasswordReset(email, resetURL); err != nil {
+			_, _ = s.pool.Exec(ctx, `UPDATE password_reset_tokens SET used_at = now() WHERE token_hash = $1`, tokenHash)
+			return "", err
+		}
+	}
+	driver := strings.ToLower(strings.TrimSpace(s.opt.MailDriver))
+	if driver == "" || driver == "log" {
+		return plain, nil
+	}
+	return "", nil
+}
+
+func (s *Service) ResetPassword(ctx context.Context, token, newPassword string) error {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return ErrInvalidResetToken
+	}
+	if !ValidatePassword(newPassword) {
+		return errors.New("password must be at least 6 characters")
+	}
+	tokenHash := HashToken(token)
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	var userID string
+	var expires time.Time
+	var usedAt *time.Time
+	err = tx.QueryRow(ctx, `
+		SELECT user_id::text, expires_at, used_at
+		FROM password_reset_tokens WHERE token_hash = $1 FOR UPDATE
+	`, tokenHash).Scan(&userID, &expires, &usedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrInvalidResetToken
+	}
+	if err != nil {
+		return err
+	}
+	if usedAt != nil || time.Now().After(expires) {
+		return ErrInvalidResetToken
+	}
+	hash, err := HashPassword(newPassword)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE password_reset_tokens SET used_at = now() WHERE token_hash = $1`, tokenHash); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE users SET password_hash = $2 WHERE id = $1`, userID, hash); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// AdminSetPassword sets a user's password without knowing the old one.
+func (s *Service) AdminSetPassword(ctx context.Context, userID, newPassword string) error {
+	if !ValidatePassword(newPassword) {
+		return errors.New("password must be at least 6 characters")
+	}
+	hash, err := HashPassword(newPassword)
+	if err != nil {
+		return err
+	}
+	tag, err := s.pool.Exec(ctx, `UPDATE users SET password_hash = $2 WHERE id = $1`, userID, hash)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return errors.New("user not found")
+	}
+	return nil
+}
+
+// ResendVerificationByUserID sends a verify mail for an unverified account.
+func (s *Service) ResendVerificationByUserID(ctx context.Context, userID string) (devToken string, err error) {
+	var email string
+	var verified bool
+	err = s.pool.QueryRow(ctx, `
+		SELECT email, email_verified FROM users WHERE id = $1
+	`, userID).Scan(&email, &verified)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", errors.New("user not found")
+	}
+	if err != nil {
+		return "", err
+	}
+	if verified {
+		return "", errors.New("email already verified")
+	}
+	return s.sendEmailVerification(ctx, userID, email)
 }
 
 func (s *Service) SetChatTheme(ctx context.Context, userID string, patch *ChatTheme) (*User, error) {

@@ -1,12 +1,13 @@
 ﻿import { useEffect, useState } from 'react'
 import { Button, Input, MessagePlugin } from 'tdesign-react'
+import { Link } from 'react-router-dom'
 import { api, apiErrorMessage, setToken, type User } from '@/api'
 
 type Props = {
   onAuthed: (user: User) => void
 }
 
-type Mode = 'login' | 'register' | 'pending'
+type Mode = 'login' | 'register' | 'pending' | 'forgot'
 type ApiErr = Error & { code?: string; email?: string; username?: string }
 
 const RESEND_COOLDOWN_SEC = 60
@@ -24,7 +25,9 @@ export function AuthPage({ onAuthed }: Props) {
   const [pendingEmail, setPendingEmail] = useState('')
   const [pendingUsername, setPendingUsername] = useState('')
   const [pendingPassword, setPendingPassword] = useState('')
+  const [forgotEmail, setForgotEmail] = useState('')
   const [devToken, setDevToken] = useState('')
+  const [devResetToken, setDevResetToken] = useState('')
   const [resendWait, setResendWait] = useState(0)
 
   useEffect(() => {
@@ -185,6 +188,24 @@ export function AuthPage({ onAuthed }: Props) {
     }
   }
 
+  const onForgot = async () => {
+    const addr = forgotEmail.trim()
+    if (!addr.includes('@')) {
+      MessagePlugin.warning('请填写注册邮箱')
+      return
+    }
+    setBusy(true)
+    try {
+      const res = await api.forgotPassword(addr)
+      setDevResetToken(res.devResetToken || '')
+      MessagePlugin.success('若该邮箱已注册，重置链接已发送')
+    } catch (e) {
+      MessagePlugin.error(apiErrorMessage(e, '发送失败'))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   return (
     <div className="im-auth">
       <div className="im-auth__card">
@@ -229,8 +250,62 @@ export function AuthPage({ onAuthed }: Props) {
               <Button size="large" theme="primary" block loading={busy} onClick={() => void onLogin()}>
                 登 录
               </Button>
+              <button
+                type="button"
+                className="im-auth__text-link"
+                onClick={() => {
+                  setForgotEmail(login.includes('@') ? login.trim() : '')
+                  setDevResetToken('')
+                  setMode('forgot')
+                }}
+              >
+                忘记密码？
+              </button>
             </div>
           </>
+        )}
+
+        {mode === 'forgot' && (
+          <div className="im-auth__panel">
+            <h2 className="im-auth__heading">找回密码</h2>
+            <p className="im-auth__lead">输入注册邮箱，我们将发送重置链接。</p>
+            <div className="im-auth-fields">
+              <Input
+                size="large"
+                placeholder="注册邮箱"
+                clearable
+                value={forgotEmail}
+                onChange={(v) => setForgotEmail(String(v))}
+                onEnter={() => void onForgot()}
+              />
+              <Button
+                size="large"
+                theme="primary"
+                block
+                loading={busy}
+                onClick={() => void onForgot()}
+              >
+                发送重置邮件
+              </Button>
+              {devResetToken && (
+                <div className="im-dev-verify">
+                  <p className="im-dev-verify__label">开发环境重置码</p>
+                  <code className="im-dev-verify__token">{devResetToken}</code>
+                  <Link
+                    className="im-auth__link-btn"
+                    to={`/reset-password?token=${encodeURIComponent(devResetToken)}`}
+                  >
+                    <Button size="small" variant="outline" block>
+                      打开重置页
+                    </Button>
+                  </Link>
+                </div>
+              )}
+              <Button size="large" variant="outline" block onClick={() => setMode('login')}>
+                返回登录
+              </Button>
+            </div>
+          </div>
         )}
 
         {mode === 'register' && (

@@ -21,6 +21,7 @@ import (
 	"github.com/keller-cc/ihope/appserver/internal/hub"
 	"github.com/keller-cc/ihope/appserver/internal/httpserver"
 	"github.com/keller-cc/ihope/appserver/internal/mail"
+	"github.com/keller-cc/ihope/appserver/internal/manila"
 	"github.com/keller-cc/ihope/appserver/internal/qqbot"
 )
 
@@ -46,6 +47,7 @@ func main() {
 		SMTPUser:  cfg.SMTPUser,
 		SMTPPass:  cfg.SMTPPass,
 		VerifyTTL: cfg.EmailVerifyTTL,
+		ResetTTL:  cfg.PasswordResetTTL,
 	})
 
 	authSvc := auth.NewService(pool, auth.Options{
@@ -53,6 +55,7 @@ func main() {
 		AccessTTL:         cfg.JWTAccessTTL,
 		AppPublicURL:      cfg.AppPublicURL,
 		EmailVerifyTTL:    cfg.EmailVerifyTTL,
+		PasswordResetTTL:  cfg.PasswordResetTTL,
 		UnverifiedUserTTL: cfg.UnverifiedUserTTL,
 		MailDriver:        cfg.MailDriver,
 		Mailer:            mailer,
@@ -68,6 +71,8 @@ func main() {
 	}
 	adminSvc := admin.NewService(pool)
 	gameSvc := games.NewService(pool)
+	manilaStore := manila.NewStore(pool)
+	manilaMgr := manila.NewManager(manilaStore)
 	h := hub.New()
 
 	var ice []call.ICEServer
@@ -109,7 +114,7 @@ func main() {
 		log.Println("qq bot enabled")
 	}
 
-	srv := httpserver.New(authSvc, chatSvc, adminSvc, gameSvc, h, callSvc, qqSvc, cfg.CORSOrigin, cfg.QQWebhookPath, cfg.AdminToken, uploadDir, cfg.QQQuotesFilePath, cfg.WebDist)
+	srv := httpserver.New(authSvc, chatSvc, adminSvc, gameSvc, manilaStore, manilaMgr, h, callSvc, qqSvc, cfg.CORSOrigin, cfg.QQWebhookPath, cfg.AdminToken, uploadDir, cfg.QQQuotesFilePath, cfg.WebDist)
 	_ = os.MkdirAll(filepath.Join(uploadDir, "avatars"), 0o755)
 	_ = os.MkdirAll(filepath.Join(uploadDir, "groups"), 0o755)
 	_ = os.MkdirAll(filepath.Join(uploadDir, "chat"), 0o755)

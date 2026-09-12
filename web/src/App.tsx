@@ -6,9 +6,14 @@ import { api, getSessionSlot, getToken, setToken, type User } from '@/api'
 import { AdminPage } from './pages/AdminPage'
 import { AuthPage } from './pages/AuthPage'
 import { ChatPage } from './pages/ChatPage'
-import { DinoGamePage } from './pages/DinoGamePage'
-import { GameHubPage } from './pages/GameHubPage'
+import { DinoGamePage } from './games/dino/DinoGamePage'
+import { GameHubPage } from './games/GameHubPage'
+import { ManilaLobbyPage } from './games/manila/ManilaLobbyPage'
+import { ManilaRoomPage } from './games/manila/ManilaRoomPage'
+import { ManilaRulesPage } from './games/manila/ManilaRulesPage'
+import { ManilaBoardPreviewPage } from './games/manila/ManilaBoardPreviewPage'
 import { VerifyPage } from './pages/VerifyPage'
+import { ResetPasswordPage } from './pages/ResetPasswordPage'
 import './App.css'
 
 /** Only allow in-app relative paths (games return, etc.). */
@@ -87,10 +92,15 @@ export default function App() {
         <Routes>
           <Route path="/" element={<Home />} />
           <Route path="/verify" element={<VerifyPage />} />
+          <Route path="/reset-password" element={<ResetPasswordPage />} />
           <Route path="/admin" element={<AdminPage />} />
           <Route path="/game" element={<GameHubPage />} />
           <Route path="/game/dinodasher" element={<DinoGamePage />} />
           <Route path="/game/dino" element={<Navigate to="/game/dinodasher" replace />} />
+          <Route path="/game/manila" element={<ManilaLobbyPage />} />
+          <Route path="/game/manila/preview" element={<ManilaBoardPreviewPage />} />
+          <Route path="/game/manila/rules" element={<ManilaRulesPage />} />
+          <Route path="/game/manila/r/:code" element={<ManilaRoomPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </BrowserRouter>

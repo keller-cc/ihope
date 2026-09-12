@@ -21,6 +21,7 @@ import (
 	"github.com/keller-cc/ihope/appserver/internal/chat"
 	"github.com/keller-cc/ihope/appserver/internal/games"
 	"github.com/keller-cc/ihope/appserver/internal/hub"
+	"github.com/keller-cc/ihope/appserver/internal/manila"
 	"github.com/keller-cc/ihope/appserver/internal/qqbot"
 	"github.com/keller-cc/ihope/appserver/internal/quotes"
 	"github.com/keller-cc/ihope/appserver/internal/upload"
@@ -30,8 +31,10 @@ type Server struct {
 	auth       *auth.Service
 	chat       *chat.Service
 	admin      *admin.Service
-	gameSvc    *games.Service
-	hub        *hub.Hub
+	gameSvc     *games.Service
+	manilaStore *manila.Store
+	manilaMgr   *manila.Manager
+	hub         *hub.Hub
 	calls      *call.Service
 	qq         *qqbot.Service
 	cors       string
@@ -47,7 +50,9 @@ func New(
 	authSvc *auth.Service,
 	chatSvc *chat.Service,
 	adminSvc *admin.Service,
-	gamesSvc *games.Service,
+	gameSvc *games.Service,
+	manilaStore *manila.Store,
+	manilaMgr *manila.Manager,
 	h *hub.Hub,
 	callSvc *call.Service,
 	qq *qqbot.Service,
@@ -57,8 +62,10 @@ func New(
 		auth:       authSvc,
 		chat:       chatSvc,
 		admin:      adminSvc,
-		gameSvc:    gamesSvc,
-		hub:        h,
+		gameSvc:     gameSvc,
+		manilaStore: manilaStore,
+		manilaMgr:   manilaMgr,
+		hub:         h,
 		calls:      callSvc,
 		qq:         qq,
 		cors:       corsOrigin,
@@ -84,10 +91,14 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/auth/login", s.handleLogin)
 	mux.HandleFunc("POST /api/auth/resend-verification", s.handleResendVerification)
 	mux.HandleFunc("POST /api/auth/change-unverified-email", s.handleChangeUnverifiedEmail)
+	mux.HandleFunc("POST /api/auth/forgot-password", s.handleForgotPassword)
+	mux.HandleFunc("POST /api/auth/reset-password", s.handleResetPassword)
 	mux.HandleFunc("GET /api/auth/verify-email", s.handleVerifyEmailGET)
 	mux.HandleFunc("POST /api/auth/verify-email", s.handleVerifyEmailPOST)
 	mux.HandleFunc("GET /api/me", s.withAuth(s.handleMe))
 	mux.HandleFunc("PATCH /api/me", s.withAuth(s.handlePatchMe))
+	mux.HandleFunc("POST /api/me/password", s.withAuth(s.handleChangePassword))
+	mux.HandleFunc("POST /api/me/email", s.withAuth(s.handleChangeEmail))
 	mux.HandleFunc("POST /api/me/hope-id/refresh", s.withAuth(s.handleRefreshHopeID))
 	mux.HandleFunc("POST /api/me/avatar", s.withAuth(s.handleUploadAvatar))
 	mux.HandleFunc("PATCH /api/me/chat-bg", s.withAuth(s.handlePatchChatTheme))
@@ -159,9 +170,16 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/games/dino/leaderboard", s.handleDinoLeaderboard)
 	mux.HandleFunc("POST /api/games/dino/score", s.withAuth(s.handleDinoSubmitScore))
 	mux.HandleFunc("GET /api/games/dino/me", s.withAuth(s.handleDinoMyBest))
+	mux.HandleFunc("POST /api/manila/rooms", s.withAuth(s.handleManilaCreateRoom))
+	mux.HandleFunc("GET /api/manila/rooms", s.withAuth(s.handleManilaListRooms))
+	mux.HandleFunc("POST /api/manila/rooms/{code}/join", s.withAuth(s.handleManilaJoinRoom))
+	mux.HandleFunc("GET /api/manila/rooms/{code}", s.withAuth(s.handleManilaGetRoom))
+	mux.HandleFunc("GET /api/manila/history", s.withAuth(s.handleManilaMyHistory))
 	mux.HandleFunc("GET /api/admin/users", s.withAdmin(s.handleAdminListUsers))
 	mux.HandleFunc("DELETE /api/admin/users/{id}", s.withAdmin(s.handleAdminDeleteUser))
 	mux.HandleFunc("PATCH /api/admin/users/{id}", s.withAdmin(s.handleAdminPatchUser))
+	mux.HandleFunc("POST /api/admin/users/{id}/password", s.withAdmin(s.handleAdminSetPassword))
+	mux.HandleFunc("POST /api/admin/users/{id}/resend-verification", s.withAdmin(s.handleAdminResendVerification))
 	mux.HandleFunc("POST /api/admin/users/{id}/qq-bind-code", s.withAdmin(s.handleAdminQQBindCode))
 	mux.HandleFunc("DELETE /api/admin/users/{id}/qq-bot", s.withAdmin(s.handleAdminQQUnbind))
 	mux.HandleFunc("GET /api/admin/qq-bindings", s.withAdmin(s.handleAdminListQQBindings))
@@ -184,12 +202,17 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/admin/fellowships", s.withAdmin(s.handleAdminCreateFellowship))
 	mux.HandleFunc("PATCH /api/admin/fellowships/{id}", s.withAdmin(s.handleAdminPatchFellowship))
 	mux.HandleFunc("DELETE /api/admin/fellowships/{id}", s.withAdmin(s.handleAdminDeleteFellowship))
+	mux.HandleFunc("GET /api/admin/games/manila/rooms", s.withAdmin(s.handleAdminManilaListRooms))
+	mux.HandleFunc("POST /api/admin/games/manila/rooms/{id}/end", s.withAdmin(s.handleAdminManilaEndRoom))
+	mux.HandleFunc("DELETE /api/admin/games/manila/rooms/{id}", s.withAdmin(s.handleAdminManilaEndRoom))
+	mux.HandleFunc("GET /api/admin/games/manila/results", s.withAdmin(s.handleAdminManilaListResults))
 	if s.qqPath != "" {
 		mux.HandleFunc("POST "+s.qqPath, s.handleQQWebhook)
 	}
 	mux.HandleFunc("GET /api/public/qq-media/{name}", s.handleQQPublicMedia)
 	mux.HandleFunc("GET /ws", s.handleWS)
 	mux.HandleFunc("GET /ws/user", s.handleUserWS)
+	mux.HandleFunc("GET /ws/manila/{roomId}", s.handleManilaWS)
 	if s.webDist != "" {
 		if st, err := os.Stat(s.webDist); err == nil && st.IsDir() {
 			mux.Handle("/", s.spaFileServer())
@@ -406,6 +429,50 @@ func (s *Server) handleChangeUnverifiedEmail(w http.ResponseWriter, r *http.Requ
 	writeJSON(w, http.StatusOK, out)
 }
 
+func (s *Server) handleForgotPassword(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Email string `json:"email"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	dev, err := s.auth.ForgotPassword(r.Context(), body.Email)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "forgot password failed")
+		return
+	}
+	out := map[string]any{"message": "if the email exists, a reset link has been sent"}
+	if dev != "" {
+		out["devResetToken"] = dev
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) handleResetPassword(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Token    string `json:"token"`
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	if err := s.auth.ResetPassword(r.Context(), body.Token, body.Password); err != nil {
+		if errors.Is(err, auth.ErrInvalidResetToken) {
+			writeErr(w, http.StatusBadRequest, "invalid reset token")
+			return
+		}
+		if err.Error() == "password must be at least 6 characters" {
+			writeErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeErr(w, http.StatusInternalServerError, "reset failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"message": "password updated"})
+}
+
 func (s *Server) handleVerifyEmailGET(w http.ResponseWriter, r *http.Request) {
 	token := html.EscapeString(r.URL.Query().Get("token"))
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -480,6 +547,61 @@ func (s *Server) handlePatchMe(w http.ResponseWriter, r *http.Request, userID st
 		return
 	}
 	writeJSON(w, http.StatusOK, u)
+}
+
+func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request, userID string) {
+	var body struct {
+		CurrentPassword string `json:"currentPassword"`
+		NewPassword     string `json:"newPassword"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	if err := s.auth.ChangePassword(r.Context(), userID, body.CurrentPassword, body.NewPassword); err != nil {
+		if errors.Is(err, auth.ErrInvalidCredentials) {
+			writeErr(w, http.StatusUnauthorized, "invalid credentials")
+			return
+		}
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"message": "password updated"})
+}
+
+func (s *Server) handleChangeEmail(w http.ResponseWriter, r *http.Request, userID string) {
+	var body struct {
+		CurrentPassword string `json:"currentPassword"`
+		NewEmail        string `json:"newEmail"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	dev, err := s.auth.ChangeEmail(r.Context(), userID, body.CurrentPassword, body.NewEmail)
+	if err != nil {
+		switch {
+		case errors.Is(err, auth.ErrInvalidCredentials):
+			writeErr(w, http.StatusUnauthorized, "invalid credentials")
+		case errors.Is(err, auth.ErrEmailTaken):
+			writeErr(w, http.StatusConflict, "email taken")
+		case err.Error() == "invalid email":
+			writeErr(w, http.StatusBadRequest, "invalid email")
+		case err.Error() == "same email":
+			writeErr(w, http.StatusBadRequest, "same email")
+		default:
+			writeErr(w, http.StatusInternalServerError, "change email failed")
+		}
+		return
+	}
+	out := map[string]any{
+		"message": "verification email sent",
+		"email":   auth.NormalizeEmail(body.NewEmail),
+	}
+	if dev != "" {
+		out["devVerifyToken"] = dev
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (s *Server) handleRefreshHopeID(w http.ResponseWriter, r *http.Request, userID string) {
@@ -1786,6 +1908,8 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 
 	s.hub.UserOnline(userID)
 	defer s.hub.UserOffline(userID)
+	s.admin.TouchLastSeen(r.Context(), userID)
+	defer s.admin.TouchLastSeen(context.Background(), userID)
 
 	ch := s.hub.Subscribe(convID)
 	defer s.hub.Unsubscribe(convID, ch)
@@ -1857,6 +1981,9 @@ func (s *Server) handleAdminListUsers(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "list failed")
 		return
 	}
+	for i := range list {
+		list[i].Online = s.hub.IsUserOnline(list[i].ID)
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"users": list})
 }
 
@@ -1871,6 +1998,44 @@ func (s *Server) handleAdminDeleteUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"message": "deleted"})
+}
+
+func (s *Server) handleAdminManilaListRooms(w http.ResponseWriter, r *http.Request) {
+	_ = r
+	writeJSON(w, http.StatusOK, map[string]any{
+		"rooms":    s.manilaMgr.AdminList(),
+		"maxAge":   manila.RoomMaxAge.String(),
+		"gameId":   "manila",
+		"gameName": "马尼拉",
+	})
+}
+
+func (s *Server) handleAdminManilaEndRoom(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if err := s.manilaMgr.ForceClose(id, "admin"); err != nil {
+		if errors.Is(err, manila.ErrNotFound) {
+			writeErr(w, http.StatusNotFound, "room not found")
+			return
+		}
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"message": "ended"})
+}
+
+func (s *Server) handleAdminManilaListResults(w http.ResponseWriter, r *http.Request) {
+	limit := 50
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			limit = n
+		}
+	}
+	list, err := s.manilaStore.ListRecentResults(r.Context(), limit)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "list failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"results": list})
 }
 
 func (s *Server) handleAdminPatchUser(w http.ResponseWriter, r *http.Request) {
@@ -1911,6 +2076,50 @@ func (s *Server) handleAdminPatchUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"message": "updated"})
+}
+
+func (s *Server) handleAdminSetPassword(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var body struct {
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	if err := s.auth.AdminSetPassword(r.Context(), id, body.Password); err != nil {
+		switch err.Error() {
+		case "user not found":
+			writeErr(w, http.StatusNotFound, "user not found")
+		case "password must be at least 6 characters":
+			writeErr(w, http.StatusBadRequest, err.Error())
+		default:
+			writeErr(w, http.StatusInternalServerError, "set password failed")
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"message": "password updated"})
+}
+
+func (s *Server) handleAdminResendVerification(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	dev, err := s.auth.ResendVerificationByUserID(r.Context(), id)
+	if err != nil {
+		switch err.Error() {
+		case "user not found":
+			writeErr(w, http.StatusNotFound, "user not found")
+		case "email already verified":
+			writeErr(w, http.StatusConflict, "email already verified")
+		default:
+			writeErr(w, http.StatusInternalServerError, "resend failed")
+		}
+		return
+	}
+	out := map[string]any{"status": "sent"}
+	if dev != "" {
+		out["devVerifyToken"] = dev
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (s *Server) handleAdminListDomains(w http.ResponseWriter, r *http.Request) {

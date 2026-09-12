@@ -1,0 +1,21 @@
+﻿## Manila board
+
+Active plate: `board.jpg` (scenic cohesive map). Price numbers on art may be decorative —
+**authoritative cost/payout** come from server + UI dual chips (upper=payout, lower=cost):
+
+| Slot | Cost | Payout |
+|------|------|--------|
+| Port / Shipyard A | 4 | 6 |
+| Port / Shipyard B | 3 | 8 |
+| Port / Shipyard C | 2 | 15 |
+| Pirate | 5 | — |
+| Small pilot | 2 | — |
+| Large pilot | 5 | — |
+| Insurance | 0 | +10 cash on place |
+
+Cargo ships: `hull-3.png` / `hull-4.png`.
+Share badges: `pieces/share-{silk,jade,nutmeg,ginseng,back}.png`.
+Pirate boat is painted in `board.jpg` (seat hits only in UI).
+Panel chrome: `panel-wood.png`.
+
+Preview compose: `board-effect.jpg` / `board-costs-only.jpg` via `_rebuild_spots.py`.

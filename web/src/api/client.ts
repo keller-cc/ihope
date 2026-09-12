@@ -134,10 +134,14 @@ export function apiErrorMessage(e: unknown, fallback: string): string {
     'invalid credentials': '账号或密码错误',
     email_not_verified: '请先完成邮箱验证',
     'invalid verify token': '验证链接无效或已过期',
+    'invalid reset token': '重置链接无效或已过期',
+    'forgot password failed': '发送重置邮件失败，请稍后重试',
+    'password must be at least 6 characters': '密码至少 6 位',
     'resend failed': '发送验证邮件失败，请稍后重试',
     'change email failed': '更换邮箱失败，请稍后重试',
     'email already verified': '该邮箱已验证，请直接登录',
     'invalid email': '请填写有效邮箱',
+    'same email': '与当前邮箱相同',
     unauthorized: '请重新登录',
     forbidden: '没有权限',
     'user not found': '用户不存在',
@@ -246,11 +250,35 @@ export const api = {
       body: JSON.stringify({ token }),
       headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
     }),
+  forgotPassword: (email: string) => {
+    const ctrl = new AbortController()
+    const timer = window.setTimeout(() => ctrl.abort(), 20_000)
+    return request<{ message: string; devResetToken?: string }>('/api/auth/forgot-password', {
+      method: 'POST',
+      body: JSON.stringify({ email }),
+      signal: ctrl.signal,
+    }).finally(() => window.clearTimeout(timer))
+  },
+  resetPassword: (token: string, password: string) =>
+    request<{ message: string }>('/api/auth/reset-password', {
+      method: 'POST',
+      body: JSON.stringify({ token, password }),
+    }),
   me: () => request<User>('/api/me'),
   patchMe: (body: { username: string }) =>
     request<User>('/api/me', {
       method: 'PATCH',
       body: JSON.stringify(body),
+    }),
+  changePassword: (currentPassword: string, newPassword: string) =>
+    request<{ message: string }>('/api/me/password', {
+      method: 'POST',
+      body: JSON.stringify({ currentPassword, newPassword }),
+    }),
+  changeEmail: (currentPassword: string, newEmail: string) =>
+    request<{ message: string; email: string; devVerifyToken?: string }>('/api/me/email', {
+      method: 'POST',
+      body: JSON.stringify({ currentPassword, newEmail }),
     }),
   todayQuote: () =>
     request<{ body: string; author?: string; date: string }>('/api/quotes/today'),
@@ -667,6 +695,33 @@ export const api = {
       { method: 'POST', body: JSON.stringify({ score }) },
     ),
   dinoMyBest: () => request<{ best: number }>('/api/games/dino/me'),
+  manilaCreateRoom: (body?: { maxPlayers?: number; private?: boolean }) =>
+    request<ManilaRoom>('/api/manila/rooms', {
+      method: 'POST',
+      body: JSON.stringify(body || {}),
+    }),
+  manilaListRooms: () => request<{ rooms: ManilaRoom[] }>('/api/manila/rooms'),
+  manilaJoinRoom: (code: string) =>
+    request<ManilaRoom>(`/api/manila/rooms/${encodeURIComponent(code)}/join`, {
+      method: 'POST',
+      body: '{}',
+    }),
+  manilaGetRoom: (code: string) =>
+    request<ManilaRoom>(`/api/manila/rooms/${encodeURIComponent(code)}`),
+  manilaMyHistory: (limit = 30) =>
+    request<{ results: ManilaMatchResult[] }>(
+      `/api/manila/history?limit=${limit}`,
+    ),
+}
+
+export type ManilaMatchResult = {
+  id: string
+  roomId?: string
+  roomCode: string
+  finishedAt: string
+  myRank?: number
+  myFortune?: number
+  players: { userId: string; username: string; rank: number; fortune: number }[]
 }
 
 export type DinoScoreRow = {
@@ -675,4 +730,84 @@ export type DinoScoreRow = {
   username: string
   score: number
   createdAt: string
+}
+
+export type ManilaWare = 'nutmeg' | 'silk' | 'ginseng' | 'jade'
+
+export type ManilaPlayer = {
+  userId: string
+  username: string
+  seat: number
+  cash: number
+  /** @deprecated prefer publicShares / secretShares */
+  shares?: Partial<Record<ManilaWare, number>>
+  publicShares?: Partial<Record<ManilaWare, number>>
+  secretShares?: Partial<Record<ManilaWare, number>>
+  secretCount?: number
+  encumbered: Partial<Record<ManilaWare, number>>
+  accomplicesLeft: number
+  passedPlacement: boolean
+  ready: boolean
+  isHost: boolean
+  connected: boolean
+  fortune?: number
+  rank?: number
+}
+
+export type ManilaRoom = {
+  id: string
+  code: string
+  hostUserId: string
+  status: string
+  maxPlayers: number
+  isPrivate: boolean
+  members: ManilaPlayer[]
+  match?: ManilaMatch | null
+}
+
+export type ManilaMatch = {
+  phase: string
+  voyage: number
+  players: ManilaPlayer[]
+  harborMasterId?: string
+  auctionHighBid: number
+  auctionHighBidder?: string
+  auctionPassed: string[]
+  auctionTurnUserId?: string
+  turnUserId?: string
+  market: Partial<Record<ManilaWare, number>>
+  shareSupply: Partial<Record<ManilaWare, number>>
+  punts: {
+    index: number
+    ware: ManilaWare
+    position: number
+    arrived: boolean
+    berth?: string
+    plundered?: boolean
+    die?: number
+  }[]
+  occupied: { slotId: string; userId: string; cost: number }[]
+  placeRound: number
+  moveRound: number
+  maxPlaceRounds: number
+  events: string[]
+  pirateBoardQueue?: string[]
+  pirateBoardPunts?: number[]
+  pilotTurn?: string
+  plunderPunts?: number[]
+  winnerUserId?: string
+  version: number
+  slots?: {
+    id: string
+    kind: string
+    cost: number
+    payout: number
+    label: string
+    puntIndex?: number
+    seatIndex?: number
+    ware?: ManilaWare
+    pilotSize?: string
+    berth?: string
+    pirateRank?: number
+  }[]
 }

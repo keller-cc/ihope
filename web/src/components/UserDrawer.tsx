@@ -34,6 +34,15 @@ export function UserDrawer({
   const [renameOpen, setRenameOpen] = useState(false)
   const [renameDraft, setRenameDraft] = useState('')
   const [renameBusy, setRenameBusy] = useState(false)
+  const [passwordOpen, setPasswordOpen] = useState(false)
+  const [pwCurrent, setPwCurrent] = useState('')
+  const [pwNew, setPwNew] = useState('')
+  const [pwConfirm, setPwConfirm] = useState('')
+  const [passwordBusy, setPasswordBusy] = useState(false)
+  const [emailOpen, setEmailOpen] = useState(false)
+  const [emailDraft, setEmailDraft] = useState('')
+  const [emailPassword, setEmailPassword] = useState('')
+  const [emailBusy, setEmailBusy] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -192,6 +201,35 @@ export function UserDrawer({
               修改昵称
             </Button>
             <div className="im-bind-box">
+              <p className="im-muted">当前邮箱</p>
+              <strong className="im-bind-code" style={{ fontSize: '0.95rem' }}>
+                {user.email || '—'}
+              </strong>
+            </div>
+            <Button
+              variant="outline"
+              block
+              onClick={() => {
+                setEmailDraft('')
+                setEmailPassword('')
+                setEmailOpen(true)
+              }}
+            >
+              修改邮箱
+            </Button>
+            <Button
+              variant="outline"
+              block
+              onClick={() => {
+                setPwCurrent('')
+                setPwNew('')
+                setPwConfirm('')
+                setPasswordOpen(true)
+              }}
+            >
+              修改密码
+            </Button>
+            <div className="im-bind-box">
               <p className="im-muted">当前 IHope 号</p>
               <strong className="im-bind-code">{user.hopeId || '—'}</strong>
             </div>
@@ -337,6 +375,104 @@ export function UserDrawer({
           value={renameDraft}
           onChange={(v) => setRenameDraft(String(v))}
         />
+      </Dialog>
+
+      <Dialog
+        visible={passwordOpen}
+        header="修改密码"
+        onClose={() => setPasswordOpen(false)}
+        confirmBtn={{ content: '保存', loading: passwordBusy }}
+        cancelBtn="取消"
+        onConfirm={async () => {
+          if (!pwCurrent || pwNew.length < 6) {
+            MessagePlugin.warning('请填写当前密码，且新密码至少 6 位')
+            return
+          }
+          if (pwNew !== pwConfirm) {
+            MessagePlugin.warning('两次新密码不一致')
+            return
+          }
+          setPasswordBusy(true)
+          try {
+            await api.changePassword(pwCurrent, pwNew)
+            setPasswordOpen(false)
+            MessagePlugin.success('密码已更新')
+          } catch (e) {
+            MessagePlugin.error(apiErrorMessage(e, '修改密码失败'))
+          } finally {
+            setPasswordBusy(false)
+          }
+        }}
+      >
+        <div className="im-auth-fields" style={{ gap: 10 }}>
+          <Input
+            type="password"
+            placeholder="当前密码"
+            value={pwCurrent}
+            onChange={(v) => setPwCurrent(String(v))}
+          />
+          <Input
+            type="password"
+            placeholder="新密码（至少 6 位）"
+            value={pwNew}
+            onChange={(v) => setPwNew(String(v))}
+          />
+          <Input
+            type="password"
+            placeholder="确认新密码"
+            value={pwConfirm}
+            onChange={(v) => setPwConfirm(String(v))}
+          />
+        </div>
+      </Dialog>
+
+      <Dialog
+        visible={emailOpen}
+        header="修改邮箱"
+        onClose={() => setEmailOpen(false)}
+        confirmBtn={{ content: '发送验证邮件', loading: emailBusy }}
+        cancelBtn="取消"
+        onConfirm={async () => {
+          const next = emailDraft.trim()
+          if (!next.includes('@')) {
+            MessagePlugin.warning('请填写有效邮箱')
+            return
+          }
+          if (!emailPassword) {
+            MessagePlugin.warning('请填写当前密码')
+            return
+          }
+          setEmailBusy(true)
+          try {
+            await api.changeEmail(emailPassword, next)
+            setEmailOpen(false)
+            onClose()
+            setToken(null)
+            MessagePlugin.success('验证邮件已发送，请验证新邮箱后重新登录')
+            onLogout()
+          } catch (e) {
+            MessagePlugin.error(apiErrorMessage(e, '修改邮箱失败'))
+          } finally {
+            setEmailBusy(false)
+          }
+        }}
+      >
+        <p className="im-muted" style={{ marginTop: 0 }}>
+          当前：{user.email || '—'}。更换后需验证新邮箱，并重新登录。
+        </p>
+        <div className="im-auth-fields" style={{ gap: 10 }}>
+          <Input
+            placeholder="新邮箱"
+            value={emailDraft}
+            onChange={(v) => setEmailDraft(String(v))}
+          />
+          <Input
+            type="password"
+            placeholder="当前密码"
+            value={emailPassword}
+            onChange={(v) => setEmailPassword(String(v))}
+          />
+        </div>
       </Dialog>
     </Drawer>
   )

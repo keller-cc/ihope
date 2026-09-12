@@ -16,6 +16,8 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS hope_id TEXT;
 
 CREATE UNIQUE INDEX IF NOT EXISTS users_hope_id_uidx ON users (hope_id) WHERE hope_id IS NOT NULL;
 
+ALTER TABLE users ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMPTZ;
+
 CREATE TABLE IF NOT EXISTS schema_migrations (
   version TEXT PRIMARY KEY,
   applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -33,6 +35,22 @@ CREATE TABLE IF NOT EXISTS email_verification_tokens (
 );
 
 CREATE INDEX IF NOT EXISTS email_verify_user_idx ON email_verification_tokens (user_id);
+
+CREATE TABLE IF NOT EXISTS password_reset_tokens (
+  token_hash TEXT PRIMARY KEY,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  expires_at TIMESTAMPTZ NOT NULL,
+  used_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS password_reset_user_idx ON password_reset_tokens (user_id);
+
+INSERT INTO schema_migrations (version) VALUES ('021_password_reset')
+ON CONFLICT DO NOTHING;
+
+INSERT INTO schema_migrations (version) VALUES ('022_last_seen')
+ON CONFLICT DO NOTHING;
 
 CREATE TABLE IF NOT EXISTS conversations (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -364,4 +382,41 @@ CREATE INDEX IF NOT EXISTS game_scores_user_game_idx
   ON game_scores (user_id, game_id, score DESC);
 
 INSERT INTO schema_migrations (version) VALUES ('019_game_scores')
+ON CONFLICT DO NOTHING;
+
+-- Manila: light room metadata + end-of-match summaries (no step-by-step state)
+
+CREATE TABLE IF NOT EXISTS manila_rooms (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  code TEXT NOT NULL UNIQUE,
+  host_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  status TEXT NOT NULL DEFAULT 'open', -- open | playing | closed
+  max_players INT NOT NULL DEFAULT 5 CHECK (max_players BETWEEN 3 AND 5),
+  is_private BOOLEAN NOT NULL DEFAULT false,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS manila_rooms_status_idx ON manila_rooms (status, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS manila_match_results (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  room_id UUID REFERENCES manila_rooms(id) ON DELETE SET NULL,
+  room_code TEXT,
+  finished_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS manila_match_result_players (
+  match_id UUID NOT NULL REFERENCES manila_match_results(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  username TEXT NOT NULL,
+  rank INT NOT NULL CHECK (rank >= 1),
+  fortune INT NOT NULL,
+  PRIMARY KEY (match_id, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS manila_match_results_finished_idx
+  ON manila_match_results (finished_at DESC);
+
+INSERT INTO schema_migrations (version) VALUES ('020_manila')
 ON CONFLICT DO NOTHING;

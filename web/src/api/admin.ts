@@ -55,6 +55,8 @@ export type AdminUser = {
   hopeId?: string | null
   emailVerified: boolean
   createdAt: string
+  lastSeenAt?: string | null
+  online?: boolean
   qqBound?: boolean
   qqOpenId?: string | null
   fellowshipId?: string | null
@@ -161,6 +163,16 @@ export const adminApi = {
       method: 'PATCH',
       body: JSON.stringify({ emailVerified }),
     }),
+  setUserPassword: (id: string, password: string) =>
+    adminRequest<{ message: string }>(`/api/admin/users/${id}/password`, {
+      method: 'POST',
+      body: JSON.stringify({ password }),
+    }),
+  resendUserVerification: (id: string) =>
+    adminRequest<{ status: string; devVerifyToken?: string }>(
+      `/api/admin/users/${id}/resend-verification`,
+      { method: 'POST' },
+    ),
   stats: () => adminRequest<AdminStats>('/api/admin/stats'),
   listConversations: () =>
     adminRequest<{ conversations: AdminConversation[] }>('/api/admin/conversations'),
@@ -254,4 +266,44 @@ export const adminApi = {
     adminRequest<{ message: string }>(`/api/admin/fellowships/${id}`, {
       method: 'DELETE',
     }),
+  listManilaRooms: () =>
+    adminRequest<{
+      rooms: AdminManilaRoom[]
+      maxAge: string
+      gameId: string
+      gameName: string
+    }>('/api/admin/games/manila/rooms'),
+  endManilaRoom: (id: string) =>
+    adminRequest<{ message: string }>(`/api/admin/games/manila/rooms/${id}/end`, {
+      method: 'POST',
+    }),
+  listManilaResults: (limit = 50) =>
+    adminRequest<{ results: AdminManilaResult[] }>(
+      `/api/admin/games/manila/results?limit=${limit}`,
+    ),
+}
+
+export type AdminManilaRoom = {
+  id: string
+  code: string
+  status: string
+  hostUserId: string
+  hostUsername: string
+  maxPlayers: number
+  isPrivate: boolean
+  memberCount: number
+  members: string[]
+  phase?: string
+  voyage?: number
+  createdAt: string
+  ageSeconds: number
+  closeReason?: string
+}
+
+export type AdminManilaResult = {
+  id: string
+  roomId?: string
+  roomCode: string
+  finishedAt: string
+  players: { userId: string; username: string; rank: number; fortune: number }[]
 }

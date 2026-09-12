@@ -18,11 +18,13 @@ import {
   type AdminDomain,
   type AdminFellowship,
   type AdminGroupDetail,
+  type AdminManilaResult,
+  type AdminManilaRoom,
   type AdminQQBinding,
   type AdminUser,
 } from '@/api'
 
-type AdminTab = 'users' | 'domains' | 'fellowships' | 'qq' | 'conversations'
+type AdminTab = 'users' | 'domains' | 'fellowships' | 'qq' | 'conversations' | 'games'
 
 const TAB_ITEMS: { id: AdminTab; label: (n: number) => string }[] = [
   { id: 'users', label: (n) => `用户 (${n})` },
@@ -30,6 +32,7 @@ const TAB_ITEMS: { id: AdminTab; label: (n: number) => string }[] = [
   { id: 'fellowships', label: (n) => `团契 (${n})` },
   { id: 'qq', label: (n) => `QQ 绑定 (${n})` },
   { id: 'conversations', label: (n) => `会话 (${n})` },
+  { id: 'games', label: (n) => `游戏 (${n})` },
 ]
 
 export function AdminPage() {
@@ -60,6 +63,14 @@ export function AdminPage() {
     domainId: '',
   })
   const [editFellowship, setEditFellowship] = useState<AdminFellowship | null>(null)
+  const [passwordDialog, setPasswordDialog] = useState<{
+    id: string
+    username: string
+    password: string
+  } | null>(null)
+  const [manilaRooms, setManilaRooms] = useState<AdminManilaRoom[]>([])
+  const [manilaResults, setManilaResults] = useState<AdminManilaResult[]>([])
+  const [manilaMaxAge, setManilaMaxAge] = useState('1h0m0s')
 
   const fellowshipOptions = fellowships.map((f) => ({
     label: `${f.name || f.code}（${f.domainName}）`,
@@ -74,17 +85,20 @@ export function AdminPage() {
     fellowships: fellowships.length,
     qq: qqBindings.length,
     conversations: conversations.length,
+    games: manilaRooms.length,
   }
 
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const [u, c, qq, d, f] = await Promise.all([
+      const [u, c, qq, d, f, manilaLive, manilaHist] = await Promise.all([
         adminApi.listUsers(),
         adminApi.listConversations(),
         adminApi.listQQBindings(),
         adminApi.listDomains(),
         adminApi.listFellowships(),
+        adminApi.listManilaRooms(),
+        adminApi.listManilaResults(50),
       ])
       setUsers(u.users)
       setConversations(c.conversations)
@@ -93,6 +107,9 @@ export function AdminPage() {
       setQqHint(qq.botAddHint || '')
       setDomains(d.domains || [])
       setFellowships(f.fellowships || [])
+      setManilaRooms(manilaLive.rooms || [])
+      setManilaMaxAge(manilaLive.maxAge || '1h0m0s')
+      setManilaResults(manilaHist.results || [])
       setFellowshipDraft((prev) => ({
         ...prev,
         domainId: prev.domainId || d.domains?.[0]?.id || '',
@@ -194,6 +211,37 @@ export function AdminPage() {
       await load()
     } catch (e) {
       MessagePlugin.error(apiErrorMessage(e, '操作失败'))
+    }
+  }
+
+  const resendVerification = (user: AdminUser) => {
+    confirmAction({
+      header: '重发验证邮件',
+      body: `向「${user.username}」(${user.email}) 发送验证邮件？`,
+      confirm: '发送',
+      success: '验证邮件已发送',
+      onOk: async () => {
+        const res = await adminApi.resendUserVerification(user.id)
+        if (res.devVerifyToken) {
+          MessagePlugin.info(`开发验证码：${res.devVerifyToken}`)
+        }
+      },
+    })
+  }
+
+  const submitAdminPassword = async () => {
+    if (!passwordDialog) return
+    const pwd = passwordDialog.password
+    if (pwd.length < 6) {
+      MessagePlugin.warning('密码至少 6 位')
+      return
+    }
+    try {
+      await adminApi.setUserPassword(passwordDialog.id, pwd)
+      MessagePlugin.success('密码已更新')
+      setPasswordDialog(null)
+    } catch (e) {
+      MessagePlugin.error(apiErrorMessage(e, '设置密码失败'))
     }
   }
 
@@ -392,6 +440,16 @@ export function AdminPage() {
               cell: ({ row }) => (row.emailVerified ? '是' : '否'),
             },
             {
+              colKey: 'lastSeenAt',
+              title: '上次在线',
+              width: 128,
+              cell: ({ row }) => (
+                <span className="im-admin-mono">
+                  {row.online ? '在线' : formatLastSeen(row.lastSeenAt)}
+                </span>
+              ),
+            },
+            {
               colKey: 'createdAt',
               title: '注册',
               width: 128,
@@ -404,7 +462,7 @@ export function AdminPage() {
               title: '操作',
               align: 'center',
               fixed: 'right',
-              width: 200,
+              width: 280,
               cell: ({ row }) => (
                 <div className="im-admin__ops">
                   <Button
@@ -414,6 +472,26 @@ export function AdminPage() {
                     onClick={() => void toggleEmailVerified(row)}
                   >
                     {row.emailVerified ? '取消验证' : '验证邮箱'}
+                  </Button>
+                  {!row.emailVerified && (
+                    <Button
+                      size="small"
+                      variant="text"
+                      theme="primary"
+                      onClick={() => resendVerification(row)}
+                    >
+                      重发验证
+                    </Button>
+                  )}
+                  <Button
+                    size="small"
+                    variant="text"
+                    theme="primary"
+                    onClick={() =>
+                      setPasswordDialog({ id: row.id, username: row.username, password: '' })
+                    }
+                  >
+                    设密码
                   </Button>
                   <Button
                     size="small"
@@ -812,7 +890,157 @@ export function AdminPage() {
         />
       </>
     )
+  } else if (tab === 'games') {
+    panel = (
+      <>
+        <div className="im-admin__toolbar">
+          <p className="im-muted im-admin__hint" style={{ margin: 0 }}>
+            马尼拉 · 房间创建后超过 {manilaMaxAge} 会自动结束并释放内存。可强制结束异常对局；玩家可在大厅查看自己的历史战绩。
+          </p>
+        </div>
+        <h3 style={{ margin: '0 0 8px', fontSize: 15 }}>进行中房间</h3>
+        <Table
+          rowKey="id"
+          className="im-admin-table"
+          data={manilaRooms}
+          loading={loading}
+          empty="暂无内存中的马尼拉房间"
+          maxHeight={320}
+          columns={[
+            {
+              colKey: 'code',
+              title: '房间码',
+              width: 88,
+              cell: ({ row }) => <span className="im-admin-mono">{row.code}</span>,
+            },
+            {
+              colKey: 'status',
+              title: '状态',
+              width: 88,
+              cell: ({ row }) =>
+                row.status === 'playing'
+                  ? '游戏中'
+                  : row.status === 'open'
+                    ? '等待中'
+                    : row.status === 'closed'
+                      ? '已结束'
+                      : row.status,
+            },
+            {
+              colKey: 'hostUsername',
+              title: '房主',
+              width: 100,
+              ellipsis: true,
+            },
+            {
+              colKey: 'members',
+              title: '玩家',
+              ellipsis: true,
+              cell: ({ row }) =>
+                `${row.memberCount}/${row.maxPlayers} · ${(row.members || []).join('、') || '—'}`,
+            },
+            {
+              colKey: 'phase',
+              title: '阶段',
+              width: 120,
+              cell: ({ row }) =>
+                row.status === 'playing'
+                  ? `${row.phase || '—'}${row.voyage ? ` · 第${row.voyage}航` : ''}`
+                  : '—',
+            },
+            {
+              colKey: 'isPrivate',
+              title: '私密',
+              width: 64,
+              align: 'center',
+              cell: ({ row }) => (row.isPrivate ? '是' : '否'),
+            },
+            {
+              colKey: 'ageSeconds',
+              title: '存活',
+              width: 88,
+              cell: ({ row }) => formatDuration(row.ageSeconds),
+            },
+            {
+              colKey: 'createdAt',
+              title: '创建',
+              width: 148,
+              cell: ({ row }) => (
+                <span className="im-admin-mono">{formatTime(row.createdAt)}</span>
+              ),
+            },
+            {
+              colKey: 'op',
+              title: '操作',
+              align: 'center',
+              fixed: 'right',
+              width: 100,
+              cell: ({ row }) => (
+                <div className="im-admin__ops">
+                  <Button
+                    size="small"
+                    theme="danger"
+                    variant="text"
+                    onClick={() =>
+                      confirmAction({
+                        header: '强制结束',
+                        body: `确定强制结束房间「${row.code}」并从内存移除？玩家将无法继续本局。`,
+                        confirm: '结束',
+                        danger: true,
+                        success: '已结束',
+                        onOk: async () => {
+                          await adminApi.endManilaRoom(row.id)
+                        },
+                      })
+                    }
+                  >
+                    结束
+                  </Button>
+                </div>
+              ),
+            },
+          ]}
+        />
+        <h3 style={{ margin: '20px 0 8px', fontSize: 15 }}>最近战绩</h3>
+        <Table
+          rowKey="id"
+          className="im-admin-table"
+          data={manilaResults}
+          loading={loading}
+          empty="暂无已落库战绩"
+          maxHeight={320}
+          columns={[
+            {
+              colKey: 'roomCode',
+              title: '房间码',
+              width: 88,
+              cell: ({ row }) => (
+                <span className="im-admin-mono">{row.roomCode || '—'}</span>
+              ),
+            },
+            {
+              colKey: 'finishedAt',
+              title: '结束时间',
+              width: 148,
+              cell: ({ row }) => (
+                <span className="im-admin-mono">{formatTime(row.finishedAt)}</span>
+              ),
+            },
+            {
+              colKey: 'players',
+              title: '排名 / 财富',
+              ellipsis: true,
+              cell: ({ row }) =>
+                (row.players || [])
+                  .map((p) => `#${p.rank} ${p.username}(${p.fortune})`)
+                  .join(' · ') || '—',
+            },
+          ]}
+        />
+      </>
+    )
   }
+
 
   return (
     <div className="im-admin">
@@ -848,6 +1076,8 @@ export function AdminPage() {
                 setQqBindings([])
                 setDomains([])
                 setFellowships([])
+                setManilaRooms([])
+                setManilaResults([])
               }}
             >
               退出管理
@@ -1128,6 +1358,32 @@ export function AdminPage() {
       </Dialog>
 
       <Dialog
+        visible={!!passwordDialog}
+        header={passwordDialog ? `设置「${passwordDialog.username}」的密码` : '设置密码'}
+        onClose={() => setPasswordDialog(null)}
+        confirmBtn="保存"
+        cancelBtn="取消"
+        onConfirm={() => void submitAdminPassword()}
+      >
+        {passwordDialog && (
+          <div className="im-admin__form">
+            <label>
+              新密码（至少 6 位）
+              <Input
+                type="password"
+                clearable
+                value={passwordDialog.password}
+                onChange={(v) =>
+                  setPasswordDialog((p) => (p ? { ...p, password: String(v) } : p))
+                }
+                onEnter={() => void submitAdminPassword()}
+              />
+            </label>
+          </div>
+        )}
+      </Dialog>
+
+      <Dialog
         visible={!!editFellowship}
         header="编辑团契"
         onClose={() => setEditFellowship(null)}
@@ -1184,4 +1440,24 @@ function formatTime(iso?: string | null): string {
   if (Number.isNaN(d.getTime())) return String(iso)
   const p = (n: number) => String(n).padStart(2, '0')
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
+}
+
+function formatLastSeen(iso?: string | null): string {
+  if (!iso) return '从未'
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return String(iso)
+  const diffMs = Date.now() - d.getTime()
+  if (diffMs < 60_000) return '刚刚'
+  if (diffMs < 3_600_000) return `${Math.floor(diffMs / 60_000)} 分钟前`
+  if (diffMs < 86_400_000) return `${Math.floor(diffMs / 3_600_000)} 小时前`
+  return formatTime(iso)
+}
+
+function formatDuration(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds < 0) return '—'
+  const h = Math.floor(seconds / 3600)
+  const m = Math.floor((seconds % 3600) / 60)
+  if (h > 0) return `${h}h${m}m`
+  if (m > 0) return `${m}m`
+  return `${seconds}s`
 }

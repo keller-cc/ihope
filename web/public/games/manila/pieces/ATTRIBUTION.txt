@@ -1,0 +1,4 @@
+﻿Share tags: flat circular commodity icons with transparent rim — NO token ring/bevel.
+`pieces/share-{silk,jade,nutmeg,ginseng,back}.png` — used everywhere (market, HUD, buy, loan).
+
+Board: wave bands mark positions 0–13 (no numeric ruler). Pirate waits at finish (pos 13) left side.

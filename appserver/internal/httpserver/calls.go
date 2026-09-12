@@ -1,6 +1,7 @@
 package httpserver
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -149,6 +150,8 @@ func (s *Server) handleUserWS(w http.ResponseWriter, r *http.Request) {
 
 	s.hub.UserOnline(userID)
 	defer s.hub.UserOffline(userID)
+	s.admin.TouchLastSeen(r.Context(), userID)
+	defer s.admin.TouchLastSeen(context.Background(), userID)
 	if s.calls != nil {
 		s.calls.OnUserConnect(userID)
 		defer s.calls.OnUserDisconnect(userID)

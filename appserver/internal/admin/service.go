@@ -15,6 +15,8 @@ type UserRow struct {
 	HopeID         *string `json:"hopeId,omitempty"`
 	EmailVerified  bool    `json:"emailVerified"`
 	CreatedAt      string  `json:"createdAt"`
+	LastSeenAt     *string `json:"lastSeenAt,omitempty"`
+	Online         bool    `json:"online"`
 	QQBound        bool    `json:"qqBound"`
 	QQOpenID       *string `json:"qqOpenId,omitempty"`
 	FellowshipID   *string `json:"fellowshipId,omitempty"`
@@ -91,6 +93,7 @@ func NewService(pool *pgxpool.Pool) *Service {
 func (s *Service) ListUsers(ctx context.Context) ([]UserRow, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT u.id::text, u.email, u.username, u.hope_id, u.email_verified, u.created_at::text,
+			u.last_seen_at::text,
 			(q.user_id IS NOT NULL), q.qq_openid,
 			u.fellowship_id::text, f.code, f.name, d.id::text, d.name
 		FROM users u
@@ -109,6 +112,7 @@ func (s *Service) ListUsers(ctx context.Context) ([]UserRow, error) {
 		var openID *string
 		if err := rows.Scan(
 			&u.ID, &u.Email, &u.Username, &u.HopeID, &u.EmailVerified, &u.CreatedAt,
+			&u.LastSeenAt,
 			&u.QQBound, &openID,
 			&u.FellowshipID, &u.FellowshipCode, &u.FellowshipName, &u.DomainID, &u.DomainName,
 		); err != nil {
@@ -121,6 +125,10 @@ func (s *Service) ListUsers(ctx context.Context) ([]UserRow, error) {
 		out = []UserRow{}
 	}
 	return out, rows.Err()
+}
+
+func (s *Service) TouchLastSeen(ctx context.Context, userID string) {
+	_, _ = s.pool.Exec(ctx, `UPDATE users SET last_seen_at = now() WHERE id = $1`, userID)
 }
 
 func (s *Service) UserExists(ctx context.Context, userID string) (bool, error) {

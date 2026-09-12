@@ -21,4 +21,14 @@ export const GAMES: GameInfo[] = [
     status: 'playable',
     cover: 'dino',
   },
+  {
+    id: 'manila',
+    title: '马尼拉',
+    subtitle: '港口投机桌游',
+    description:
+      '竞拍港主、投资股份与共犯，三艘货船驶向马尼拉——骰子、海盗与保险共同决定谁成为最富有的商人。',
+    path: '/game/manila',
+    status: 'playable',
+    cover: 'manila',
+  },
 ]

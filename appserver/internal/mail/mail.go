@@ -20,6 +20,7 @@ type Config struct {
 	SMTPUser  string
 	SMTPPass  string
 	VerifyTTL time.Duration
+	ResetTTL  time.Duration
 }
 
 type Sender struct {
@@ -39,6 +40,19 @@ func (s *Sender) SendEmailVerification(to, verifyURL string) error {
 	body := fmt.Sprintf(
 		"欢迎使用 IHope。请点击以下链接完成邮箱验证（%d 分钟内有效）：\n\n%s\n\n验证后即可登录。\n",
 		mins, verifyURL,
+	)
+	return s.deliver(to, subject, body)
+}
+
+func (s *Sender) SendPasswordReset(to, resetURL string) error {
+	subject := "重置你的 IHope 密码"
+	mins := int(s.cfg.ResetTTL.Minutes())
+	if mins <= 0 {
+		mins = 60
+	}
+	body := fmt.Sprintf(
+		"请点击以下链接重置密码（%d 分钟内有效）：\n\n%s\n\n如非本人操作，请忽略此邮件。\n",
+		mins, resetURL,
 	)
 	return s.deliver(to, subject, body)
 }
