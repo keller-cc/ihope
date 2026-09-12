@@ -761,7 +761,7 @@ export function AdminPage() {
         ]}
       />
     )
-  } else {
+  } else if (tab === 'conversations') {
     panel = (
       <>
         <div className="im-admin__toolbar">
