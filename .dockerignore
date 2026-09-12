@@ -1,9 +1,35 @@
+# Shared by builds with context = repo root (appserver + backend Dockerfiles).
+
 .git
 .cursor
-**/node_modules
-deploy/data
-deploy/.env
-mobile
+.github
+.vscode
+.postman
+postman
 docs
+mobile
+scripts
+
+# Host deps / build outputs (rebuilt inside the image)
+**/node_modules
+**/dist
+**/.vite
+**/coverage
+
+# Local DB / uploads (huge, never needed for image build)
+appserver/data
+deploy/data
+**/uploads
+
+# Secrets & env (compose still mounts .env at runtime)
+**/.env
+!**/.env.example
+deploy/.env
+
+# Noise
 *.md
 !backend/README.md
+**/*.apk
+**/*.log
+**/tmp
+**/temp
