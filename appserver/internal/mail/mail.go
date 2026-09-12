@@ -10,13 +10,15 @@ import (
 	"time"
 )
 
+const smtpTimeout = 20 * time.Second
+
 type Config struct {
-	Driver   string
-	From     string
-	SMTPHost string
-	SMTPPort string
-	SMTPUser string
-	SMTPPass string
+	Driver    string
+	From      string
+	SMTPHost  string
+	SMTPPort  string
+	SMTPUser  string
+	SMTPPass  string
 	VerifyTTL time.Duration
 }
 
@@ -62,35 +64,70 @@ func (s *Sender) sendSMTP(to, subject, body string) error {
 	}
 	port := strings.TrimSpace(s.cfg.SMTPPort)
 	if port == "" {
-		port = "587"
+		port = "465"
 	}
 	from := strings.TrimSpace(s.cfg.From)
 	if from == "" {
 		from = user
 	}
-	msg := fmt.Sprintf(
+	msg := []byte(fmt.Sprintf(
 		"From: %s\r\nTo: %s\r\nSubject: %s\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\n%s",
 		from, to, subject, body,
-	)
+	))
 	addr := net.JoinHostPort(host, port)
 	auth := smtp.PlainAuth("", user, pass, host)
 	if port == "465" {
-		return sendImplicitTLS(addr, host, auth, from, to, []byte(msg))
+		return sendSMTPTLS(addr, host, auth, from, to, msg)
 	}
-	return smtp.SendMail(addr, auth, from, []string{to}, []byte(msg))
+	return sendSMTPStartTLS(addr, host, auth, from, to, msg)
 }
 
-func sendImplicitTLS(addr, host string, auth smtp.Auth, from, to string, msg []byte) error {
-	conn, err := tls.Dial("tcp", addr, &tls.Config{ServerName: host, MinVersion: tls.VersionTLS12})
+func sendSMTPTLS(addr, host string, auth smtp.Auth, from, to string, msg []byte) error {
+	raw, err := net.DialTimeout("tcp", addr, smtpTimeout)
 	if err != nil {
-		return err
+		return fmt.Errorf("smtp dial: %w", err)
 	}
+	conn := tls.Client(raw, &tls.Config{ServerName: host, MinVersion: tls.VersionTLS12})
+	if err := conn.Handshake(); err != nil {
+		_ = raw.Close()
+		return fmt.Errorf("smtp tls: %w", err)
+	}
+	_ = conn.SetDeadline(time.Now().Add(smtpTimeout))
 	defer conn.Close()
+	return smtpSend(conn, host, auth, from, to, msg)
+}
+
+func sendSMTPStartTLS(addr, host string, auth smtp.Auth, from, to string, msg []byte) error {
+	conn, err := net.DialTimeout("tcp", addr, smtpTimeout)
+	if err != nil {
+		return fmt.Errorf("smtp dial: %w", err)
+	}
+	_ = conn.SetDeadline(time.Now().Add(smtpTimeout))
+	defer conn.Close()
+
 	client, err := smtp.NewClient(conn, host)
 	if err != nil {
 		return err
 	}
 	defer client.Close()
+	if ok, _ := client.Extension("STARTTLS"); ok {
+		if err := client.StartTLS(&tls.Config{ServerName: host, MinVersion: tls.VersionTLS12}); err != nil {
+			return err
+		}
+	}
+	return smtpSendWithClient(client, auth, from, to, msg)
+}
+
+func smtpSend(conn net.Conn, host string, auth smtp.Auth, from, to string, msg []byte) error {
+	client, err := smtp.NewClient(conn, host)
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+	return smtpSendWithClient(client, auth, from, to, msg)
+}
+
+func smtpSendWithClient(client *smtp.Client, auth smtp.Auth, from, to string, msg []byte) error {
 	if err := client.Auth(auth); err != nil {
 		return err
 	}

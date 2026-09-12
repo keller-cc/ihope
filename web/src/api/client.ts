@@ -75,8 +75,12 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     if (!res.ok) {
       const err = new Error((data as { error?: string }).error || res.statusText) as Error & {
         code?: string
+        email?: string
       }
       err.code = (data as { error?: string }).error
+      if (typeof (data as { email?: string }).email === 'string') {
+        err.email = (data as { email?: string }).email
+      }
       throw err
     }
     return data as T
@@ -93,6 +97,12 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 
 /** Map API error codes to Chinese UI messages. */
 export function apiErrorMessage(e: unknown, fallback: string): string {
+  if (e instanceof DOMException && e.name === 'AbortError') {
+    return '请求超时，请稍后重试'
+  }
+  if (e instanceof Error && e.name === 'AbortError') {
+    return '请求超时，请稍后重试'
+  }
   const code =
     e instanceof Error
       ? ((e as Error & { code?: string }).code || e.message || '').trim()
@@ -120,6 +130,7 @@ export function apiErrorMessage(e: unknown, fallback: string): string {
     'invalid credentials': '账号或密码错误',
     email_not_verified: '请先完成邮箱验证',
     'invalid verify token': '验证链接无效或已过期',
+    'resend failed': '发送验证邮件失败，请稍后重试',
     unauthorized: '请重新登录',
     forbidden: '没有权限',
     'user not found': '用户不存在',
@@ -198,14 +209,18 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ login, password }),
     }),
-  resendVerification: (email: string) =>
-    request<{ message: string; devVerifyToken?: string }>(
-      '/api/auth/resend-verification',
-      {
-        method: 'POST',
-        body: JSON.stringify({ email }),
-      },
-    ),
+  resendVerification: (email: string) => {
+    const ctrl = new AbortController()
+    const timer = window.setTimeout(() => ctrl.abort(), 20_000)
+    return request<{
+      status: 'sent' | 'already_verified' | 'not_found'
+      devVerifyToken?: string
+    }>('/api/auth/resend-verification', {
+      method: 'POST',
+      body: JSON.stringify({ email }),
+      signal: ctrl.signal,
+    }).finally(() => window.clearTimeout(timer))
+  },
   verifyEmail: (token: string) =>
     request<{ message: string }>('/api/auth/verify-email', {
       method: 'POST',

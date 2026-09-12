@@ -345,20 +345,20 @@ export function AdminPage() {
           loading={loading}
           maxHeight={520}
           columns={[
-            { colKey: 'username', title: '用户名', width: 100, ellipsis: true },
+            { colKey: 'username', title: '用户名', width: 96, ellipsis: true },
             {
               colKey: 'hopeId',
               title: 'IHope 号',
-              width: 128,
+              width: 124,
               cell: ({ row }) => (
                 <span className="im-admin-mono">{row.hopeId || '—'}</span>
               ),
             },
-            { colKey: 'email', title: '邮箱', ellipsis: true, width: 180 },
+            { colKey: 'email', title: '邮箱', ellipsis: true, width: 168 },
             {
               colKey: 'fellowshipId',
               title: '团契',
-              width: 200,
+              width: 168,
               cell: ({ row }) => (
                 <Select
                   size="small"
@@ -373,28 +373,28 @@ export function AdminPage() {
             {
               colKey: 'domainName',
               title: '自治域',
-              width: 110,
+              width: 96,
               ellipsis: true,
               cell: ({ row }) => row.domainName || '—',
             },
             {
               colKey: 'qqBound',
               title: 'QQ',
-              width: 72,
+              width: 56,
               align: 'center',
               cell: ({ row }) => (row.qqBound ? '已绑' : '未绑'),
             },
             {
               colKey: 'emailVerified',
               title: '已验证',
-              width: 72,
+              width: 64,
               align: 'center',
               cell: ({ row }) => (row.emailVerified ? '是' : '否'),
             },
             {
               colKey: 'createdAt',
               title: '注册',
-              width: 136,
+              width: 128,
               cell: ({ row }) => (
                 <span className="im-admin-mono">{formatTime(row.createdAt)}</span>
               ),
@@ -404,7 +404,7 @@ export function AdminPage() {
               title: '操作',
               align: 'center',
               fixed: 'right',
-              width: 236,
+              width: 200,
               cell: ({ row }) => (
                 <div className="im-admin__ops">
                   <Button

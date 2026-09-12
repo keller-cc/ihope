@@ -130,8 +130,15 @@
   margin-bottom: 12px;
 }
 
+.im-admin-table {
+  width: 100%;
+  overflow-x: auto;
+}
+
 .im-admin-table .t-table {
   table-layout: fixed;
+  width: 100%;
+  min-width: 980px;
 }
 
 .im-admin-table .t-table__th,

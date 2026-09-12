@@ -328,7 +328,11 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if errors.Is(err, auth.ErrEmailNotVerified) {
-			writeErr(w, http.StatusForbidden, "email_not_verified")
+			payload := map[string]any{"error": "email_not_verified"}
+			if u != nil && u.Email != "" {
+				payload["email"] = u.Email
+			}
+			writeJSON(w, http.StatusForbidden, payload)
 			return
 		}
 		writeErr(w, http.StatusInternalServerError, "login failed")
@@ -348,14 +352,12 @@ func (s *Server) handleResendVerification(w http.ResponseWriter, r *http.Request
 		writeErr(w, http.StatusBadRequest, "invalid json")
 		return
 	}
-	dev, err := s.auth.ResendVerification(r.Context(), body.Email)
+	status, dev, err := s.auth.ResendVerification(r.Context(), body.Email)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "resend failed")
 		return
 	}
-	out := map[string]any{
-		"message": "if the email exists and is not verified, a verification link has been sent",
-	}
+	out := map[string]any{"status": status}
 	if dev != "" {
 		out["devVerifyToken"] = dev
 	}

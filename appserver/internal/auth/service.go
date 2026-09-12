@@ -116,26 +116,30 @@ func (s *Service) Register(ctx context.Context, email, username, password, fello
 	}, nil
 }
 
-func (s *Service) ResendVerification(ctx context.Context, email string) (string, error) {
+func (s *Service) ResendVerification(ctx context.Context, email string) (status string, devToken string, err error) {
 	email = NormalizeEmail(email)
 	if !ValidateEmail(email) {
-		return "", nil
+		return "not_found", "", nil
 	}
 	var id string
 	var verified bool
-	err := s.pool.QueryRow(ctx, `
+	err = s.pool.QueryRow(ctx, `
 		SELECT id::text, email_verified FROM users WHERE email = $1
 	`, email).Scan(&id, &verified)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", nil
+		return "not_found", "", nil
 	}
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	if verified {
-		return "", nil
+		return "already_verified", "", nil
 	}
-	return s.sendEmailVerification(ctx, id, email)
+	devToken, err = s.sendEmailVerification(ctx, id, email)
+	if err != nil {
+		return "", "", err
+	}
+	return "sent", devToken, nil
 }
 
 func (s *Service) VerifyEmail(ctx context.Context, token string) error {
@@ -185,6 +189,10 @@ func (s *Service) sendEmailVerification(ctx context.Context, userID, email strin
 		ttl = 24 * time.Hour
 	}
 	expires := time.Now().Add(ttl)
+	_, _ = s.pool.Exec(ctx, `
+		UPDATE email_verification_tokens SET used_at = now()
+		WHERE user_id = $1 AND used_at IS NULL
+	`, userID)
 	_, err = s.pool.Exec(ctx, `
 		INSERT INTO email_verification_tokens (token_hash, user_id, expires_at)
 		VALUES ($1, $2, $3)
@@ -196,6 +204,9 @@ func (s *Service) sendEmailVerification(ctx context.Context, userID, email strin
 	verifyURL := fmt.Sprintf("%s/verify?token=%s", base, plain)
 	if s.opt.Mailer != nil {
 		if err := s.opt.Mailer.SendEmailVerification(email, verifyURL); err != nil {
+			_, _ = s.pool.Exec(ctx, `
+				UPDATE email_verification_tokens SET used_at = now() WHERE token_hash = $1
+			`, tokenHash)
 			return "", err
 		}
 	}
@@ -235,7 +246,7 @@ func (s *Service) Login(ctx context.Context, login, password string) (*User, str
 		return nil, "", ErrInvalidCredentials
 	}
 	if !u.EmailVerified {
-		return nil, "", ErrEmailNotVerified
+		return &u, "", ErrEmailNotVerified
 	}
 	token, err := s.issueToken(u.ID)
 	if err != nil {
