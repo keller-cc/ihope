@@ -23,6 +23,7 @@ export function AuthPage({ onAuthed }: Props) {
   const [confirm, setConfirm] = useState('')
   const [fellowshipCode, setFellowshipCode] = useState('')
   const [pendingEmail, setPendingEmail] = useState('')
+  const [pendingUsername, setPendingUsername] = useState('')
   const [devToken, setDevToken] = useState('')
   const [resendWait, setResendWait] = useState(0)
 
@@ -33,6 +34,12 @@ export function AuthPage({ onAuthed }: Props) {
   }, [resendWait])
 
   const startResendCooldown = () => setResendWait(RESEND_COOLDOWN_SEC)
+
+  const goLogin = (preferUsername?: string) => {
+    const name = (preferUsername ?? pendingUsername).trim()
+    setLogin(name || pendingEmail)
+    setMode('login')
+  }
 
   const sendVerifyMail = async (addr: string, opts?: { alreadyRegistered?: boolean }) => {
     const res = await api.resendVerification(addr)
@@ -47,16 +54,16 @@ export function AuthPage({ onAuthed }: Props) {
       return
     }
     if (res.status === 'already_verified') {
-      setLogin(addr)
-      setMode('login')
+      goLogin()
       MessagePlugin.success('该邮箱已验证，请直接登录')
       return
     }
     MessagePlugin.warning('未找到该邮箱对应的未验证账号')
   }
 
-  const enterPending = (addr: string) => {
+  const enterPending = (addr: string, name = '') => {
     setPendingEmail(addr.trim())
+    setPendingUsername(name.trim())
     setDevToken('')
     setMode('pending')
   }
@@ -135,14 +142,14 @@ export function AuthPage({ onAuthed }: Props) {
         regPassword,
         fellowshipCode.trim(),
       )
-      enterPending(emailVal)
+      enterPending(emailVal, usernameVal)
       setDevToken(res.devVerifyToken || '')
       startResendCooldown()
       MessagePlugin.success('验证邮件已发送，请查收邮箱')
     } catch (e) {
       const err = e as ApiErr
       if (err.code === 'email taken') {
-        enterPending(emailVal)
+        enterPending(emailVal, usernameVal)
         try {
           await sendVerifyMail(emailVal, { alreadyRegistered: true })
         } catch (resendErr) {
@@ -178,8 +185,7 @@ export function AuthPage({ onAuthed }: Props) {
     try {
       await api.verifyEmail(devToken)
       MessagePlugin.success('邮箱已验证，请登录')
-      setMode('login')
-      setLogin(pendingEmail)
+      goLogin()
     } catch (e) {
       MessagePlugin.error(apiErrorMessage(e, '验证失败'))
     } finally {
@@ -334,7 +340,7 @@ export function AuthPage({ onAuthed }: Props) {
                   </Button>
                 </div>
               )}
-              <Button size="large" variant="outline" block onClick={() => setMode('login')}>
+              <Button size="large" variant="outline" block onClick={() => goLogin()}>
                 返回登录
               </Button>
             </div>
