@@ -5,7 +5,7 @@ import {
   meepleSrc,
   PANEL_WOOD,
   PAWN_LABEL,
-  shareCardSrc,
+  shareSrc,
 } from './assets'
 import {
   LOAN_AMOUNT,
@@ -872,7 +872,7 @@ function LoanPanel({
 
           {pending && pendingCopy ? (
             <div className="manila-loanboard__confirm" role="alertdialog" aria-modal="true">
-              <img src={shareCardSrc(pending.ware)} alt="" />
+              <img src={shareSrc(pending.ware)} alt="" />
               <div className="manila-loanboard__confirm-body">
                 <strong>{pendingCopy.title}</strong>
                 <p>{pendingCopy.detail}</p>
@@ -911,7 +911,7 @@ function LoanPanel({
                         onClick={() => setPending({ kind: 'loan', ware })}
                         title={`抵押 ${WARE_LABEL[ware]}`}
                       >
-                        <img src={shareCardSrc(ware)} alt="" />
+                        <img src={shareSrc(ware)} alt="" />
                         <span>{WARE_LABEL[ware]}</span>
                         <em>×{n}</em>
                       </button>
@@ -930,7 +930,7 @@ function LoanPanel({
                       return (
                         <div key={`enc-${ware}`} className="manila-share-tile-wrap">
                           <div className="manila-share-tile is-enc" aria-hidden>
-                            <img src={shareCardSrc(ware)} alt="" />
+                            <img src={shareSrc(ware)} alt="" />
                             <span>{WARE_LABEL[ware]}</span>
                             <em>×{n}</em>
                           </div>
@@ -1205,7 +1205,7 @@ function HMShareBuyPanel({
                   : `${WARE_LABEL[w]} · ${p}₱ · 余 ${left}`
               }
             >
-              <img className="manila-share-pick__tag" src={shareCardSrc(w)} alt="" draggable={false} />
+              <img className="manila-share-pick__tag" src={shareSrc(w)} alt="" draggable={false} />
               <strong>{WARE_LABEL[w]}</strong>
               <span>
                 <Cash n={p} />
@@ -1265,7 +1265,7 @@ function LoadWaresPanel({ send }: { send: (msg: Record<string, unknown>) => void
               onClick={() => toggle(w)}
             >
               {on ? <span className="manila-share-pick__ord">{idx + 1}</span> : null}
-              <img className="manila-share-pick__tag" src={shareCardSrc(w)} alt="" draggable={false} />
+              <img className="manila-share-pick__tag" src={shareSrc(w)} alt="" draggable={false} />
               <strong>{WARE_LABEL[w]}</strong>
               <span className="manila-ware-pick__hint">
                 {on ? '已装载' : `+${WARE_PROFIT[w]}`}

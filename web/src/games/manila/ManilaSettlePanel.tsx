@@ -14,7 +14,6 @@ export type SettleLine = NonNullable<ManilaMatch['settlement']>[number]
 
 const STEP_MS = 2100
 const INTRO_MS = 600
-const OUTRO_MS = 1600
 
 const KIND_LABEL: Record<string, string> = {
   cargo: '进港分成',
@@ -217,10 +216,4 @@ function prettyLabel(line: SettleLine): string {
     return s
   }
   return ''
-}
-
-/** Suggested server pause so sequential UI can finish. */
-export function settleDurationMs(lineCount: number): number {
-  if (lineCount <= 0) return INTRO_MS + OUTRO_MS + 1200
-  return INTRO_MS + lineCount * STEP_MS + OUTRO_MS + 800
 }

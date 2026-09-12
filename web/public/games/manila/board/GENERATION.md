@@ -2,10 +2,11 @@
 
 ## Source of truth (editable)
 
-**`boardConfig.json`** — synced at:
+**`web/src/games/manila/boardConfig.json`** — imported by TypeScript.
 
-- `web/src/games/manila/boardConfig.json` (imported by TS)
-- `web/public/games/manila/board/boardConfig.json` (asset / docs copy)
+Synced copy for docs / scripts:
+
+- `web/public/games/manila/board/boardConfig.json`
 
 Each entry records **perspective** + **what to show**:
 
@@ -16,7 +17,7 @@ Each entry records **perspective** + **what to show**:
 | `market` | `panel_quad_pct`, `wares`, `value_rows`, UV `layout`, `display` flags |
 | `ship_seats` | local hull seat % for cargo ships |
 
-Edit `quad_pct` / `display` / `market.panel_quad_pct` directly, then refresh the app. Rebuild compose art with `_rebuild_spots.py` when you want baked preview JPGs.
+Edit `quad_pct` / `display` / `market.panel_quad_pct` directly, then refresh the app. Rebuild compose art with `_rebuild_spots.py` when you want baked preview JPGs (`board-costs-only.jpg`, `board-effect.jpg`).
 
 ## Badges
 
@@ -29,11 +30,12 @@ Font: Georgia Bold.
 
 ## Scripts
 
-- `_rebuild_spots.py` — detect pads, write `anchors.json`, compose JPGs, then `_build_board_config.py`
-- `_build_board_config.py` — merge anchors + rules → `boardConfig.json`
+- `_rebuild_spots.py` — detect pads, write `anchors.json` (public only), compose preview JPGs, then `_build_board_config.py`
+- `_build_board_config.py` — merge anchors + rules → `boardConfig.json` (src + public)
 
 ## TS entry points
 
-- `boardConfig.ts` — typed accessors, UV→% for market, `boardSpotDefs()`
-- `spotCatalog.ts` — init runtime state from config
-- `quadWarp.ts` — `matrix3d` / `padSpotStyle` / `berthShipStyle`
+- `boardConfig.ts` — typed accessors for spots / berths / market panel
+- `boardLayout.ts` — sea lanes, pirate seats, loan constants, asset URLs
+- `assets.ts` — piece / badge / meeple URLs (`ASSET_V` cache bust)
+- `quadWarp.ts` — `matrix3d` / `padSpotStyle` / `coverBerthStyle`

@@ -11,8 +11,6 @@ export const FX_PAY_MS = 1400
 export const FX_PLACE_COMMIT_MS = 720
 /** Sea ship slide after dice faces settle. */
 export const FX_SHIP_MOVE_MS = 1600
-/** Hold pre-dice positions while dice overlay plays. */
-export const FX_DICE_HOLD_MS = 2200
 
 export type FlyMeeple = {
   id: string

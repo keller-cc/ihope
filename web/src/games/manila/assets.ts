@@ -3,7 +3,7 @@
 export const PIECE_BASE = '/games/manila/pieces'
 export const BOARD_BASE = '/games/manila/board'
 /** Bust stale PNG/JPG after asset regenerations */
-const ASSET_V = '20260913d'
+export const ASSET_V = '20260913d'
 
 export const SEAT_COLORS = ['red', 'blue', 'green', 'yellow', 'purple'] as const
 
@@ -25,10 +25,6 @@ export const SHARE_BACK = `${PIECE_BASE}/share-back.png?v=${ASSET_V}`
 /** 花费：正面金币；收益：同尺寸异风格（银碧） */
 export const SPOT_BADGE_COST = `${PIECE_BASE}/spot-badge-cost.png?v=${ASSET_V}`
 export const SPOT_BADGE_PAY = `${PIECE_BASE}/spot-badge-pay.png?v=${ASSET_V}`
-/** @deprecated 等同花费徽章 */
-export const SPOT_BADGE = SPOT_BADGE_COST
-/** @deprecated 点位改用 SPOT_BADGE_COST */
-export const SPOT_WELL = SPOT_BADGE_COST
 
 export type ManilaRoleTag = 'pilot_small' | 'pilot_large' | 'insurance'
 
@@ -47,11 +43,6 @@ export const PANEL_WOOD = `${BOARD_BASE}/panel-wood.png?v=${ASSET_V}`
 export function shareSrc(ware: string) {
   const w = ['nutmeg', 'silk', 'ginseng', 'jade'].includes(ware) ? ware : 'nutmeg'
   return `${PIECE_BASE}/share-${w}.png?v=${ASSET_V}`
-}
-
-/** @deprecated 与 shareSrc 相同 */
-export function shareCardSrc(ware: string) {
-  return shareSrc(ware)
 }
 
 /** 玩家可放置的「伙计」棋子（原规则 accomplice） */

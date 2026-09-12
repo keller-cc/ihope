@@ -1,10 +1,11 @@
 import { Link } from 'react-router-dom'
+import { ASSET_V } from './assets'
 import { BOARD_IMG } from './boardLayout'
 import '@/games/game-shell.css'
 import './manila.css'
 
-const COSTS_IMG = `/games/manila/board/board-costs-only.jpg?v=20260913d`
-const EFFECT_IMG = `/games/manila/board/board-effect.jpg?v=20260913d`
+const COSTS_IMG = `/games/manila/board/board-costs-only.jpg?v=${ASSET_V}`
+const EFFECT_IMG = `/games/manila/board/board-effect.jpg?v=${ASSET_V}`
 
 /**
  * Cost-on-pad preview (first locked generation step).

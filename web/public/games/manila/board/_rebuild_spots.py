@@ -17,7 +17,6 @@ ROOT = Path(r"d:\IHope\web\public\games\manila")
 BOARD = ROOT / "board"
 PIECES = ROOT / "pieces"
 ASSETS = Path(r"C:\Users\micro\.cursor\projects\d-IHope\assets")
-SRC = Path(r"d:\IHope\web\src\games\manila")
 SIZE = 1024
 
 REGION_PAD = {
@@ -741,7 +740,6 @@ def build_anchors():
     }
     text = json.dumps(doc, ensure_ascii=False, indent=2)
     (BOARD / "anchors.json").write_text(text, encoding="utf-8")
-    (SRC / "anchors.json").write_text(text, encoding="utf-8")
     return doc
 
 
@@ -963,7 +961,6 @@ def main():
     paste_flat_rect(canvas, panel, market_quad)
 
     canvas.convert("RGB").save(BOARD / "board-effect.jpg", quality=93)
-    canvas.save(BOARD / "board-effect.png")
 
     costs_only = Image.open(BOARD / "board.jpg").convert("RGBA").resize((SIZE, SIZE))
     draw_berth_letters(costs_only, doc["berths"])
