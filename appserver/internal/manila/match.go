@@ -57,6 +57,7 @@ type Match struct {
 	PirateBoardPunts  []int
 	PilotTurn         string
 	PlunderPunts      []int
+	Settlement        []SettlementLine
 	WinnerUserID      string
 	Version           int
 	rng               *rand.Rand
@@ -67,6 +68,11 @@ type Match struct {
 }
 
 func NewMatch(players []PlayerView, rng *rand.Rand) *Match {
+	return NewMatchWithStart(players, rng, 0)
+}
+
+// NewMatchWithStart starts the first auction at firstSeat (0-based turn order).
+func NewMatchWithStart(players []PlayerView, rng *rand.Rand, firstSeat int) *Match {
 	if rng == nil {
 		rng = rand.New(rand.NewSource(rand.Int63()))
 	}
@@ -80,24 +86,27 @@ func NewMatch(players []PlayerView, rng *rand.Rand) *Match {
 		acc = 4
 		maxPlace = 4
 	}
+	if firstSeat < 0 || firstSeat >= len(players) {
+		firstSeat = 0
+	}
 	m := &Match{
-		Phase:            PhaseAuction,
-		Voyage:           1,
-		HarborMasterSeat: 0,
+		Phase:             PhaseAuction,
+		Voyage:            1,
+		HarborMasterSeat:  firstSeat,
 		AuctionHighBidder: -1,
-		AuctionPassed:    map[int]bool{},
-		Market:           map[Ware]int{},
-		ShareSupply:      map[Ware]int{},
-		Occupied:         map[string]string{},
-		OccupiedCost:     map[string]int{},
-		PlaceRound:       1,
-		MoveRound:        0,
-		MaxPlaceRounds:   maxPlace,
-		Events:           []string{},
-		rng:              rng,
-		slotDefs:         buildSlotDefs(),
-		portOrder:        []string{},
-		shipyardOrder:    []string{},
+		AuctionPassed:     map[int]bool{},
+		Market:            map[Ware]int{},
+		ShareSupply:       map[Ware]int{},
+		Occupied:          map[string]string{},
+		OccupiedCost:      map[string]int{},
+		PlaceRound:        1,
+		MoveRound:         0,
+		MaxPlaceRounds:    maxPlace,
+		Events:            []string{},
+		rng:               rng,
+		slotDefs:          buildSlotDefs(),
+		portOrder:         []string{},
+		shipyardOrder:     []string{},
 	}
 	for _, w := range AllWares {
 		m.Market[w] = 0
@@ -156,6 +165,21 @@ func (m *Match) log(format string, args ...any) {
 }
 
 func (m *Match) bump() { m.Version++ }
+
+func wareLabel(w Ware) string {
+	switch w {
+	case WareNutmeg:
+		return "肉豆蔻"
+	case WareSilk:
+		return "丝绸"
+	case WareGinseng:
+		return "人参"
+	case WareJade:
+		return "翡翠"
+	default:
+		return string(w)
+	}
+}
 
 func (m *Match) playerByID(uid string) *player {
 	for _, p := range m.Players {
@@ -273,6 +297,7 @@ func (m *Match) PublicFor(viewerID string) *MatchPublic {
 		PirateBoardPunts:  append([]int{}, m.PirateBoardPunts...),
 		PilotTurn:         m.PilotTurn,
 		PlunderPunts:      append([]int{}, m.PlunderPunts...),
+		Settlement:        append([]SettlementLine{}, m.Settlement...),
 		WinnerUserID:      m.WinnerUserID,
 		Version:           m.Version,
 		Slots:             m.SlotCatalog(),
@@ -420,7 +445,7 @@ func (m *Match) AuctionPass(userID string) error {
 	m.AuctionPassed[p.Seat] = true
 	m.log("%s 弃标", p.Username)
 	active := 0
-	var last int
+	last := -1
 	for _, pl := range m.Players {
 		if !m.AuctionPassed[pl.Seat] {
 			active++
@@ -445,7 +470,8 @@ func (m *Match) advanceAuctionTurn() {
 	}
 }
 
-func (m *Match) finishAuction(winnerSeat int) error {
+func (m *Match) finishAuction(freeWinnerSeat int) error {
+	var winnerSeat int
 	if m.AuctionHighBidder >= 0 {
 		winnerSeat = m.AuctionHighBidder
 		w := m.playerBySeat(winnerSeat)
@@ -457,11 +483,21 @@ func (m *Match) finishAuction(winnerSeat int) error {
 		}
 		m.log("%s 成为港主（支付 %d）", w.Username, m.AuctionHighBid)
 	} else {
-		w := m.playerBySeat(m.HarborMasterSeat)
-		if w != nil {
-			m.log("无人出价，%s 续任港主", w.Username)
+		// No bids: last non-passer gets HM for free.
+		// If everyone passed, rotate to the next seat after the previous HM.
+		winnerSeat = freeWinnerSeat
+		if winnerSeat < 0 || m.playerBySeat(winnerSeat) == nil {
+			n := len(m.Players)
+			if n == 0 {
+				return ErrBadAction
+			}
+			winnerSeat = (m.HarborMasterSeat + 1) % n
 		}
-		winnerSeat = m.HarborMasterSeat
+		w := m.playerBySeat(winnerSeat)
+		if w == nil {
+			return ErrBadAction
+		}
+		m.log("%s 成为港主（无人出价）", w.Username)
 	}
 	m.HarborMasterSeat = winnerSeat
 	m.TurnSeat = winnerSeat
@@ -1079,7 +1115,16 @@ func (m *Match) finishVoyage() {
 	}
 	m.payProfits()
 	m.raiseMarkets()
-	// End check
+	m.Phase = PhaseSettle
+	m.log("航次结算中…")
+	m.bump()
+}
+
+// AdvanceFromSettle ends the settle pause: game over or next voyage auction.
+func (m *Match) AdvanceFromSettle() {
+	if m.Phase != PhaseSettle {
+		return
+	}
 	for _, w := range AllWares {
 		if marketValue(m.Market[w]) >= 30 {
 			m.endGame()
@@ -1090,6 +1135,7 @@ func (m *Match) finishVoyage() {
 }
 
 func (m *Match) payProfits() {
+	m.Settlement = nil
 	// Ware accomplices on ported ships
 	for i, punt := range m.Punts {
 		if punt.Plundered {
@@ -1098,11 +1144,13 @@ func (m *Match) payProfits() {
 		if len(punt.Berth) >= 4 && punt.Berth[:4] == "port" {
 			profit := WareProfit[punt.Ware]
 			var owners []string
+			var ownerSlots []string
 			costs := WareSeatCosts[punt.Ware]
 			for si := range costs {
 				id := fmt.Sprintf("punt%d_%d", i, si)
 				if u, ok := m.Occupied[id]; ok {
 					owners = append(owners, u)
+					ownerSlots = append(ownerSlots, id)
 				}
 			}
 			if len(owners) == 0 {
@@ -1120,6 +1168,11 @@ func (m *Match) payProfits() {
 					g++
 				}
 				pl.Cash += g
+	m.Settlement = append(m.Settlement, SettlementLine{
+					UserID: uid, Amount: g, Kind: "cargo",
+					SlotID: ownerSlots[j],
+					Label:  fmt.Sprintf("%s 进港分成", wareLabel(punt.Ware)),
+				})
 			}
 			m.log("%s 船分红利润 %d", punt.Ware, profit)
 		}
@@ -1133,6 +1186,10 @@ func (m *Match) payProfits() {
 				if p.Berth == id {
 					if pl := m.playerByID(u); pl != nil {
 						pl.Cash += def.Payout
+						m.Settlement = append(m.Settlement, SettlementLine{
+							UserID: u, Amount: def.Payout, Kind: "port",
+							SlotID: id, Label: fmt.Sprintf("港口%s", berth),
+						})
 						m.log("港口%s 支付 %d 给 %s", berth, def.Payout, pl.Username)
 					}
 					break
@@ -1159,10 +1216,26 @@ func (m *Match) payProfits() {
 		pay := def.Payout
 		recipientUID, hasR := m.Occupied[id]
 		if hasIns && ins != nil {
-			_ = m.ensurePay(ins, pay)
+			paid := 0
+			if err := m.ensurePay(ins, pay); err == nil {
+				paid = pay
+			} else if ins.Cash > 0 {
+				paid = ins.Cash
+				ins.Cash = 0
+			}
+			if paid > 0 {
+				m.Settlement = append(m.Settlement, SettlementLine{
+					UserID: insID, Amount: -paid, Kind: "insurance",
+					SlotID: "insurance", Label: fmt.Sprintf("保险赔船坞%s", berth),
+				})
+			}
 			if hasR {
 				if pl := m.playerByID(recipientUID); pl != nil {
 					pl.Cash += pay
+					m.Settlement = append(m.Settlement, SettlementLine{
+						UserID: recipientUID, Amount: pay, Kind: "yard",
+						SlotID: id, Label: fmt.Sprintf("船坞%s", berth),
+					})
 					m.log("保险支付船坞%s %d 给 %s", berth, pay, pl.Username)
 				}
 			} else {
@@ -1171,6 +1244,10 @@ func (m *Match) payProfits() {
 		} else if hasR {
 			if pl := m.playerByID(recipientUID); pl != nil {
 				pl.Cash += pay
+				m.Settlement = append(m.Settlement, SettlementLine{
+					UserID: recipientUID, Amount: pay, Kind: "yard",
+					SlotID: id, Label: fmt.Sprintf("船坞%s", berth),
+				})
 				m.log("钱柜支付船坞%s %d 给 %s", berth, pay, pl.Username)
 			}
 		}
@@ -1199,6 +1276,7 @@ func (m *Match) startNextVoyageAuction() {
 	m.Punts = nil
 	m.Occupied = map[string]string{}
 	m.OccupiedCost = map[string]int{}
+	m.Settlement = nil
 	m.PlaceRound = 1
 	m.MoveRound = 0
 	m.PirateBoardQueue = nil

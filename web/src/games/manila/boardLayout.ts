@@ -12,6 +12,7 @@ import {
   BOARD_ANCHORS,
 } from './boardAnchors'
 import {
+  BOARD_BERTHS,
   BOARD_MARKET,
   marketMarkerPos as marketMarkerPosFromCfg,
   marketTagPos as marketTagPosFromCfg,
@@ -64,24 +65,70 @@ export type PctPos = { x: number; y: number }
 
 export type ShipHeading = 'sea' | 'port' | 'yard'
 
-/** Three wake lanes (bow toward top / finish). Tuned to scenic board.jpg. */
-export const LANE_X = [40, 49, 58]
+const START_FALLBACK: PctPos[] = [
+  { x: 37.6, y: 89.0 },
+  { x: 47.9, y: 91.46 },
+  { x: 57.47, y: 91.6 },
+]
+const START_ROT_FALLBACK = [8, 5, 2] as const
+
+/**
+ * Per-punt sea geometry from boardConfig `start_*` (each ship: start + heading).
+ * Route is a straight line along `rotDeg` (CW from vertical, bow toward harbor).
+ */
+export const SEA_LANES: { start: PctPos; rotDeg: number }[] = [0, 1, 2].map((i) => {
+  const b = BOARD_BERTHS[`start_${i}`]
+  return {
+    start: b?.center ? { x: b.center.x, y: b.center.y } : START_FALLBACK[i]!,
+    rotDeg: b?.ship_rot_deg ?? START_ROT_FALLBACK[i]!,
+  }
+})
+
+/** @deprecated use SEA_LANES[i].start */
+export const START_LANE: PctPos[] = SEA_LANES.map((l) => l.start)
+
+/**
+ * Sea-route finish Y% (ship center). Port pools sit ABOVE this band.
+ */
+export const TRACK_Y = {
+  open: (SEA_LANES[0]!.start.y + SEA_LANES[1]!.start.y + SEA_LANES[2]!.start.y) / 3,
+  finish: 40.5,
+} as const
 
 /** Track numerals sit left of the lanes in open water. */
 export const TRACK_NUM_X = 31
 
-/**
- * Sea-route Y% on the full plate. Port pools sit ABOVE `finish`.
- * 0–13 stay in water: 11/12/13 are last sea spaces, not the docks.
- */
-export const TRACK_Y = {
-  open: 86,
-  at5: 60,
-  finish: 34,
-} as const
+/** @deprecated prefer lanePose(lane, pos).rot */
+export const SEA_ROT_DEG = SEA_LANES[0]!.rotDeg
 
 /** Pirate token left of the on-water finish band (not the painted scenic sailboat). */
 export const PIRATE_POS = { x: 26, y: 36 }
+
+/** Pose along a ship's own heading — straight line from its start. */
+export function lanePose(
+  lane: number,
+  pos = 0,
+): { x: number; y: number; rot: number } {
+  const i = Math.max(0, Math.min(2, Math.floor(lane)))
+  const L = SEA_LANES[i]!
+  const t = Math.max(0, Math.min(TRACK_MAX, pos)) / TRACK_MAX
+  const rad = (L.rotDeg * Math.PI) / 180
+  const cos = Math.cos(rad)
+  const pathLen = (L.start.y - TRACK_Y.finish) / Math.max(0.25, Math.abs(cos))
+  return {
+    x: L.start.x + pathLen * t * Math.sin(rad),
+    y: L.start.y - pathLen * t * cos,
+    rot: L.rotDeg,
+  }
+}
+
+/** @deprecated use lanePose(lane, pos).x */
+export function laneX(lane: number, pos = 0): number {
+  return lanePose(lane, pos).x
+}
+
+export const LANE_X = [0, 1, 2].map((i) => lanePose(i, TRACK_MAX).x)
+export const SEA_WAKE_X = LANE_X
 
 /** Shore pads — from boardConfig.json. */
 export const SHORE_POS: Record<string, PctPos> = { ...ANCHOR_SHORE }
@@ -119,15 +166,13 @@ export function marketMarkerPos(ware: (typeof MARKET_WARES)[number], value: numb
   return marketMarkerPosFromCfg(ware, value) ?? { x: 90, y: 80 }
 }
 
-/** Y% of a space’s front (number). Always clamped to the water band. */
-export function trackY(pos: number): number {
+/** Y% of a space’s ship center — linear along the lane (straight route). */
+export function trackY(pos: number, _lane?: number): number {
+  const open = TRACK_Y.open
   const p = Math.max(0, Math.min(TRACK_MAX, pos))
-  const y =
-    p <= 5
-      ? TRACK_Y.open + (p / 5) * (TRACK_Y.at5 - TRACK_Y.open)
-      : TRACK_Y.at5 + ((p - 5) / (TRACK_MAX - 5)) * (TRACK_Y.finish - TRACK_Y.at5)
-  const lo = Math.min(TRACK_Y.finish, TRACK_Y.open)
-  const hi = Math.max(TRACK_Y.finish, TRACK_Y.open)
+  const y = open + (p / TRACK_MAX) * (TRACK_Y.finish - open)
+  const lo = Math.min(TRACK_Y.finish, open)
+  const hi = Math.max(TRACK_Y.finish, open)
   return Math.min(hi, Math.max(lo, y))
 }
 
@@ -162,6 +207,19 @@ export function slotRegion(
 
 export function nextPirateSlotId(occupiedIds: Set<string> | Map<string, string>): string | null {
   for (const id of PIRATE_SLOT_IDS) {
+    if (!occupiedIds.has(id)) return id
+  }
+  return null
+}
+
+/** Punt accomplice seats: lowest index (bow / cheapest) must fill first. */
+export function nextPuntSeatId(
+  puntIndex: number,
+  seatCount: number,
+  occupiedIds: Set<string> | Map<string, string>,
+): string | null {
+  for (let i = 0; i < seatCount; i++) {
+    const id = `punt${puntIndex}_${i}`
     if (!occupiedIds.has(id)) return id
   }
   return null

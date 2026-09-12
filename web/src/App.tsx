@@ -1,8 +1,8 @@
 ﻿import { useEffect, useState } from 'react'
 import { BrowserRouter, Navigate, Route, Routes, useNavigate, useSearchParams } from 'react-router-dom'
-import { ConfigProvider, Loading } from 'tdesign-react'
+import { ConfigProvider, Loading, MessagePlugin } from 'tdesign-react'
 import zhConfig from 'tdesign-react/es/locale/zh_CN'
-import { api, getSessionSlot, getToken, setToken, type User } from '@/api'
+import { api, AUTH_UNAUTHORIZED_EVENT, getSessionSlot, getToken, setToken, type User } from '@/api'
 import { AdminPage } from './pages/AdminPage'
 import { AuthPage } from './pages/AuthPage'
 import { ChatPage } from './pages/ChatPage'
@@ -21,6 +21,19 @@ function safeNextPath(raw: string | null): string | null {
   if (!raw) return null
   if (!raw.startsWith('/') || raw.startsWith('//')) return null
   if (raw.startsWith('/game')) return raw
+  return null
+}
+
+/** Single toast for session expiry; pages listen separately to flip "logged in" UI. */
+function AuthSessionWatcher() {
+  useEffect(() => {
+    const onUnauth = (ev: Event) => {
+      const toast = (ev as CustomEvent<{ toast?: boolean }>).detail?.toast
+      if (toast) MessagePlugin.warning('登录已失效，请重新登录')
+    }
+    window.addEventListener(AUTH_UNAUTHORIZED_EVENT, onUnauth)
+    return () => window.removeEventListener(AUTH_UNAUTHORIZED_EVENT, onUnauth)
+  }, [])
   return null
 }
 
@@ -46,8 +59,17 @@ function Home() {
     void api
       .me()
       .then(setUser)
-      .catch(() => setToken(null))
+      .catch(() => {
+        setToken(null)
+        setUser(null)
+      })
       .finally(() => setBooting(false))
+  }, [])
+
+  useEffect(() => {
+    const onUnauth = () => setUser(null)
+    window.addEventListener(AUTH_UNAUTHORIZED_EVENT, onUnauth)
+    return () => window.removeEventListener(AUTH_UNAUTHORIZED_EVENT, onUnauth)
   }, [])
 
   useEffect(() => {
@@ -89,6 +111,7 @@ export default function App() {
   return (
     <ConfigProvider globalConfig={zhConfig}>
       <BrowserRouter>
+        <AuthSessionWatcher />
         <Routes>
           <Route path="/" element={<Home />} />
           <Route path="/verify" element={<VerifyPage />} />

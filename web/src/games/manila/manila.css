@@ -225,9 +225,10 @@
 .manila-rules {
   background: color-mix(in srgb, var(--manila-surface) 92%, #fff);
   border: 1px solid color-mix(in srgb, var(--manila-line) 80%, transparent);
-  border-radius: 18px;
+  border-radius: 20px;
   padding: 16px;
   box-shadow: 0 10px 28px color-mix(in srgb, #0f172a 8%, transparent);
+  overflow: hidden;
 }
 
 .manila-panel h2,
@@ -271,25 +272,251 @@
   padding: 0;
 }
 
+.manila-room-list,
+.manila-history-list {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: 12px;
+}
+
+.manila-room-list li,
+.manila-history-list li {
+  display: flex;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.manila-room-list li {
+  flex-basis: 10.5rem;
+  width: 10.5rem;
+}
+
 .manila-room-list li button,
-.manila-history-list li,
-.manila-seat {
+.manila-history-list li {
+  box-sizing: border-box;
   width: 100%;
+  height: 100%;
   text-align: left;
   display: flex;
   flex-direction: column;
   gap: 4px;
-  padding: 12px;
-  margin-bottom: 8px;
-  border-radius: 14px;
+  padding: 12px 12px;
+  border-radius: 16px;
   border: 1px solid var(--manila-line);
   background: #fff;
   cursor: pointer;
   font: inherit;
   color: inherit;
+  box-shadow: 0 4px 14px color-mix(in srgb, #0f172a 6%, transparent);
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease,
+    transform 0.15s ease;
+}
+
+.manila-room-list li button:hover:not(:disabled),
+.manila-history-list li:hover {
+  border-color: color-mix(in srgb, var(--manila-accent) 40%, var(--manila-line));
+  box-shadow: 0 8px 20px color-mix(in srgb, #0f172a 10%, transparent);
+  transform: translateY(-1px);
+}
+
+.manila-seat-stage {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(7.5rem, 1fr));
+  gap: 10px;
+  margin: 0 0 10px;
+}
+
+.manila-pad-seat {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  min-height: 9.5rem;
+  padding: 12px 10px 10px;
+  border-radius: 16px;
+  border: 1.5px dashed color-mix(in srgb, var(--manila-line) 80%, #94a3b8);
+  background: color-mix(in srgb, #fff 88%, #e2e8f0);
+  text-align: center;
+}
+
+.manila-pad-seat.is-filled {
+  border-style: solid;
+  border-color: var(--manila-line);
+  background: #fff;
+}
+
+.manila-pad-seat.is-first {
+  border-color: color-mix(in srgb, var(--manila-accent) 60%, var(--manila-line));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--manila-accent) 22%, transparent);
+}
+
+.manila-pad-seat.is-me {
+  background: color-mix(in srgb, var(--manila-accent-soft) 40%, #fff);
+}
+
+.manila-pad-seat.is-away {
+  opacity: 0.55;
+}
+
+.manila-pad-seat__idx {
+  position: absolute;
+  top: 8px;
+  left: 10px;
+  font-size: 0.72rem;
+  font-weight: 800;
+  color: var(--manila-muted);
+}
+
+.manila-pad-seat__tag {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  font-style: normal;
+  font-size: 0.68rem;
+  font-weight: 800;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: var(--manila-accent);
+  color: #fff;
+}
+
+.manila-pad-seat__avatar {
+  width: 3.2rem;
+  height: 3.2rem;
+  margin-top: 10px;
+  object-fit: contain;
+  filter: drop-shadow(0 2px 4px rgba(15, 23, 42, 0.18));
+}
+
+.manila-pad-seat__name {
+  font-size: 0.9rem;
+  font-weight: 800;
+  color: #0f172a;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.manila-pad-seat__meta {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--manila-muted);
+}
+
+.manila-pad-seat__acts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  justify-content: center;
+  margin-top: 2px;
+}
+
+.manila-pad-seat__swap {
+  font-weight: 800;
+  color: var(--manila-accent-deep);
+}
+
+.manila-pad-seat__sit {
+  appearance: none;
+  margin-top: 18px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  border: none;
+  background: transparent;
+  color: #64748b;
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 8px;
+}
+
+.manila-pad-seat__sit:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.manila-pad-seat__sit:not(:disabled):hover {
+  color: var(--manila-accent-deep);
+}
+
+.manila-pad-seat__sit-ico {
+  width: 2.6rem;
+  height: 2.6rem;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  border: 2px dashed #94a3b8;
+  font-size: 1.25rem;
+  font-weight: 400;
+  color: #64748b;
+}
+
+.manila-pad-seat__sit:not(:disabled):hover .manila-pad-seat__sit-ico {
+  border-color: var(--manila-accent);
+  color: var(--manila-accent);
+  background: color-mix(in srgb, var(--manila-accent-soft) 50%, #fff);
+}
+
+.manila-waiting-seat-hint {
+  margin: 0 0 12px;
+  font-size: 0.82rem;
+  line-height: 1.4;
+}
+
+.manila-room-list li button.is-joined {
+  border-color: color-mix(in srgb, var(--manila-accent) 45%, var(--manila-line));
+  background: color-mix(in srgb, var(--manila-accent-soft) 55%, #fff);
+}
+
+.manila-room-code-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.manila-tag--joined {
+  background: var(--manila-accent-soft);
+  color: var(--manila-accent);
+}
+
+.manila-my-rooms {
+  margin-top: 14px;
+}
+
+.manila-my-rooms__label {
+  margin: 0 0 8px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--manila-muted, #78716c);
+}
+
+.manila-room-list--compact {
+  gap: 8px;
+}
+
+.manila-room-list--compact li {
+  flex-basis: 9.5rem;
+  width: 9.5rem;
+}
+
+.manila-room-list--compact li button {
+  padding: 8px 10px;
 }
 
 .manila-history-list li {
+  flex: 1 1 14rem;
+  width: auto;
+  min-width: min(100%, 12rem);
   cursor: default;
 }
 
@@ -320,9 +547,6 @@
 }
 
 .manila-seat {
-  flex-direction: row;
-  align-items: center;
-  justify-content: space-between;
   cursor: default;
 }
 
@@ -560,6 +784,7 @@
   border-radius: 0;
   background: transparent !important;
   box-shadow: none;
+  position: relative;
 }
 
 .manila-rail-share.is-secret {
@@ -577,10 +802,21 @@
   box-shadow: none !important;
 }
 
-.manila-rail-share em {
+.manila-rail-share em,
+.manila-rail-share__qty {
   font-style: normal;
-  font-size: 0.7rem;
-  font-weight: 800;
+  font-size: 0.62rem;
+  font-weight: 900;
+  line-height: 1;
+  position: absolute;
+  right: -4px;
+  bottom: -3px;
+  z-index: 1;
+  padding: 1px 3px;
+  border-radius: 4px;
+  background: color-mix(in srgb, #0f172a 82%, transparent);
+  color: #fff;
+  pointer-events: none;
 }
 
 .manila-lobby,
@@ -1694,29 +1930,346 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: color-mix(in srgb, #0f172a 45%, transparent);
+  background: color-mix(in srgb, #0f172a 42%, transparent);
   pointer-events: none;
+  perspective: 900px;
 }
 
-.manila-dice-overlay__panel {
-  padding: 16px 20px;
-  border-radius: 16px;
-  background: color-mix(in srgb, #fff 92%, #ecfeff);
-  box-shadow: 0 12px 40px color-mix(in srgb, #0f172a 35%, transparent);
+.manila-dice-overlay__stage {
   text-align: center;
+  padding: 8px 12px;
 }
 
-.manila-dice-overlay__panel > p {
-  margin: 0 0 10px;
+.manila-dice-overlay__label {
+  margin: 0 0 14px;
   font-weight: 800;
-  color: #0f766e;
+  font-size: 1.05rem;
+  letter-spacing: 0.04em;
+  color: #ecfeff;
+  text-shadow: 0 2px 10px color-mix(in srgb, #0f172a 55%, transparent);
 }
 
 .manila-dice-overlay__row {
   display: flex;
-  gap: 14px;
+  gap: clamp(16px, 4vw, 28px);
   justify-content: center;
+  align-items: flex-end;
+  min-height: 7rem;
+}
+
+.manila-dice-overlay__sum {
+  margin: 14px 0 0;
+  font-weight: 800;
+  font-size: 1.15rem;
+  color: #fef9c3;
+  text-shadow: 0 2px 8px color-mix(in srgb, #0f172a 50%, transparent);
+}
+
+/* —— Voyage settle roster (everyone sees all deltas) —— */
+.manila-settle {
+  position: fixed;
+  inset: 0;
+  z-index: 78;
+  display: flex;
   align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: color-mix(in srgb, #0f172a 48%, transparent);
+  pointer-events: none;
+}
+
+.manila-settle__panel {
+  width: min(100%, 34rem);
+  max-height: min(88vh, 640px);
+  overflow: auto;
+  border-radius: 18px;
+  background: linear-gradient(165deg, #fffef8 0%, #f1f5f9 55%, #e2e8f0 100%);
+  border: 2px solid color-mix(in srgb, #0f766e 35%, #cbd5e1);
+  box-shadow: 0 18px 48px color-mix(in srgb, #0f172a 40%, transparent);
+  padding: 16px 16px 14px;
+}
+
+.manila-settle__head {
+  text-align: center;
+  margin-bottom: 12px;
+}
+
+.manila-settle__eyebrow {
+  margin: 0;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: #0f766e;
+  letter-spacing: 0.04em;
+}
+
+.manila-settle__head h2 {
+  margin: 4px 0 8px;
+  font-size: 1.25rem;
+  font-weight: 800;
+  color: #0f172a;
+}
+
+.manila-settle__current {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+  align-items: baseline;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #475569;
+}
+
+.manila-settle__current strong {
+  font-size: 1.35rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.manila-settle__current strong.is-gain {
+  color: #047857;
+}
+
+.manila-settle__current strong.is-loss {
+  color: #c2410c;
+}
+
+.manila-settle__current--done {
+  color: #0f766e;
+}
+
+.manila-settle__players {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.manila-settle__player {
+  border-radius: 14px;
+  padding: 10px 12px;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  transition:
+    border-color 0.25s ease,
+    box-shadow 0.25s ease,
+    transform 0.25s ease;
+}
+
+.manila-settle__player.is-active {
+  border-color: #0d9488;
+  box-shadow: 0 0 0 3px color-mix(in srgb, #14b8a6 28%, transparent);
+  transform: translateY(-1px);
+}
+
+.manila-settle__player-top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.manila-settle__player-top img {
+  width: 2.2rem;
+  height: 2.2rem;
+  object-fit: contain;
+  flex-shrink: 0;
+}
+
+.manila-settle__player-top strong {
+  display: block;
+  font-size: 0.95rem;
+  color: #0f172a;
+}
+
+.manila-settle__player-top span {
+  font-size: 0.72rem;
+  color: #64748b;
+  font-weight: 600;
+}
+
+.manila-settle__delta {
+  margin-left: auto;
+  font-style: normal;
+  font-size: 1.2rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  color: #94a3b8;
+}
+
+.manila-settle__delta.is-gain {
+  color: #047857;
+}
+
+.manila-settle__delta.is-loss {
+  color: #c2410c;
+}
+
+.manila-settle__bits {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.manila-settle__bits li {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  padding: 4px 8px;
+  border-radius: 8px;
+  background: #f8fafc;
+  color: #475569;
+  animation: manila-settle-bit 0.35s ease both;
+}
+
+.manila-settle__bits li.is-gain strong {
+  color: #047857;
+}
+
+.manila-settle__bits li.is-loss strong {
+  color: #c2410c;
+}
+
+.manila-settle__empty {
+  margin: 6px 0 0;
+  font-size: 0.75rem;
+  color: #94a3b8;
+}
+
+@keyframes manila-settle-bit {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (max-width: 520px) {
+  .manila-settle__panel {
+    padding: 12px;
+    max-height: 92vh;
+  }
+
+  .manila-settle__players {
+    gap: 8px;
+  }
+}
+
+.manila-die-drop {
+  width: clamp(4.2rem, 12cqi, 5.6rem);
+  height: clamp(4.2rem, 12cqi, 5.6rem);
+  transform-style: preserve-3d;
+  filter: drop-shadow(0 14px 18px color-mix(in srgb, #0f172a 45%, transparent));
+}
+
+.manila-die-drop.is-falling {
+  animation: manila-die-fall 0.85s cubic-bezier(0.22, 0.82, 0.28, 1) both;
+}
+
+.manila-die-drop.is-settle {
+  animation: manila-die-land 0.45s cubic-bezier(0.34, 1.4, 0.64, 1) both;
+}
+
+.manila-die-drop__face {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  user-select: none;
+  pointer-events: none;
+}
+
+.manila-die-drop.is-falling .manila-die-drop__face {
+  animation: manila-die-spin 0.55s linear infinite;
+}
+
+.manila-die-drop.is-settle .manila-die-drop__face {
+  animation: none;
+}
+
+@keyframes manila-die-fall {
+  0% {
+    transform: translate3d(0, -72vh, 40px) rotateX(-55deg) rotateZ(-220deg) scale(0.55);
+    opacity: 0.35;
+  }
+  55% {
+    opacity: 1;
+  }
+  78% {
+    transform: translate3d(0, 10px, 0) rotateX(12deg) rotateZ(18deg) scale(1.06);
+  }
+  100% {
+    transform: translate3d(0, 0, 0) rotateX(0) rotateZ(0) scale(1);
+  }
+}
+
+@keyframes manila-die-land {
+  0% {
+    transform: translate3d(0, 0, 0) scale(1) rotateZ(-6deg);
+  }
+  40% {
+    transform: translate3d(0, -10px, 0) scale(1.08) rotateZ(4deg);
+  }
+  100% {
+    transform: translate3d(0, 0, 0) scale(1) rotateZ(0);
+  }
+}
+
+@keyframes manila-die-spin {
+  0% {
+    transform: rotate(-25deg) rotateY(0deg);
+  }
+  50% {
+    transform: rotate(18deg) rotateY(180deg);
+  }
+  100% {
+    transform: rotate(-25deg) rotateY(360deg);
+  }
+}
+
+.manila-board-scroll {
+  position: relative;
+}
+
+.manila-dice-roll-dock {
+  position: absolute;
+  right: max(10px, env(safe-area-inset-right, 0px));
+  top: 42%;
+  z-index: 28;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.manila-dice-roll-dock__btn {
+  pointer-events: auto;
+  min-height: 3rem;
+  padding: 0.7rem 1.15rem;
+  font-size: 1rem;
+  font-weight: 800;
+  border-radius: 999px;
+  box-shadow:
+    0 10px 28px color-mix(in srgb, #0f172a 28%, transparent),
+    0 0 0 3px color-mix(in srgb, #fff 55%, transparent);
+  writing-mode: horizontal-tb;
+}
+
+.manila-dice-roll-dock__btn:disabled {
+  opacity: 0.72;
+}
+
+@media (max-width: 520px) {
+  .manila-dice-roll-dock {
+    top: auto;
+    bottom: 18%;
+    transform: none;
+  }
 }
 
 .manila-share-tile-wrap {
@@ -2648,14 +3201,15 @@
   }
 }
 
-/* —— Spot wells: one size for port / yard / pirate / pilots / ship seats —— */
+/* —— Spot wells: on-board size tracks board width (cqi); off-board fallback rem —— */
 .manila-spot {
   --spot: 2.1rem;
   appearance: none;
   width: var(--spot);
   height: var(--spot);
-  min-width: var(--spot);
-  min-height: var(--spot);
+  aspect-ratio: 1;
+  min-width: 0;
+  min-height: 0;
   padding: 0;
   margin: 0;
   border: none;
@@ -2670,6 +3224,11 @@
   position: relative;
   box-shadow: none;
   outline: none;
+  font-size: var(--spot);
+}
+
+.manila-board-stage .manila-spot {
+  --spot: 3.4cqi;
 }
 
 .manila-spot__role {
@@ -2694,6 +3253,7 @@
   place-items: center;
   pointer-events: none;
   z-index: 2;
+  container-type: size;
 }
 
 .manila-spot__badge img {
@@ -2701,7 +3261,7 @@
   inset: 0;
   width: 100%;
   height: 100%;
-  object-fit: contain;
+  object-fit: fill;
   pointer-events: none;
 }
 
@@ -2715,21 +3275,23 @@
   margin: 0;
   padding: 0;
   font-style: normal;
-  font-family: Georgia, 'Times New Roman', 'Cambria', serif;
-  font-size: 0.82rem;
-  font-weight: 700;
+  /* Match effect make_badge: ~half of disc diameter */
+  font-family: Georgia, 'Times New Roman', Times, 'Noto Serif SC', serif;
+  font-size: 50cqmin;
+  font-weight: 800;
   font-variant-numeric: tabular-nums;
   line-height: 1;
-  letter-spacing: -0.02em;
+  letter-spacing: -0.04em;
   text-align: center;
-  color: #2a1408;
-  text-shadow:
-    0 1px 0 color-mix(in srgb, #fff6e0 55%, transparent),
-    0 0 1px color-mix(in srgb, #1a0a04 35%, transparent);
+  color: #0c0a09;
+  text-shadow: none;
 }
 
 .manila-spot__badge--pay em {
-  color: #3a2208;
+  color: #0c0a09;
+  /* Same glyph scale as cost — "+15" needs equal weight to "4" */
+  font-size: 48cqmin;
+  letter-spacing: -0.06em;
 }
 
 /* Beside-pad chips: pay + role icons (never covering the well) */
@@ -2738,11 +3300,13 @@
   inset: auto;
   left: 50%;
   bottom: calc(100% + 2px);
-  width: var(--spot);
-  height: var(--spot);
+  /* Match cost disc of this pad (warped spots = 100% of pad quad) */
+  width: 100%;
+  height: 100%;
   transform: translateX(-50%);
   z-index: 2;
   pointer-events: none;
+  container-type: size;
 }
 
 .manila-spot__outer.manila-spot__badge {
@@ -2775,13 +3339,13 @@
 
 .manila-spot--pay-up-right .manila-spot__outer {
   /* Further upper-left vs prior up-right */
-  left: calc(100% - 0.35rem);
-  bottom: calc(100% + 0.35rem);
+  left: calc(100% - 0.35em);
+  bottom: calc(100% + 0.35em);
   transform: none;
 }
 
-.manila-spot--pay-on .manila-spot__badge--pay em {
-  color: #3a2208;
+.manila-spot--pay-on .manila-spot__badge--cost em {
+  color: #0c0a09;
 }
 
 .manila-spot--pay-right .manila-spot__outer.manila-spot__outer--stack,
@@ -2838,29 +3402,39 @@
 }
 
 .manila-board-stage {
-  --spot: 2.1rem;
-  /* Hull width on board; length follows art. Slimmer shell via scaleX on punt only. */
-  --manila-ship: 6.2%;
+  --spot: 3.4cqi;
+  /*
+   * Hull layout width on board (= bake fixed_len 168@1024 × art 360/897).
+   * Length follows PNG aspect (~16.4% plate). Slimmer shell via scaleX on punt only.
+   */
+  --manila-ship: 6.59%;
   --manila-ship-slim: 0.78;
+  /* Cost/pay: default shore circle; warped pads override to fill pad quad */
+  --manila-pad-d: 5.47cqi;
   position: relative;
   width: 100%;
-  aspect-ratio: 1 / 1;
-  min-height: min(88vh, 720px);
+  height: auto;
+  min-height: 0;
   max-height: none;
   border-radius: 0;
-  overflow: visible;
+  overflow: hidden;
   isolation: isolate;
   background: #2a6b63;
+  container-type: inline-size;
+  container-name: manila-board;
+}
+
+.manila-board-stage__photo {
+  display: block;
+  width: 100%;
+  height: auto;
+  vertical-align: top;
+  pointer-events: none;
+  user-select: none;
 }
 
 .manila-board-stage__bg {
-  position: absolute;
-  inset: 0;
-  z-index: 0;
-  background-size: 100% 100%;
-  background-position: center top;
-  background-repeat: no-repeat;
-  pointer-events: none;
+  display: none;
 }
 
 .manila-board-grid {
@@ -2877,10 +3451,6 @@
   pointer-events: none;
 }
 
-.manila-sea-canvas > * {
-  pointer-events: auto;
-}
-
 .manila-sea-canvas__bg {
   display: none;
 }
@@ -2889,11 +3459,18 @@
   position: absolute;
   z-index: 5;
   width: var(--manila-ship, 7.0%);
+  pointer-events: none;
   /* rotate comes from inline style (start-berth 走势); nudge on token */
   transition:
-    top 0.45s ease,
-    left 0.45s ease,
-    transform 0.45s ease;
+    top 1.6s cubic-bezier(0.22, 0.82, 0.28, 1),
+    left 1.6s cubic-bezier(0.22, 0.82, 0.28, 1),
+    transform 1.6s cubic-bezier(0.22, 0.82, 0.28, 1);
+}
+
+.manila-sea-canvas__ship .manila-ship-seat-wrap,
+.manila-sea-canvas__ship .manila-sea-start,
+.manila-sea-canvas__ship .manila-sea-pos {
+  pointer-events: auto;
 }
 
 /* Original PNG ship: art carries seats/profit; outside pill + transparent hits */
@@ -2908,6 +3485,7 @@
   border: none !important;
   box-shadow: none !important;
   width: 100%;
+  container-type: inline-size;
 }
 
 .manila-ship-token__profit-btn {
@@ -2920,17 +3498,21 @@
   top: 8.5%;
   z-index: 4;
   transform: translate(-50%, -50%);
-  min-width: 0;
-  width: max-content;
-  max-width: 95%;
-  padding: 0.16em 0.32em;
-  border-radius: 0.35rem;
-  /* Fixed readable size — not scaled with slim hull */
-  font-size: clamp(0.85rem, 2.1vmin, 1.15rem);
+  box-sizing: border-box;
+  /* Match _rebuild_spots bake: ~0.9×slim width × profit_h_px tall */
+  width: calc(100% * var(--manila-profit-w, 0.702));
+  max-width: calc(100% * var(--manila-profit-w, 0.702));
+  height: calc(100cqi * var(--manila-profit-h, 0.356));
+  min-height: calc(100cqi * var(--manila-profit-h, 0.356));
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 0.35em;
+  font-size: calc(100cqi * var(--manila-profit-h, 0.356) * 0.75);
   font-weight: 900;
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.01em;
-  line-height: 1.05;
+  line-height: 1;
   color: #1c0a02;
   background: linear-gradient(180deg, #ffe08a 0%, #f5b942 55%, #e09a1e 100%);
   border: 2px solid #7a3f0c;
@@ -2947,15 +3529,25 @@
 }
 
 .manila-ship-token.is-compact .manila-ship-token__profit-onbow {
-  font-size: clamp(0.72rem, 1.8vmin, 0.95rem);
-  padding: 0.12em 0.24em;
-  border-width: 1.5px;
+  /* Same plaque size as full token — bake uses one size */
+  font-size: calc(100cqi * var(--manila-profit-h, 0.356) * 0.75);
+  padding: 0;
+  border-width: 2px;
 }
 
 .manila-ship-token__hull {
   position: relative;
   flex: 1;
   min-width: 0;
+  overflow: visible;
+}
+
+.manila-ship-token--art {
+  overflow: visible;
+}
+
+.manila-sea-canvas__ship {
+  overflow: visible;
 }
 
 .manila-ship-token__punt {
@@ -2982,9 +3574,9 @@
   left: 50%;
   top: 79.5%;
   z-index: 1;
-  /* Fixed size — not tied to hull width/height */
-  width: clamp(1.45rem, 3.4vmin, 2.05rem);
-  height: clamp(1.45rem, 3.4vmin, 2.05rem);
+  /* cargo_px 50 / (fixed_len 168 * slim 0.78) */
+  width: calc(100% * var(--manila-cargo-frac, 0.382));
+  height: auto;
   aspect-ratio: 1;
   transform: translate(-50%, -50%);
   object-fit: contain;
@@ -2999,8 +3591,7 @@
 }
 
 .manila-ship-token.is-compact .manila-ship-token__cargo {
-  width: clamp(1.3rem, 3vmin, 1.85rem);
-  height: clamp(1.3rem, 3vmin, 1.85rem);
+  width: calc(100% * var(--manila-cargo-frac, 0.382));
 }
 
 .manila-ship-seat__cost {
@@ -3073,22 +3664,61 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 12px;
+  padding: clamp(12px, 3vmin, 28px);
   pointer-events: none;
-  background: color-mix(in srgb, #0f172a 18%, transparent);
+  background: color-mix(in srgb, #0f172a 28%, transparent);
 }
 
 .manila-action-center__panel {
   pointer-events: auto;
-  width: min(100%, 22rem);
-  max-height: min(70%, 420px);
+  width: min(100%, 40rem);
+  max-height: min(92%, 720px);
   overflow: auto;
-  border-radius: 14px;
-  box-shadow: 0 12px 40px color-mix(in srgb, #0f172a 40%, transparent);
+  border-radius: 16px;
+  box-shadow: 0 16px 48px color-mix(in srgb, #0f172a 45%, transparent);
 }
 
 .manila-action-center__panel .manila-actions {
   margin: 0;
+  padding: 18px 20px 16px;
+}
+
+.manila-actions--auction h3 {
+  font-size: 1.2rem;
+}
+
+.manila-actions--auction .manila-actions__lead {
+  margin: 0 0 12px;
+  font-size: 0.95rem;
+  line-height: 1.45;
+}
+
+.manila-actions--auction .manila-bid-custom {
+  gap: 12px;
+  margin: 12px 0 14px;
+}
+
+.manila-actions--auction .manila-bid-custom input {
+  width: min(100%, 12rem);
+  min-height: 2.6rem;
+  font-size: 1.15rem;
+  padding: 0.45rem 0.7rem;
+}
+
+.manila-actions--auction .manila-actions__row--bid {
+  gap: 10px;
+}
+
+.manila-actions--auction .manila-actions__row--bid .manila-btn {
+  min-height: 2.5rem;
+  padding: 0.55rem 1rem;
+  font-size: 0.95rem;
+}
+
+.manila-actions--auction .manila-actions__cap {
+  margin-top: 10px;
+  font-size: 0.8rem;
+  line-height: 1.4;
 }
 
 .manila-ship-seat {
@@ -3228,6 +3858,10 @@
   position: absolute;
   z-index: 5;
   transform: translate(-50%, -50%);
+  /* seat ≈ badge_diameter_frac × visual hull (token × slim) — bake 30@168 ≈ 0.58 */
+  width: calc(var(--manila-seat-frac, 0.58) * var(--manila-ship-slim, 0.78) * 100%);
+  aspect-ratio: 1;
+  container-type: size;
 }
 
 /* Meeples stay world-upright; cost pads still follow hull */
@@ -3248,13 +3882,18 @@
   object-fit: contain !important;
 }
 
-/* Same spot size as shore pads — independent of hull width */
 .manila-ship-seat-wrap .manila-spot {
-  --spot: 2.1rem;
-  width: var(--spot);
-  height: var(--spot);
-  aspect-ratio: 1;
+  --spot: 100%;
+  width: 100%;
+  height: 100%;
+  aspect-ratio: auto;
+  font-size: 100cqmin;
   flex: none;
+  container-type: size;
+}
+
+.manila-ship-seat-wrap .manila-spot__badge em {
+  font-size: 52cqmin;
 }
 
 .manila-ship-seat-wrap .manila-spot__meeple {
@@ -3296,27 +3935,27 @@
 
 .manila-dock__letter {
   position: absolute;
-  z-index: 4;
+  z-index: 7;
   transform: translate(-50%, -50%);
   pointer-events: none;
-  font-family: Georgia, 'Times New Roman', serif;
+  /* 46px @ 1024 plate — cqi so visible even before BoardPx measures */
+  font-family: Georgia, 'Times New Roman', 'Noto Serif SC', serif;
   font-weight: 700;
-  font-size: clamp(1.45rem, 4.2vmin, 2.2rem);
+  font-size: 4.49cqi;
   line-height: 1;
   color: rgba(248, 244, 230, 0.92);
   text-shadow:
-    0 0 2px rgba(20, 40, 48, 0.75),
-    1px 0 0 rgba(28, 48, 56, 0.55),
-    -1px 0 0 rgba(28, 48, 56, 0.55),
-    0 1px 0 rgba(28, 48, 56, 0.55),
-    0 -1px 0 rgba(28, 48, 56, 0.55);
+    0 0 1px rgba(20, 40, 48, 0.85),
+    1px 0 0 rgba(28, 48, 56, 0.62),
+    -1px 0 0 rgba(28, 48, 56, 0.62),
+    0 1px 0 rgba(28, 48, 56, 0.62),
+    0 -1px 0 rgba(28, 48, 56, 0.62);
   letter-spacing: 0.02em;
   user-select: none;
 }
 
 .manila-dock__letter--yard {
-  /* same size as port — keep class for targeting only */
-  font-size: inherit;
+  /* Same size as port letters (effect bake) */
 }
 
 .manila-dock__spot,
@@ -3330,16 +3969,95 @@
   transform: translate(-50%, -50%);
 }
 
-.manila-dock__spot--warped {
+.manila-dock__spot--warped,
+.manila-module--hit.manila-module--warped,
+.manila-pirate-seats__seat--warped {
   transform: none; /* inline matrix3d from padSpotStyle */
   display: grid;
   place-items: center;
+  /* Hit / warp box from JSON; disc size is uniform board cqi (not pad bbox) */
 }
 
-.manila-dock__spot--warped .manila-spot {
+.manila-dock__spot--warped .manila-spot,
+.manila-module--hit.manila-module--warped .manila-spot,
+.manila-pirate-seats__seat--warped .manila-spot,
+.manila-dock__pay--warped .manila-spot {
+  /* Fill boardConfig pad quad exactly (bake paste_on_quad) */
   width: 100%;
   height: 100%;
-  --spot: min(100%, 2.4rem);
+  aspect-ratio: auto;
+  --spot: 100%;
+  font-size: 100cqmin;
+  min-width: 0;
+  min-height: 0;
+  container-type: size;
+}
+
+.manila-dock__spot--centered {
+  position: absolute;
+  z-index: 6;
+  display: grid;
+  place-items: center;
+  transform: translate(-50%, -50%);
+  pointer-events: auto;
+}
+
+.manila-dock__spot--centered .manila-spot {
+  width: 100%;
+  height: 100%;
+  aspect-ratio: 1;
+  --spot: 100%;
+  font-size: 100cqmin;
+  container-type: size;
+}
+
+.manila-dock__spot--centered .manila-spot__badge img {
+  object-fit: contain;
+}
+
+.manila-dock__spot--warped {
+  z-index: 6;
+}
+
+.manila-spot--pay-layer {
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.manila-spot--pay-layer .manila-spot__badge {
+  inset: 0;
+}
+
+.manila-spot--pay-layer .manila-spot__badge em {
+  font-size: 48cqmin;
+}
+
+.manila-module--shore-wrap {
+  position: absolute;
+  inset: 0;
+  pointer-events: none !important;
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+
+.manila-module--shore-wrap .manila-dock__spot,
+.manila-module--shore-wrap .manila-dock__spot--centered {
+  pointer-events: auto;
+}
+
+.manila-module--shore-wrap .manila-dock__pay {
+  pointer-events: none !important;
+}
+
+.manila-module--hit.manila-module--warped {
+  /* warped modules are sized by quad; drop center translate */
+  transform: none;
+}
+
+.manila-pirate-seats__seat--warped {
+  transform: none;
 }
 
 .manila-dock__berth--port {
@@ -3447,14 +4165,45 @@
   display: none !important;
 }
 
-.manila-track-nums {
-  list-style: none;
-  margin: 0;
-  padding: 0;
+/* 行进中船头前方航位（毛玻璃） */
+.manila-sea-pos {
   position: absolute;
-  inset: 0;
-  z-index: 3;
+  left: 50%;
+  bottom: calc(100% + 0.6cqi);
+  z-index: 9;
+  transform: translateX(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 2.2cqi;
+  height: 2.2cqi;
+  padding: 0 0.55cqi;
+  border-radius: 999px;
+  font-size: 1.6cqi;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+  line-height: 1;
+  color: #ecfeff;
+  text-shadow: 0 1px 2px rgba(15, 23, 42, 0.45);
+  background: linear-gradient(
+    160deg,
+    rgba(255, 255, 255, 0.38) 0%,
+    rgba(204, 251, 241, 0.28) 45%,
+    rgba(15, 118, 110, 0.42) 100%
+  );
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.35) inset,
+    0 4px 14px rgba(15, 23, 42, 0.28);
+  backdrop-filter: blur(12px) saturate(1.35);
+  -webkit-backdrop-filter: blur(12px) saturate(1.35);
   pointer-events: none;
+  white-space: nowrap;
+}
+
+.manila-track-nums {
+  display: none;
 }
 
 .manila-track-nums li {
@@ -3510,12 +4259,60 @@
   margin: -1rem 0 0 -1rem;
   object-fit: contain;
   filter: drop-shadow(0 4px 8px rgba(15, 23, 42, 0.45));
-  transition: left linear, top linear;
+  transition:
+    left 0.92s cubic-bezier(0.22, 0.82, 0.28, 1),
+    top 0.92s cubic-bezier(0.22, 0.82, 0.28, 1),
+    transform 0.92s cubic-bezier(0.22, 0.82, 0.28, 1),
+    opacity 0.92s ease;
   z-index: 81;
+  pointer-events: none;
+  will-change: left, top;
 }
 
 .manila-fx-meeple.is-flying {
-  /* position driven by left/top transition */
+  transform: scale(1.05);
+}
+
+.manila-fx-pay {
+  position: fixed;
+  z-index: 82;
+  margin: -0.85rem 0 0 -1.4rem;
+  min-width: 2.6rem;
+  padding: 0.28rem 0.55rem;
+  border-radius: 999px;
+  pointer-events: none;
+  font-family: Georgia, 'Times New Roman', 'Noto Serif SC', serif;
+  font-size: 1.05rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+  line-height: 1;
+  color: #1c0a02;
+  text-align: center;
+  background: linear-gradient(180deg, #ffe08a 0%, #f5b942 55%, #e09a1e 100%);
+  border: 2px solid #7a3f0c;
+  box-shadow:
+    0 0 0 1.5px rgba(255, 248, 220, 0.85),
+    0 6px 14px rgba(15, 23, 42, 0.4);
+  transition:
+    left 1.4s cubic-bezier(0.22, 0.82, 0.28, 1),
+    top 1.4s cubic-bezier(0.22, 0.82, 0.28, 1),
+    transform 1.4s cubic-bezier(0.22, 0.82, 0.28, 1),
+    opacity 1.4s ease;
+  opacity: 1;
+  transform: scale(1);
+  will-change: left, top, transform, opacity;
+}
+
+.manila-fx-pay.is-loss {
+  color: #fff7ed;
+  background: linear-gradient(180deg, #fb923c 0%, #ea580c 55%, #c2410c 100%);
+  border-color: #7c2d12;
+}
+
+.manila-fx-pay.is-flying {
+  opacity: 0.2;
+  transform: scale(0.82);
 }
 
 .manila-fx-sail {
@@ -3527,18 +4324,18 @@
   transform: translate(-50%, -50%);
   pointer-events: none;
   filter: drop-shadow(0 6px 12px rgba(15, 23, 42, 0.4));
-  animation: manila-fx-sail-in 0.75s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  animation: manila-fx-sail-in 1.1s cubic-bezier(0.22, 0.82, 0.28, 1) forwards;
 }
 
 @keyframes manila-fx-sail-in {
   from {
-    transform: translate(-50%, -50%) scale(0.92);
-    opacity: 0.95;
+    transform: translate(-50%, -50%) scale(0.94);
+    opacity: 0.98;
   }
   to {
     transform: translate(calc(-50% + var(--sail-to-x, 0px)), calc(-50% + var(--sail-to-y, 0px)))
       scale(1);
-    opacity: 0.15;
+    opacity: 0.12;
   }
 }
 
@@ -3546,6 +4343,7 @@
   position: absolute;
   z-index: 4;
   pointer-events: none;
+  overflow: hidden;
 }
 
 .manila-market-hit__face {
@@ -3555,9 +4353,9 @@
   width: 100%;
   height: 100%;
   box-sizing: border-box;
-  padding: 0.28rem 0.32rem;
+  padding: 3.2% 3.6%;
   overflow: hidden;
-  border-radius: 0.35rem;
+  border-radius: 2.5%;
   background: #4a2e18;
   background-image: linear-gradient(180deg, #7a5130 0%, #4a2e18 45%, #2c1a0e 100%);
   opacity: 1;
@@ -3568,23 +4366,94 @@
     0 10px 24px rgba(15, 23, 42, 0.5);
 }
 
+/* Pixel-locked layout (BoardPx) — scales with board under browser zoom */
+.manila-market-hit__face--abs {
+  display: block;
+  padding: 0;
+  border-radius: 2.5%;
+}
+
+.manila-market-hit__row-abs {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.manila-market-hit__row-bg {
+  position: absolute;
+  border-radius: 5px;
+  background: rgba(48, 28, 14, 1);
+  pointer-events: none;
+}
+
+.manila-market-hit__ware-abs {
+  position: absolute;
+  z-index: 2;
+  display: block;
+  object-fit: contain;
+  border-radius: 50%;
+  background: transparent;
+  pointer-events: none;
+}
+
+.manila-market-hit__cell-abs {
+  position: absolute;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  box-sizing: border-box;
+  border-radius: 4px;
+  background: rgba(28, 16, 8, 1);
+  box-shadow: inset 0 0 0 1px rgba(255, 236, 200, 0.35);
+  font-family: 'Segoe UI Semibold', 'Segoe UI', system-ui, sans-serif;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+  color: rgba(255, 244, 220, 0.95);
+  pointer-events: none;
+}
+
+.manila-market-hit__cell-abs em {
+  position: relative;
+  z-index: 1;
+  font-style: normal;
+  line-height: 1;
+}
+
+.manila-market-hit__cell-abs.is-here {
+  color: #1a1208;
+  background: linear-gradient(180deg, #ffe7b0 0%, #e0b56a 100%);
+  box-shadow:
+    inset 0 0 0 1.5px rgba(120, 72, 24, 0.55),
+    0 0 0 1px rgba(255, 220, 150, 0.55),
+    0 2px 6px rgba(0, 0, 0, 0.35);
+}
+
+.manila-market-hit__pin-abs {
+  position: absolute;
+  z-index: 2;
+  object-fit: contain;
+  pointer-events: none;
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.45));
+}
+
 .manila-market-hit__grid {
   flex: 1 1 auto;
   display: flex;
   flex-direction: column;
   min-height: 0;
-  gap: 0.12rem;
+  gap: 1.6%;
 }
 
 .manila-market-hit__row {
   flex: 1 1 0;
   display: grid;
-  grid-template-columns: auto 1fr;
+  grid-template-columns: 18% 1fr;
   align-items: center;
-  gap: 0.35rem;
+  gap: 2.5%;
   min-height: 0;
-  padding: 0.06rem 0.1rem;
-  border-radius: 0.28rem;
+  padding: 1% 1.5%;
+  border-radius: 2%;
   background: rgba(255, 244, 220, 0.06);
   box-shadow: inset 0 0 0 1px rgba(232, 196, 140, 0.18);
 }
@@ -3597,25 +4466,28 @@
   display: grid;
   place-items: center;
   flex-shrink: 0;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
 }
 
 .manila-market-hit__ware img {
   display: block;
-  width: clamp(2.2rem, 5.8vmin, 3.4rem);
-  height: clamp(2.2rem, 5.8vmin, 3.4rem);
+  width: auto;
+  height: 78%;
+  max-width: 100%;
+  aspect-ratio: 1;
   object-fit: contain;
   border-radius: 50%;
-  background: rgba(255, 248, 232, 0.14);
-  box-shadow:
-    0 0 0 1.5px rgba(232, 196, 140, 0.55),
-    0 2px 4px rgba(0, 0, 0, 0.35);
+  background: transparent;
+  box-shadow: none;
 }
 
 .manila-market-hit__track {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
   align-items: center;
-  gap: 0.12rem;
+  gap: 2%;
   min-width: 0;
   height: 100%;
 }
@@ -3625,12 +4497,12 @@
   display: grid;
   place-items: center;
   height: 78%;
-  min-height: 1.15rem;
-  border-radius: 0.28rem;
+  min-height: 0;
+  border-radius: 2%;
   background: rgba(20, 12, 6, 0.28);
   box-shadow: inset 0 0 0 1px rgba(255, 236, 200, 0.12);
   font-family: 'Segoe UI', system-ui, sans-serif;
-  font-size: clamp(0.78rem, 1.7vmin, 1.05rem);
+  font-size: 40%;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.02em;
@@ -3655,11 +4527,12 @@
 
 .manila-market-hit__pin {
   position: absolute;
-  right: -0.15rem;
-  bottom: -0.2rem;
+  right: -8%;
+  bottom: -12%;
   z-index: 2;
-  width: 0.85rem;
-  height: 0.85rem;
+  width: 42%;
+  height: auto;
+  aspect-ratio: 1;
   object-fit: contain;
   pointer-events: none;
   filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.45));
@@ -3672,9 +4545,7 @@
   pointer-events: none;
 }
 
-.manila-board-hits .manila-module {
-  pointer-events: auto;
-}
+/* Do not enable the full-board shore wrap — only the pad hits */
 
 .manila-module--hit {
   position: absolute;
@@ -3887,20 +4758,85 @@
 
 .manila-place-bar {
   position: sticky;
-  bottom: 8px;
+  bottom: 0;
   z-index: 35;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
-  margin: 8px 0;
-  padding: 10px 12px;
-  border-radius: 12px;
-  background: color-mix(in srgb, #ecfeff 92%, #fff);
-  border: 2px solid var(--manila-accent);
-  box-shadow: 0 6px 18px color-mix(in srgb, #0f172a 12%, transparent);
-  font-size: 0.85rem;
-  font-weight: 700;
+  gap: 14px;
+  margin: 0;
+  padding: 12px 14px;
+  border-radius: 0;
+  background: color-mix(in srgb, #ecfeff 94%, #fff);
+  border: none;
+  border-top: 2px solid var(--manila-accent);
+  box-shadow: 0 -8px 24px color-mix(in srgb, #0f172a 14%, transparent);
+  font-size: 0.9rem;
+}
+
+.manila-place-bar.is-confirm {
+  background: linear-gradient(180deg, #fff7ed 0%, #ffedd5 100%);
+  border-top-color: #c2410c;
+}
+
+.manila-place-bar__main {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  flex: 1;
+}
+
+.manila-place-bar__pawn {
+  width: 2.4rem;
+  height: 2.4rem;
+  object-fit: contain;
+  flex-shrink: 0;
+  filter: drop-shadow(0 2px 4px rgba(15, 23, 42, 0.25));
+}
+
+.manila-place-bar__copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.manila-place-bar__copy strong {
+  font-size: 0.98rem;
+  font-weight: 800;
+  color: var(--manila-accent-deep);
+}
+
+.manila-place-bar.is-confirm .manila-place-bar__copy strong {
+  color: #9a3412;
+}
+
+.manila-place-bar__copy span {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--manila-muted);
+  line-height: 1.35;
+}
+
+.manila-place-bar__acts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.manila-place-bar__acts .manila-btn {
+  min-height: 2.4rem;
+  padding: 0.5rem 1.1rem;
+  font-size: 0.92rem;
+}
+
+.manila-btn--place {
+  background: linear-gradient(180deg, #0d9488 0%, #0f766e 100%);
+  color: #fff;
+  border-color: #0f766e;
+  font-weight: 800;
 }
 
 .manila-board__docked-ui--wait .manila-actions {
@@ -3909,7 +4845,7 @@
 
 @media (max-width: 720px) {
   .manila-board-stage {
-    min-height: min(70vh, 640px);
+    min-height: 0;
   }
 
   .manila-board-grid {
@@ -3923,10 +4859,6 @@
   .manila-sea-canvas__ship,
   .manila-dock__ship {
     width: var(--manila-ship, 7.0%);
-  }
-
-  .manila-spot {
-    --spot: 2.1rem;
   }
 }
 
@@ -4118,8 +5050,9 @@
 .manila-rail-share.is-enc::after {
   content: '押';
   position: absolute;
-  right: -2px;
+  left: -2px;
   bottom: -2px;
+  z-index: 1;
   font-size: 0.55rem;
   font-weight: 900;
   line-height: 1;
@@ -4139,6 +5072,11 @@
   opacity: 0.92;
 }
 
+.manila-rail-share.is-enc .manila-rail-share__qty {
+  right: -4px;
+  left: auto;
+}
+
 .manila-shell--play .manila-board {
   max-width: none;
   width: 100%;
@@ -4148,6 +5086,26 @@
 
 .manila-shell--play .manila-tabletop--modular {
   max-width: none;
+  width: 100%;
+  gap: 0;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.manila-shell--play .manila-board-scroll {
+  width: 100%;
+  overflow-x: hidden;
+  overflow-y: visible;
+}
+
+.manila-shell--play .manila-board-stage {
+  width: 100%;
+  max-width: none;
+  height: auto;
+  margin: 0;
 }
 
 .manila-shell--play .manila-tabletop__market {

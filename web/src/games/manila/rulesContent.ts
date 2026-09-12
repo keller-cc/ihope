@@ -127,5 +127,6 @@ export const PHASE_LABEL: Record<string, string> = {
   pirate_board: '海盗登船',
   pilot: '领航',
   pirate_plunder: '海盗截获',
+  settle: '航次结算',
   game_over: '终局',
 }

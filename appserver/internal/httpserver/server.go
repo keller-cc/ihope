@@ -205,6 +205,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/admin/games/manila/rooms/{id}/end", s.withAdmin(s.handleAdminManilaEndRoom))
 	mux.HandleFunc("DELETE /api/admin/games/manila/rooms/{id}", s.withAdmin(s.handleAdminManilaEndRoom))
 	mux.HandleFunc("GET /api/admin/games/manila/results", s.withAdmin(s.handleAdminManilaListResults))
+	mux.HandleFunc("GET /api/admin/games/dino/leaderboard", s.withAdmin(s.handleAdminDinoLeaderboard))
+	mux.HandleFunc("PUT /api/admin/games/dino/scores/{userId}", s.withAdmin(s.handleAdminDinoSetScore))
+	mux.HandleFunc("DELETE /api/admin/games/dino/scores/{userId}", s.withAdmin(s.handleAdminDinoDeleteScores))
 	if s.qqPath != "" {
 		mux.HandleFunc("POST "+s.qqPath, s.handleQQWebhook)
 	}
@@ -2035,6 +2038,60 @@ func (s *Server) handleAdminManilaListResults(w http.ResponseWriter, r *http.Req
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"results": list})
+}
+
+func (s *Server) handleAdminDinoLeaderboard(w http.ResponseWriter, r *http.Request) {
+	limit := 100
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			limit = n
+		}
+	}
+	list, err := s.gameSvc.AdminListDinoLeaderboard(r.Context(), limit)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "list failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"scores":   list,
+		"gameId":   "dino",
+		"gameName": "Dino Dasher",
+	})
+}
+
+func (s *Server) handleAdminDinoSetScore(w http.ResponseWriter, r *http.Request) {
+	userID := r.PathValue("userId")
+	var body struct {
+		Score int `json:"score"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	if err := s.gameSvc.AdminSetDinoScore(r.Context(), userID, body.Score); err != nil {
+		msg := err.Error()
+		if msg == "invalid score" || msg == "score too high" || msg == "user id required" {
+			writeErr(w, http.StatusBadRequest, msg)
+			return
+		}
+		writeErr(w, http.StatusInternalServerError, "set score failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"message": "ok", "score": body.Score})
+}
+
+func (s *Server) handleAdminDinoDeleteScores(w http.ResponseWriter, r *http.Request) {
+	userID := r.PathValue("userId")
+	n, err := s.gameSvc.AdminDeleteDinoScores(r.Context(), userID)
+	if err != nil {
+		if err.Error() == "user id required" {
+			writeErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeErr(w, http.StatusInternalServerError, "delete failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"message": "ok", "deleted": n})
 }
 
 func (s *Server) handleAdminPatchUser(w http.ResponseWriter, r *http.Request) {

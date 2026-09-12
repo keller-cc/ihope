@@ -6,6 +6,32 @@ import (
 	"testing"
 )
 
+func TestAuctionPassLeavesLastAsFreeHM(t *testing.T) {
+	players := []PlayerView{
+		{UserID: "a", Username: "A", Seat: 0, Connected: true},
+		{UserID: "b", Username: "B", Seat: 1, IsHost: true, Connected: true},
+		{UserID: "c", Username: "C", Seat: 2, Connected: true},
+	}
+	// B is lobby “起始座位” / first to speak
+	m := NewMatchWithStart(players, rand.New(rand.NewSource(1)), 1)
+	if m.AuctionTurnSeat != 1 {
+		t.Fatalf("auction start seat %d", m.AuctionTurnSeat)
+	}
+	if err := m.AuctionPass("b"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.AuctionPass("c"); err != nil {
+		t.Fatal(err)
+	}
+	// A is last remaining with no bids → A becomes HM (not B who already passed)
+	if m.Phase != PhaseHMShare {
+		t.Fatalf("phase %s", m.Phase)
+	}
+	if m.HarborMasterSeat != 0 {
+		t.Fatalf("want HM seat 0 (A), got %d", m.HarborMasterSeat)
+	}
+}
+
 func TestAuctionAndShareFlow(t *testing.T) {
 	players := []PlayerView{
 		{UserID: "a", Username: "A", Seat: 0, IsHost: true, Connected: true},

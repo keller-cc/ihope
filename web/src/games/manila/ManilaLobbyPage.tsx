@@ -4,7 +4,9 @@ import { MessagePlugin } from 'tdesign-react'
 import {
   api,
   apiErrorMessage,
+  AUTH_UNAUTHORIZED_EVENT,
   getToken,
+  isUnauthorizedError,
   type ManilaMatchResult,
   type ManilaRoom,
 } from '@/api'
@@ -37,7 +39,10 @@ export function ManilaLobbyPage() {
   const [busy, setBusy] = useState(false)
 
   const refresh = async () => {
-    if (!getToken()) return
+    if (!getToken()) {
+      setLoggedIn(false)
+      return
+    }
     try {
       const [roomRes, histRes] = await Promise.all([
         api.manilaListRooms(),
@@ -45,7 +50,14 @@ export function ManilaLobbyPage() {
       ])
       setRooms(roomRes.rooms || [])
       setHistory(histRes.results || [])
+      setLoggedIn(true)
     } catch (e) {
+      if (isUnauthorizedError(e)) {
+        setLoggedIn(false)
+        setRooms([])
+        setHistory([])
+        return
+      }
       MessagePlugin.error(apiErrorMessage(e, '无法加载大厅数据'))
     }
   }
@@ -54,11 +66,21 @@ export function ManilaLobbyPage() {
     setLoggedIn(!!getToken())
     void refresh()
     const t = window.setInterval(() => void refresh(), 8000)
-    return () => window.clearInterval(t)
+    const onUnauth = () => {
+      setLoggedIn(false)
+      setRooms([])
+      setHistory([])
+    }
+    window.addEventListener(AUTH_UNAUTHORIZED_EVENT, onUnauth)
+    return () => {
+      window.clearInterval(t)
+      window.removeEventListener(AUTH_UNAUTHORIZED_EVENT, onUnauth)
+    }
   }, [])
 
   const create = async () => {
     if (!getToken()) {
+      setLoggedIn(false)
       navigate(LOGIN_HREF)
       return
     }
@@ -67,6 +89,11 @@ export function ManilaLobbyPage() {
       const room = await api.manilaCreateRoom({ maxPlayers, private: isPrivate })
       navigate(`/game/manila/r/${room.code}`)
     } catch (e) {
+      if (isUnauthorizedError(e)) {
+        setLoggedIn(false)
+        navigate(LOGIN_HREF)
+        return
+      }
       MessagePlugin.error(apiErrorMessage(e, '创建失败'))
     } finally {
       setBusy(false)
@@ -75,6 +102,7 @@ export function ManilaLobbyPage() {
 
   const join = async (c: string) => {
     if (!getToken()) {
+      setLoggedIn(false)
       navigate(LOGIN_HREF)
       return
     }
@@ -85,6 +113,11 @@ export function ManilaLobbyPage() {
       const room = await api.manilaJoinRoom(trimmed)
       navigate(`/game/manila/r/${room.code}`)
     } catch (e) {
+      if (isUnauthorizedError(e)) {
+        setLoggedIn(false)
+        navigate(LOGIN_HREF)
+        return
+      }
       MessagePlugin.error(
         apiErrorMessage(e, '加入失败（进行中的对局仅原成员可重连）'),
       )
@@ -93,12 +126,26 @@ export function ManilaLobbyPage() {
     }
   }
 
-  const publicRooms = [...rooms].sort((a, b) => {
-    if (a.status === b.status) return a.code.localeCompare(b.code)
-    if (a.status === 'open') return -1
-    if (b.status === 'open') return 1
-    return 0
-  })
+  const publicRooms = rooms
+    .filter((r) => !r.isPrivate)
+    .sort((a, b) => {
+      if (!!a.joined !== !!b.joined) return a.joined ? -1 : 1
+      if (a.status === b.status) return a.code.localeCompare(b.code)
+      if (a.status === 'open') return -1
+      if (b.status === 'open') return 1
+      return 0
+    })
+
+  const myRooms = rooms
+    .filter((r) => r.joined)
+    .sort((a, b) => {
+      if (a.status === b.status) return a.code.localeCompare(b.code)
+      if (a.status === 'open') return -1
+      if (b.status === 'open') return 1
+      return 0
+    })
+
+  const enterRoom = (c: string) => void join(c)
 
   return (
     <div className="manila-shell">
@@ -170,11 +217,32 @@ export function ManilaLobbyPage() {
               type="button"
               className="manila-btn manila-btn--ghost"
               disabled={busy}
-              onClick={() => void join(code)}
+              onClick={() => enterRoom(code)}
             >
               加入
             </button>
           </div>
+          {loggedIn && myRooms.length > 0 ? (
+            <div className="manila-my-rooms">
+              <p className="manila-my-rooms__label">我已加入 · 点击进入</p>
+              <ul className="manila-room-list manila-room-list--compact">
+                {myRooms.map((r) => (
+                  <li key={r.id}>
+                    <button type="button" disabled={busy} onClick={() => enterRoom(r.code)}>
+                      <span className="manila-room-code-row">
+                        <span className="manila-room-code">{r.code}</span>
+                        <span className="manila-tag manila-tag--joined">已加入</span>
+                        {r.isPrivate ? <span className="manila-tag">私密</span> : null}
+                      </span>
+                      <span>
+                        {r.members?.length || 0}/{r.maxPlayers} 人 · {statusLabel(r.status)}
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
         </section>
 
         <section className="manila-panel manila-panel--list">
@@ -192,10 +260,19 @@ export function ManilaLobbyPage() {
             <ul className="manila-room-list">
               {publicRooms.map((r) => (
                 <li key={r.id}>
-                  <button type="button" onClick={() => void join(r.code)}>
-                    <span className="manila-room-code">{r.code}</span>
+                  <button
+                    type="button"
+                    className={r.joined ? 'is-joined' : undefined}
+                    disabled={busy}
+                    onClick={() => enterRoom(r.code)}
+                  >
+                    <span className="manila-room-code-row">
+                      <span className="manila-room-code">{r.code}</span>
+                      {r.joined ? <span className="manila-tag manila-tag--joined">已加入</span> : null}
+                    </span>
                     <span>
                       {r.members?.length || 0}/{r.maxPlayers} 人 · {statusLabel(r.status)}
+                      {r.joined ? ' · 点击进入' : ''}
                     </span>
                   </button>
                 </li>

@@ -434,7 +434,7 @@
             0,
             0
           ],
-          "role_tag": "pilot_small"
+          "role_tag": null
         }
       }
     },
@@ -488,7 +488,7 @@
             0,
             0
           ],
-          "role_tag": "pilot_large"
+          "role_tag": null
         }
       }
     },
@@ -541,7 +541,9 @@
             0,
             0
           ],
-          "role_tag": "insurance"
+          "paste_mode": "centered",
+          "badge_d_px": 56,
+          "role_tag": null
         }
       }
     },
@@ -558,25 +560,25 @@
       },
       "pad": {
         "center": {
-          "x": 27.8,
-          "y": 42.8
+          "x": 35.3,
+          "y": 43.4
         },
         "quad_pct": [
           [
-            26.19,
-            41.5
+            33.68,
+            42.1
           ],
           [
-            29.41,
-            41.5
+            36.91,
+            42.1
           ],
           [
-            29.5,
-            44.1
+            37.0,
+            44.7
           ],
           [
-            26.1,
-            44.1
+            33.6,
+            44.7
           ]
         ],
         "plane": {
@@ -666,25 +668,25 @@
       },
       "pad": {
         "center": {
-          "x": 35.3,
-          "y": 43.4
+          "x": 27.8,
+          "y": 42.8
         },
         "quad_pct": [
           [
-            33.68,
-            42.1
+            26.19,
+            41.5
           ],
           [
-            36.91,
-            42.1
+            29.41,
+            41.5
           ],
           [
-            37.0,
-            44.7
+            29.5,
+            44.1
           ],
           [
-            33.6,
-            44.7
+            26.1,
+            44.1
           ]
         ],
         "plane": {
@@ -941,32 +943,32 @@
       "id": "start_0",
       "region": "berth_start",
       "center": {
-        "x": 38.33,
-        "y": 91.26
+        "x": 37.6,
+        "y": 89.0
       },
       "quad_pct": [
         [
-          36.08,
-          83.65
+          35.35,
+          81.4
         ],
         [
-          40.58,
-          83.65
+          39.85,
+          81.4
         ],
         [
-          40.69,
-          98.87
+          39.96,
+          96.6
         ],
         [
-          35.97,
-          98.87
+          35.24,
+          96.6
         ]
       ],
       "plane": {
         "kind": "start"
       },
       "ship_orient": "yard",
-      "ship_rot_deg": 4,
+      "ship_rot_deg": 8,
       "display": {
         "accepts_ship": true,
         "perspective": false,
@@ -1002,7 +1004,7 @@
         "kind": "start"
       },
       "ship_orient": "yard",
-      "ship_rot_deg": 4,
+      "ship_rot_deg": 5,
       "display": {
         "accepts_ship": true,
         "perspective": false,
@@ -1038,7 +1040,7 @@
         "kind": "start"
       },
       "ship_orient": "yard",
-      "ship_rot_deg": 4,
+      "ship_rot_deg": 2,
       "display": {
         "accepts_ship": true,
         "perspective": false,
@@ -1143,11 +1145,12 @@
     "width_frac": 0.78,
     "meeple_h_px": 42,
     "badge_d_px": 30,
-    "cargo_px": 36,
+    "cargo_px": 50,
+    "profit_h_px": 24,
     "rot_deg": {
       "port": -82,
       "yard": 28,
-      "sea": 4
+      "sea": 7
     }
   }
 }

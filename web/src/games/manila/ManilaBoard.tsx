@@ -21,19 +21,31 @@ import {
   MarketPlate,
   PortDock,
   SeaCanvas,
-  SeaTrackNums,
   ShoreModule,
   YardDock,
 } from './ManilaBoardModules'
+import { BoardPxProvider } from './BoardPx'
 import { ManilaDiceOverlay } from './ManilaDiceOverlay'
+import { ManilaSettlePanel } from './ManilaSettlePanel'
 import {
   ManilaFlyLayer,
+  ManilaPayFlyLayer,
   type FlyMeeple,
+  type FlyPay,
   railMeepleEl,
+  railCashEl,
   rectCenter,
   slotHitEl,
   puntShipEl,
   pirateSeatEl,
+  payoutOriginEl,
+  FX_PLACE_MS,
+  FX_PLACE_COMMIT_MS,
+  FX_HOME_MS,
+  FX_BOARD_MS,
+  FX_SAIL_MS,
+  FX_PAY_MS,
+  FX_SHIP_MOVE_MS,
 } from './ManilaFx'
 import { PHASE_LABEL, WARE_LABEL } from './rulesContent'
 
@@ -83,11 +95,16 @@ export function ManilaBoard({ match, meId, send }: Props) {
   const canPlace = myTurn && match.phase === 'place' && !me?.passedPlacement
   const [pendingSlot, setPendingSlot] = useState<string | null>(null)
   const [flights, setFlights] = useState<FlyMeeple[]>([])
+  const [payFlights, setPayFlights] = useState<FlyPay[]>([])
   const [sailGhosts, setSailGhosts] = useState<
     { id: string; ware: string; from: { x: number; y: number }; to: { x: number; y: number }; kind: 'port' | 'yard' }[]
   >([])
+  const [holdShipPos, setHoldShipPos] = useState<Record<number, number> | null>(null)
+  const [suppressBerth, setSuppressBerth] = useState(false)
   const prevOccRef = useRef<Map<string, string>>(new Map())
   const prevBerthRef = useRef<Record<number, string | undefined>>({})
+  const prevCashRef = useRef<Record<string, number>>({})
+  const cashReadyRef = useRef(false)
 
   const occupiedMap = useMemo(() => {
     const m = new Map<string, string>()
@@ -123,8 +140,8 @@ export function ManilaBoard({ match, meId, send }: Props) {
     setPendingSlot(null)
     if (from && to) {
       const id = `place-${slotId}-${Date.now()}`
-      setFlights((prev) => [...prev, { id, seat: me.seat, from, to }])
-      window.setTimeout(() => send({ type: 'place', slotId }), 280)
+      setFlights((prev) => [...prev, { id, seat: me.seat, from, to, durationMs: FX_PLACE_MS }])
+      window.setTimeout(() => send({ type: 'place', slotId }), FX_PLACE_COMMIT_MS)
     } else {
       send({ type: 'place', slotId })
     }
@@ -172,7 +189,7 @@ export function ManilaBoard({ match, meId, send }: Props) {
       const to = rectCenter(railMeepleEl(r.userId))
       if (pl && from && to) {
         const id = `home-${r.slotId}-${Date.now()}`
-        setFlights((prevF) => [...prevF, { id, seat: pl.seat, from, to, durationMs: 600 }])
+        setFlights((prevF) => [...prevF, { id, seat: pl.seat, from, to, durationMs: FX_HOME_MS }])
       }
     }
 
@@ -188,15 +205,16 @@ export function ManilaBoard({ match, meId, send }: Props) {
       const to = rectCenter(slotHitEl(a.slotId)) || rectCenter(puntShipEl(Number(a.slotId.split('_')[1] || 0)))
       if (pl && from && to) {
         const id = `board-${a.slotId}-${Date.now()}`
-        setFlights((prevF) => [...prevF, { id, seat: pl.seat, from, to, durationMs: 650 }])
+        setFlights((prevF) => [...prevF, { id, seat: pl.seat, from, to, durationMs: FX_BOARD_MS }])
       }
     }
 
     prevOccRef.current = new Map(next)
   }, [occupiedMap, match.players])
 
-  // Sail into port / shipyard when berth newly assigned
+  // Sail into port / shipyard when berth newly assigned (after ship slide finishes)
   useEffect(() => {
+    if (suppressBerth) return
     const prev = prevBerthRef.current
     const next: Record<number, string | undefined> = {}
     for (const p of match.punts || []) {
@@ -206,9 +224,7 @@ export function ManilaBoard({ match, meId, send }: Props) {
         const kind = p.berth.startsWith('port_') ? 'port' : 'yard'
         const fromEl = document.querySelector(`[data-manila-punt="${p.index}"]`)
         const toEl = document.querySelector(`[data-manila-berth-punt="${p.index}"]`)
-        // Before berth mount, toEl may be missing — use berth letter center via dock ship after paint
         const from = rectCenter(fromEl)
-        // Defer to next frame so dock ship exists
         window.requestAnimationFrame(() => {
           const to =
             rectCenter(document.querySelector(`[data-manila-berth-punt="${p.index}"]`)) ||
@@ -218,16 +234,69 @@ export function ManilaBoard({ match, meId, send }: Props) {
           setSailGhosts((g) => [...g, { id, ware: p.ware, from, to, kind }])
           window.setTimeout(() => {
             setSailGhosts((g) => g.filter((x) => x.id !== id))
-          }, 780)
+          }, FX_SAIL_MS + 40)
         })
       }
     }
     prevBerthRef.current = next
-  }, [match.punts])
+  }, [match.punts, suppressBerth])
+
+  // Cash gains → yellow +N (skip when settlement lines drive the FX)
+  useEffect(() => {
+    const next: Record<string, number> = {}
+    for (const p of match.players) next[p.userId] = p.cash ?? 0
+    if (!cashReadyRef.current) {
+      prevCashRef.current = next
+      cashReadyRef.current = true
+      return
+    }
+    if (match.phase === 'settle' && (match.settlement?.length ?? 0) > 0) {
+      prevCashRef.current = next
+      return
+    }
+    const prev = prevCashRef.current
+    const spawned: FlyPay[] = []
+    let stagger = 0
+    for (const p of match.players) {
+      const before = prev[p.userId]
+      if (before == null) continue
+      const delta = (p.cash ?? 0) - before
+      if (delta === 0) continue
+      const fromEl = payoutOriginEl(p.userId, occupiedMap)
+      const from = rectCenter(fromEl)
+      const to = rectCenter(railCashEl(p.userId))
+      if (!from || !to) continue
+      const id = `pay-${p.userId}-${delta}-${Date.now()}-${stagger}`
+      spawned.push({
+        id,
+        amount: delta,
+        from: { x: from.x, y: from.y - stagger * 10 },
+        to,
+        durationMs: FX_PAY_MS + stagger * 90,
+      })
+      stagger += 1
+    }
+    if (spawned.length) {
+      window.requestAnimationFrame(() => {
+        setPayFlights((f) => [...f, ...spawned])
+      })
+    }
+    prevCashRef.current = next
+  }, [match.players, occupiedMap, match.phase, match.settlement])
+
+  // Voyage settle UI is driven by ManilaSettlePanel (sequential + roster).
+  // Keep cash baseline in sync so we don't double-fly when auction resumes.
+  useEffect(() => {
+    if (match.phase !== 'settle') return
+    const next: Record<string, number> = {}
+    for (const p of match.players) next[p.userId] = p.cash ?? 0
+    prevCashRef.current = next
+  }, [match.phase, match.players])
 
   const place = requestPlace
 
   const startSum = startDraft[0] + startDraft[1] + startDraft[2]
+  const stageRef = useRef<HTMLDivElement>(null)
   const startValid =
     startSum === 9 && startDraft.every((p) => p >= 0 && p <= START_MAX)
 
@@ -244,7 +313,7 @@ export function ManilaBoard({ match, meId, send }: Props) {
     setSailing(true)
     window.setTimeout(() => {
       send({ type: 'place_punts', positions: [...startDraft] })
-    }, 420)
+    }, 780)
   }
 
   const sendWithPilotAnim = (msg: Record<string, unknown>) => {
@@ -254,7 +323,7 @@ export function ManilaBoard({ match, meId, send }: Props) {
         if (m.delta) nudge[m.punt] = m.delta * -14
       }
       setPilotNudge(nudge)
-      window.setTimeout(() => setPilotNudge({}), 650)
+      window.setTimeout(() => setPilotNudge({}), 900)
     }
     send(msg)
   }
@@ -264,29 +333,90 @@ export function ManilaBoard({ match, meId, send }: Props) {
   const showModal = forced
 
   const [diceAnim, setDiceAnim] = useState<number[] | null>(null)
+  const [dicePending, setDicePending] = useState(false)
   const [actionCollapsed, setActionCollapsed] = useState(false)
   const prevDiceKey = useRef('')
   useEffect(() => {
-    const dice = (match.punts || [])
-      .filter((p) => !p.arrived && !p.berth && p.die)
-      .map((p) => p.die as number)
-    if (dice.length < 3) return
-    const key = `${match.voyage}-${match.moveRound}-${dice.join(',')}`
+    const rolling = (match.punts || []).filter((p) => (p.die || 0) > 0)
+    if (rolling.length === 0) return
+    const key = `${match.voyage}-${match.moveRound}-${rolling.map((p) => `${p.index}:${p.die}`).join(',')}`
     if (key === prevDiceKey.current) return
     prevDiceKey.current = key
-    setDiceAnim(dice)
+    const hold: Record<number, number> = {}
+    for (const p of match.punts || []) {
+      hold[p.index] = p.die ? Math.max(0, (p.position || 0) - p.die) : p.position
+    }
+    setHoldShipPos(hold)
+    setSuppressBerth(true)
+    setDiceAnim(rolling.map((p) => p.die as number))
+    setDicePending(false)
   }, [match.punts, match.voyage, match.moveRound])
+
+  const releaseShipsAfterDice = () => {
+    setDiceAnim(null)
+    setDicePending(false)
+    setHoldShipPos(null)
+    window.setTimeout(() => setSuppressBerth(false), FX_SHIP_MOVE_MS)
+  }
 
   useEffect(() => {
     setActionCollapsed(false)
   }, [match.phase, match.turnUserId, match.harborMasterId])
 
+  useEffect(() => {
+    if (match.phase !== 'dice') setDicePending(false)
+  }, [match.phase])
+
+  useEffect(() => {
+    if (!dicePending) return
+    const t = window.setTimeout(() => setDicePending(false), 10000)
+    return () => window.clearTimeout(t)
+  }, [dicePending])
+
+  const rollDice = () => {
+    if (dicePending) return
+    setDicePending(true)
+    send({ type: 'roll_dice' })
+  }
+
+  const boardMatch = useMemo(() => {
+    if (!holdShipPos && !suppressBerth) return match
+    return {
+      ...match,
+      punts: (match.punts || []).map((p) => {
+        const held = holdShipPos?.[p.index]
+        const hideBerth = Boolean(holdShipPos) || suppressBerth
+        return {
+          ...p,
+          position: held ?? p.position,
+          ...(hideBerth && p.berth
+            ? { arrived: false as const, berth: undefined }
+            : null),
+        }
+      }),
+    }
+  }, [match, holdShipPos, suppressBerth])
+
   return (
     <div className="manila-board">
-      <ManilaDiceOverlay values={diceAnim} onDone={() => setDiceAnim(null)} />
+      <ManilaDiceOverlay
+        values={diceAnim}
+        pending={dicePending}
+        onDone={releaseShipsAfterDice}
+      />
       <ManilaFlyLayer
         flights={flights}
         onDone={(id) => setFlights((prev) => prev.filter((f) => f.id !== id))}
+      />
+      <ManilaPayFlyLayer
+        flights={payFlights}
+        onDone={(id) => setPayFlights((prev) => prev.filter((f) => f.id !== id))}
+      />
+      <ManilaSettlePanel
+        match={match}
+        occupiedMap={occupiedMap}
+        ready={!holdShipPos && !suppressBerth}
+        onFly={(flight) => setPayFlights((f) => [...f, flight])}
       />
       {sailGhosts.map((g) => {
         const seats = WARE_SEATS[g.ware as ManilaWare] || 3
@@ -328,21 +458,24 @@ export function ManilaBoard({ match, meId, send }: Props) {
       </aside>
 
       <div className="manila-tabletop manila-tabletop--modular" aria-label="马尼拉桌游盘面">
+        <div className="manila-board-scroll">
           <div
+            ref={stageRef}
             className={`manila-board-stage${pendingSlot ? ' has-pending-place' : ''}`}
             data-pending-slot={pendingSlot || undefined}
           >
-          <div
-            className="manila-board-stage__bg"
-            style={{ backgroundImage: `url(${BOARD_IMG})` }}
-            aria-hidden
+          <BoardPxProvider stageRef={stageRef}>
+          <img
+            className="manila-board-stage__photo"
+            src={BOARD_IMG}
+            alt=""
+            draggable={false}
           />
-          <SeaTrackNums />
-          <MarketPlate match={match} />
-          <PortDock match={match} occupiedMap={occupiedMap} canPlace={canPlace} place={place} />
-          <YardDock match={match} occupiedMap={occupiedMap} canPlace={canPlace} place={place} />
+          <MarketPlate match={boardMatch} />
+          <PortDock match={boardMatch} occupiedMap={occupiedMap} canPlace={canPlace} place={place} />
+          <YardDock match={boardMatch} occupiedMap={occupiedMap} canPlace={canPlace} place={place} />
           <SeaCanvas
-            match={match}
+            match={boardMatch}
             occupiedMap={occupiedMap}
             canPlace={canPlace}
             place={place}
@@ -408,47 +541,75 @@ export function ManilaBoard({ match, meId, send }: Props) {
               </div>
             </div>
           ) : null}
+          </BoardPxProvider>
+          </div>
+          {match.phase === 'dice' && isHM ? (
+            <div className="manila-dice-roll-dock">
+              <button
+                type="button"
+                className="manila-btn manila-dice-roll-dock__btn"
+                disabled={dicePending}
+                onClick={rollDice}
+              >
+                {dicePending ? '掷骰中…' : '掷骰前进'}
+              </button>
+            </div>
+          ) : null}
         </div>
-      </div>
 
       {canPlace ? (
-        <div className="manila-place-bar" id="manila-actions-anchor">
+        <div
+          className={`manila-place-bar${pendingSlot ? ' is-confirm' : ''}`}
+          id="manila-actions-anchor"
+        >
           {pendingSlot && pendingDef ? (
             <>
-              <img
-                className="manila-place-bar__pawn"
-                src={meepleSrc(me?.seat ?? 0)}
-                alt=""
-              />
-              <span>
-                放置到 <strong>{pendingDef.label || pendingSlot}</strong>
-                {pendingDef.kind === 'insurance'
-                  ? ' · 立即 +10₱'
-                  : ` · 花费 ${pendingDef.cost}₱`}
-              </span>
-              <button type="button" className="manila-btn manila-btn--ghost" onClick={cancelPlace}>
-                撤销
-              </button>
-              <button type="button" className="manila-btn" onClick={confirmPlace}>
-                确认放置
-              </button>
+              <div className="manila-place-bar__main">
+                <img
+                  className="manila-place-bar__pawn"
+                  src={meepleSrc(me?.seat ?? 0)}
+                  alt=""
+                />
+                <div className="manila-place-bar__copy">
+                  <strong>确认放置</strong>
+                  <span>
+                    {pendingDef.label || pendingSlot}
+                    {pendingDef.kind === 'insurance'
+                      ? ' · 立即获得 +10₱'
+                      : ` · 花费 ${pendingDef.cost}₱`}
+                  </span>
+                </div>
+              </div>
+              <div className="manila-place-bar__acts">
+                <button type="button" className="manila-btn manila-btn--ghost" onClick={cancelPlace}>
+                  撤销
+                </button>
+                <button type="button" className="manila-btn manila-btn--place" onClick={confirmPlace}>
+                  确认
+                </button>
+              </div>
             </>
           ) : (
             <>
-              <span>点盘面上空位放置{PAWN_LABEL}（确认后从个人面板飞入）</span>
-              <button
-                type="button"
-                className="manila-btn manila-btn--ghost"
-                onClick={() => send({ type: 'pass_place' })}
-              >
-                跳过本轮
-              </button>
+              <div className="manila-place-bar__copy">
+                <strong>放置{PAWN_LABEL}</strong>
+                <span>货船须从前往后入座；点空位后确认，棋子从个人面板飞入</span>
+              </div>
+              <div className="manila-place-bar__acts">
+                <button
+                  type="button"
+                  className="manila-btn manila-btn--ghost"
+                  onClick={() => send({ type: 'pass_place' })}
+                >
+                  跳过本轮
+                </button>
+              </div>
             </>
           )}
         </div>
       ) : null}
 
-      {!showModal && !canPlace ? (
+      {!showModal && !canPlace && !(match.phase === 'dice' && isHM) ? (
         <div className="manila-board__docked-ui manila-board__docked-ui--wait">
           <ActionPanel
             match={match}
@@ -476,6 +637,7 @@ export function ManilaBoard({ match, meId, send }: Props) {
             ))}
         </ul>
       </div>
+      </div>
     </div>
   )
 }
@@ -492,7 +654,7 @@ function needsForcedAction(
   if (match.phase === 'hm_load' && isHM) return true
   /* hm_place: start picker is on the board */
   /* place: sticky + board clicks */
-  if (match.phase === 'dice' && isHM) return true
+  /* dice: right-side roll dock */
   if (match.phase === 'pirate_board' && myTurn) return true
   if (match.phase === 'pilot' && myTurn) return true
   if (match.phase === 'pirate_plunder' && myTurn) return true
@@ -535,7 +697,7 @@ function turnBanner(
   if (canPlace) {
     return {
       title: `选择空位放置${PAWN_LABEL}`,
-      detail: '点击后确认花费，可撤销；确认后从个人面板飞入盘面',
+      detail: '货船须从前往后入座；点空位后确认花费，可撤销',
       urgent: true,
     }
   }
@@ -544,8 +706,15 @@ function turnBanner(
   }
   if (match.phase === 'dice') {
     return isHM
-      ? { title: '港主：掷骰前进', urgent: true }
+      ? { title: '港主：掷骰前进', detail: '点击右侧按钮掷骰，观看落下动画', urgent: true }
       : { title: '港主掷骰中', urgent: false }
+  }
+  if (match.phase === 'settle') {
+    return {
+      title: '航次结算',
+      detail: '港口分成、船坞与保险赔付播放中，稍后进入下一航次',
+      urgent: false,
+    }
   }
   if (match.phase === 'pirate_board') {
     return myTurn
@@ -823,7 +992,7 @@ function AuctionBidPanel({
   const canCustom = amount >= minBid && amount <= cash
 
   return (
-    <div className="manila-actions manila-actions--live">
+    <div className="manila-actions manila-actions--live manila-actions--auction">
       <h3>
         {opening ? '起叫港主' : (
           <>
@@ -831,11 +1000,11 @@ function AuctionBidPanel({
           </>
         )}
       </h3>
-      <p>
+      <p className="manila-actions__lead">
         自由出价（至少 <Cash n={minBid} />）
         <span className="manila-muted">
           {' '}
-          · 现金 <Cash n={cash} />
+          · 可用现金 <Cash n={cash} />
         </span>
       </p>
       <div className="manila-bid-custom">
@@ -851,14 +1020,14 @@ function AuctionBidPanel({
         </label>
         <button
           type="button"
-          className="manila-btn"
+          className="manila-btn manila-btn--place"
           disabled={!canCustom}
           onClick={() => bid(amount)}
         >
           确认出价 <Cash n={amount} />
         </button>
       </div>
-      <div className="manila-actions__row">
+      <div className="manila-actions__row manila-actions__row--bid">
         <button
           type="button"
           className="manila-btn manila-btn--ghost"
@@ -958,14 +1127,7 @@ function ActionPanel({
   }
 
   if (match.phase === 'dice' && isHM) {
-    return (
-      <div className="manila-actions manila-actions--live">
-        <h3>掷骰前进</h3>
-        <button type="button" className="manila-btn" onClick={() => send({ type: 'roll_dice' })}>
-          掷骰
-        </button>
-      </div>
-    )
+    return null
   }
 
   if (match.phase === 'pirate_board' && myTurn) {
@@ -999,6 +1161,7 @@ function waitHint(match: ManilaMatch, isHM: boolean, myTurn: boolean): string {
     return isHM ? `请完成：${phase}` : `港主操作中（${phase}）…`
   }
   if (match.phase === 'dice') return isHM ? '请掷骰前进' : '港主掷骰中…'
+  if (match.phase === 'settle') return '航次结算动画播放中…'
   if (match.phase === 'place') {
     return myTurn ? `轮到你放置${PAWN_LABEL}` : `等待其他玩家放置${PAWN_LABEL}…`
   }

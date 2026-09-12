@@ -28,11 +28,23 @@ type Props = {
 }
 
 import { SHIP_SEAT_Y_3, SHIP_SEAT_Y_4 } from './boardAnchors'
+import { SHIP_SEATS_CFG } from './boardConfig'
 
 /** Deck seat centers (%) — from anchors.json ship_seats (same for every cargo ship). */
 const SEAT_Y_3 = SHIP_SEAT_Y_3
 const SEAT_Y_4 = SHIP_SEAT_Y_4
-const SEAT_X = 50
+const SEAT_X = SHIP_SEATS_CFG.seat_x_pct ?? 50
+  const SEAT_FRAC = SHIP_SEATS_CFG.badge_diameter_frac_of_hull_width ?? 0.58
+const SLIM = SHIP_SEATS_CFG.width_frac ?? 0.78
+const FIXED_LEN = SHIP_SEATS_CFG.fixed_len_px ?? 168
+const CARGO_FRAC =
+  (SHIP_SEATS_CFG.cargo_px ?? 50) / Math.max(1, FIXED_LEN * SLIM)
+/** Bow profit plaque height as fraction of hull layout width (bake: profit_h / (len × artAspect)). */
+const PROFIT_H_FRAC =
+  ((SHIP_SEATS_CFG as { profit_h_px?: number }).profit_h_px ?? 24) /
+  Math.max(1, FIXED_LEN * (360 / 897))
+/** Plaque width ≈ 0.9 × slim visual hull, in layout-width units. */
+const PROFIT_W_FRAC = 0.9 * SLIM
 
 /**
  * Narrow photoreal hull (identical width + side curve):
@@ -60,7 +72,16 @@ export function ManilaShipToken({
         sailing ? ' is-sail' : ''
       }${compact ? ' is-compact' : ''}${className ? ` ${className}` : ''}`}
       data-seats={seatN}
-      style={nudgeY ? ({ ['--ship-nudge']: `${nudgeY}px` } as CSSProperties) : undefined}
+      style={
+        {
+          ['--manila-ship-slim']: String(SLIM),
+          ['--manila-seat-frac']: String(SEAT_FRAC),
+          ['--manila-cargo-frac']: String(CARGO_FRAC),
+          ['--manila-profit-h']: String(PROFIT_H_FRAC),
+          ['--manila-profit-w']: String(PROFIT_W_FRAC),
+          ...(nudgeY ? { ['--ship-nudge']: `${nudgeY}px` } : null),
+        } as CSSProperties
+      }
     >
       <div className="manila-ship-token__hull">
         <img className="manila-ship-token__punt" src={hull} alt="" draggable={false} />

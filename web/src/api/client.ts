@@ -22,6 +22,51 @@
 const DEFAULT_TOKEN_KEY = 'ihope_web_token'
 const SLOT_SESSION_KEY = 'ihope_web_slot'
 
+/** Fired when a user JWT is rejected (401 / unauthorized). Token is cleared before dispatch. */
+export const AUTH_UNAUTHORIZED_EVENT = 'ihope:unauthorized'
+
+let unauthNotifyLocked = false
+
+function notifyUnauthorized() {
+  setToken(null)
+  const toast = !unauthNotifyLocked
+  if (toast) {
+    unauthNotifyLocked = true
+    window.setTimeout(() => {
+      unauthNotifyLocked = false
+    }, 2500)
+  }
+  try {
+    window.dispatchEvent(
+      new CustomEvent(AUTH_UNAUTHORIZED_EVENT, { detail: { toast } }),
+    )
+  } catch {
+    /* ignore (SSR / tests) */
+  }
+}
+
+export function isUnauthorizedError(e: unknown): boolean {
+  if (!(e instanceof Error)) return false
+  const code = ((e as Error & { code?: string }).code || e.message || '').trim()
+  return code === 'unauthorized'
+}
+
+function throwApiError(res: Response, data: unknown): never {
+  const body = data as { error?: string; email?: string; username?: string }
+  const err = new Error(body.error || res.statusText) as Error & {
+    code?: string
+    email?: string
+    username?: string
+  }
+  err.code = body.error
+  if (typeof body.email === 'string') err.email = body.email
+  if (typeof body.username === 'string') err.username = body.username
+  if (res.status === 401 || err.code === 'unauthorized') {
+    notifyUnauthorized()
+  }
+  throw err
+}
+
 /** 多开测试：?slot=a 与 ?slot=b 使用不同登录态；同一 slot 刷新仍保持。 */
 export function getSessionSlot(): string {
   try {
@@ -72,21 +117,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 
     const res = await fetch(path, { ...init, headers })
     const data = await res.json().catch(() => ({}))
-    if (!res.ok) {
-      const err = new Error((data as { error?: string }).error || res.statusText) as Error & {
-        code?: string
-        email?: string
-        username?: string
-      }
-      err.code = (data as { error?: string }).error
-      if (typeof (data as { email?: string }).email === 'string') {
-        err.email = (data as { email?: string }).email
-      }
-      if (typeof (data as { username?: string }).username === 'string') {
-        err.username = (data as { username?: string }).username
-      }
-      throw err
-    }
+    if (!res.ok) throwApiError(res, data)
     return data as T
   })()
 
@@ -142,6 +173,8 @@ export function apiErrorMessage(e: unknown, fallback: string): string {
     'email already verified': '该邮箱已验证，请直接登录',
     'invalid email': '请填写有效邮箱',
     'same email': '与当前邮箱相同',
+    'invalid score': '分数无效',
+    'score too high': '分数过高',
     unauthorized: '请重新登录',
     forbidden: '没有权限',
     'user not found': '用户不存在',
@@ -294,13 +327,7 @@ export const api = {
     if (token) headers.set('Authorization', `Bearer ${token}`)
     const res = await fetch('/api/me/avatar', { method: 'POST', headers, body: fd })
     const data = await res.json().catch(() => ({}))
-    if (!res.ok) {
-      const err = new Error((data as { error?: string }).error || res.statusText) as Error & {
-        code?: string
-      }
-      err.code = (data as { error?: string }).error
-      throw err
-    }
+    if (!res.ok) throwApiError(res, data)
     return data as User
   },
   uploadGroupAvatar: async (id: string, file: File) => {
@@ -315,13 +342,7 @@ export const api = {
       body: fd,
     })
     const data = await res.json().catch(() => ({}))
-    if (!res.ok) {
-      const err = new Error((data as { error?: string }).error || res.statusText) as Error & {
-        code?: string
-      }
-      err.code = (data as { error?: string }).error
-      throw err
-    }
+    if (!res.ok) throwApiError(res, data)
     return data as Conversation
   },
   searchUser: (q: string) =>
@@ -486,13 +507,7 @@ export const api = {
       body: fd,
     })
     const data = await res.json().catch(() => ({}))
-    if (!res.ok) {
-      const err = new Error((data as { error?: string }).error || res.statusText) as Error & {
-        code?: string
-      }
-      err.code = (data as { error?: string }).error
-      throw err
-    }
+    if (!res.ok) throwApiError(res, data)
     return data as User
   },
   listMeChatBgImages: () =>
@@ -571,13 +586,7 @@ export const api = {
       body: fd,
     })
     const data = await res.json().catch(() => ({}))
-    if (!res.ok) {
-      const err = new Error((data as { error?: string }).error || res.statusText) as Error & {
-        code?: string
-      }
-      err.code = (data as { error?: string }).error
-      throw err
-    }
+    if (!res.ok) throwApiError(res, data)
     return data as Message
   },
   sendFile: async (id: string, file: File) => {
@@ -592,13 +601,7 @@ export const api = {
       body: fd,
     })
     const data = await res.json().catch(() => ({}))
-    if (!res.ok) {
-      const err = new Error((data as { error?: string }).error || res.statusText) as Error & {
-        code?: string
-      }
-      err.code = (data as { error?: string }).error
-      throw err
-    }
+    if (!res.ok) throwApiError(res, data)
     return data as Message
   },
   sendVoice: async (id: string, file: Blob, duration: number, mime?: string) => {
@@ -622,13 +625,7 @@ export const api = {
       body: fd,
     })
     const data = await res.json().catch(() => ({}))
-    if (!res.ok) {
-      const err = new Error((data as { error?: string }).error || res.statusText) as Error & {
-        code?: string
-      }
-      err.code = (data as { error?: string }).error
-      throw err
-    }
+    if (!res.ok) throwApiError(res, data)
     return data as Message
   },
   inviteGroupMembers: (id: string, memberIds: string[]) =>
@@ -762,7 +759,11 @@ export type ManilaRoom = {
   maxPlayers: number
   isPrivate: boolean
   members: ManilaPlayer[]
+  /** Seat index that opens the first auction (lobby setting). */
+  firstSeat?: number
   match?: ManilaMatch | null
+  /** Viewer is already a member (lobby / re-enter). */
+  joined?: boolean
 }
 
 export type ManilaMatch = {
@@ -795,6 +796,13 @@ export type ManilaMatch = {
   pirateBoardPunts?: number[]
   pilotTurn?: string
   plunderPunts?: number[]
+  settlement?: {
+    userId: string
+    amount: number
+    kind: string
+    slotId?: string
+    label?: string
+  }[]
   winnerUserId?: string
   version: number
   slots?: {

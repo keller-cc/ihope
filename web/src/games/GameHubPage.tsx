@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { getToken } from '@/api'
+import { AUTH_UNAUTHORIZED_EVENT, getToken } from '@/api'
 import { GAMES, type GameInfo } from '@/games/catalog'
 import '@/games/game-shell.css'
 
@@ -108,6 +108,9 @@ export function GameHubPage() {
 
   useEffect(() => {
     setLoggedIn(!!getToken())
+    const onUnauth = () => setLoggedIn(false)
+    window.addEventListener(AUTH_UNAUTHORIZED_EVENT, onUnauth)
+    return () => window.removeEventListener(AUTH_UNAUTHORIZED_EVENT, onUnauth)
   }, [])
 
   return (

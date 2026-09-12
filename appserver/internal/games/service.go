@@ -60,6 +60,21 @@ func (s *Service) ListDinoLeaderboard(ctx context.Context, limit int) ([]ScoreRo
 	if limit <= 0 || limit > 50 {
 		limit = 20
 	}
+	return s.listDinoLeaderboard(ctx, limit)
+}
+
+// AdminListDinoLeaderboard returns a longer leaderboard for operators.
+func (s *Service) AdminListDinoLeaderboard(ctx context.Context, limit int) ([]ScoreRow, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 500 {
+		limit = 500
+	}
+	return s.listDinoLeaderboard(ctx, limit)
+}
+
+func (s *Service) listDinoLeaderboard(ctx context.Context, limit int) ([]ScoreRow, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT u.id::text, u.username, b.score, b.created_at::text
 		FROM (
@@ -89,6 +104,52 @@ func (s *Service) ListDinoLeaderboard(ctx context.Context, limit int) ([]ScoreRo
 		out = append(out, r)
 	}
 	return out, rows.Err()
+}
+
+// AdminDeleteDinoScores removes all dino scores for a user (drops them from the board).
+func (s *Service) AdminDeleteDinoScores(ctx context.Context, userID string) (int64, error) {
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		return 0, errors.New("user id required")
+	}
+	tag, err := s.pool.Exec(ctx, `
+		DELETE FROM game_scores WHERE game_id = $1 AND user_id = $2::uuid
+	`, dinoGameID, userID)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
+// AdminSetDinoScore replaces a user's dino best with an exact score (admin override).
+func (s *Service) AdminSetDinoScore(ctx context.Context, userID string, score int) error {
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		return errors.New("user id required")
+	}
+	if score < 0 {
+		return errors.New("invalid score")
+	}
+	if score > 1_000_000 {
+		return errors.New("score too high")
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `
+		DELETE FROM game_scores WHERE game_id = $1 AND user_id = $2::uuid
+	`, dinoGameID, userID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO game_scores (game_id, user_id, score)
+		VALUES ($1, $2::uuid, $3)
+	`, dinoGameID, userID, score); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 // MyDinoBest returns the caller's best score (0 if none).

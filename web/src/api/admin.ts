@@ -276,6 +276,20 @@ export const adminApi = {
     adminRequest<{ results: AdminManilaResult[] }>(
       `/api/admin/games/manila/results?limit=${limit}`,
     ),
+  listDinoLeaderboard: (limit = 100) =>
+    adminRequest<{ scores: AdminDinoScore[]; gameId: string; gameName: string }>(
+      `/api/admin/games/dino/leaderboard?limit=${limit}`,
+    ),
+  setDinoScore: (userId: string, score: number) =>
+    adminRequest<{ message: string; score: number }>(
+      `/api/admin/games/dino/scores/${encodeURIComponent(userId)}`,
+      { method: 'PUT', body: JSON.stringify({ score }) },
+    ),
+  deleteDinoScores: (userId: string) =>
+    adminRequest<{ message: string; deleted: number }>(
+      `/api/admin/games/dino/scores/${encodeURIComponent(userId)}`,
+      { method: 'DELETE' },
+    ),
 }
 
 export type AdminManilaRoom = {
@@ -301,4 +315,12 @@ export type AdminManilaResult = {
   roomCode: string
   finishedAt: string
   players: { userId: string; username: string; rank: number; fortune: number }[]
+}
+
+export type AdminDinoScore = {
+  rank: number
+  userId: string
+  username: string
+  score: number
+  createdAt: string
 }

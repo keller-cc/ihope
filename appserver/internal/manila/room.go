@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 
@@ -237,7 +238,9 @@ type Room struct {
 	MaxPlayers  int
 	IsPrivate   bool
 	Members     []PlayerView
+	FirstSeat   int // who opens the first auction (seat index)
 	Match       *Match
+	settleTimer *time.Timer
 	subs        map[string][]*subscriber // userID -> conns
 	store       *Store
 	manager     *Manager
@@ -430,14 +433,33 @@ func (m *Manager) GetByID(id string) *Room {
 }
 
 func (m *Manager) ListOpen() []RoomPublic {
+	return m.ListLobby("")
+}
+
+// ListLobby returns public open/playing rooms, plus any room the viewer has joined
+// (including private). Sets Joined when userID is a member.
+func (m *Manager) ListLobby(userID string) []RoomPublic {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	out := make([]RoomPublic, 0)
 	for _, r := range m.rooms {
 		r.mu.Lock()
-		// 公开列表：候场 + 进行中（便于重连）；已结束/私密不展示
-		if !r.IsPrivate && (r.Status == "open" || r.Status == "playing") {
-			out = append(out, r.snapshotLocked())
+		isMember := false
+		if userID != "" {
+			for i := range r.Members {
+				if r.Members[i].UserID == userID {
+					isMember = true
+					break
+				}
+			}
+		}
+		live := r.Status == "open" || r.Status == "playing"
+		showPublic := !r.IsPrivate && live
+		showMine := isMember && live
+		if showPublic || showMine {
+			pub := r.snapshotLocked()
+			pub.Joined = isMember
+			out = append(out, pub)
 		}
 		r.mu.Unlock()
 	}
@@ -446,9 +468,11 @@ func (m *Manager) ListOpen() []RoomPublic {
 
 func (r *Room) snapshotLocked() RoomPublic {
 	mem := append([]PlayerView{}, r.Members...)
+	sort.SliceStable(mem, func(i, j int) bool { return mem[i].Seat < mem[j].Seat })
 	return RoomPublic{
 		ID: r.ID, Code: r.Code, HostUserID: r.HostUserID, Status: r.Status,
-		MaxPlayers: r.MaxPlayers, IsPrivate: r.IsPrivate, Members: mem, Match: nil,
+		MaxPlayers: r.MaxPlayers, IsPrivate: r.IsPrivate, Members: mem,
+		FirstSeat: r.FirstSeat, Match: nil,
 	}
 }
 
@@ -495,8 +519,12 @@ func (r *Room) Join(userID, username string) error {
 	if len(r.Members) >= r.MaxPlayers {
 		return ErrRoomFull
 	}
+	seat := r.firstEmptySeatLocked()
+	if seat < 0 {
+		return ErrRoomFull
+	}
 	r.Members = append(r.Members, PlayerView{
-		UserID: userID, Username: username, Seat: len(r.Members),
+		UserID: userID, Username: username, Seat: seat,
 		Connected: true, Ready: false, IsHost: userID == r.HostUserID,
 	})
 	return nil
@@ -540,9 +568,7 @@ func (r *Room) Kick(hostID, targetID string) error {
 		}
 	}
 	r.Members = out
-	for i := range r.Members {
-		r.Members[i].Seat = i
-	}
+	r.clampLobbySeatsLocked()
 	dissolved := r.dissolveWaitingIfEmptyLocked()
 	r.mu.Unlock()
 	if dissolved {
@@ -554,31 +580,7 @@ func (r *Room) Kick(hostID, targetID string) error {
 func (r *Room) Start(hostID string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if hostID != r.HostUserID {
-		return ErrNotHost
-	}
-	if r.Status != "open" {
-		return ErrAlreadyStart
-	}
-	if len(r.Members) < 3 {
-		return ErrTooFew
-	}
-	for _, m := range r.Members {
-		if !m.Ready && m.UserID != r.HostUserID {
-			return fmt.Errorf("%w: %s not ready", ErrBadAction, m.Username)
-		}
-	}
-	mem := append([]PlayerView{}, r.Members...)
-	for i := range mem {
-		mem[i].IsHost = mem[i].UserID == r.HostUserID
-		mem[i].Connected = true
-	}
-	r.Match = NewMatch(mem, nil)
-	r.Status = "playing"
-	go func() {
-		_ = r.store.UpdateRoomStatus(context.Background(), r.ID, "playing")
-	}()
-	return nil
+	return r.startLocked(hostID)
 }
 
 func (r *Room) Subscribe(userID string) (<-chan []byte, func()) {
@@ -618,13 +620,11 @@ func (r *Room) Subscribe(userID string) (<-chan []byte, func()) {
 					}
 				}
 				r.Members = kept
-				for i := range r.Members {
-					r.Members[i].Seat = i
-					r.Members[i].IsHost = r.Members[i].UserID == r.HostUserID
-				}
+				r.clampLobbySeatsLocked()
 				if len(r.Members) > 0 && wasHost {
-					r.HostUserID = r.Members[0].UserID
-					r.Members[0].IsHost = true
+					r.promoteHostLocked()
+				} else {
+					r.syncHostFlagsLocked()
 				}
 				dissolved = r.dissolveWaitingIfEmptyLocked()
 				r.broadcastLocked()
@@ -708,6 +708,15 @@ func (r *Room) ApplyAction(userID string, msg map[string]any) error {
 			}
 		}
 		err = r.settingsLocked(userID, maxPlayers, hasMax, private, hasPrivate)
+	case "claim_seat":
+		seat, _ := asInt(msg["seat"])
+		err = r.claimSeatLocked(userID, seat)
+	case "swap_seat":
+		seat, _ := asInt(msg["seat"])
+		err = r.swapWithSeatLocked(userID, seat)
+	case "set_first_seat":
+		seat, _ := asInt(msg["seat"])
+		err = r.setFirstSeatLocked(userID, seat)
 	case "leave":
 		_ = r.leaveLocked(userID)
 	case "auction_bid":
@@ -850,6 +859,7 @@ func (r *Room) ApplyAction(userID string, msg map[string]any) error {
 		err = ErrBadAction
 	}
 	if err == nil {
+		r.armSettleIfNeededLocked()
 		r.broadcastLocked()
 		if r.Match != nil && r.Match.Phase == PhaseGameOver {
 			pub := r.Match.Public()
@@ -869,6 +879,49 @@ func (r *Room) ApplyAction(userID string, msg map[string]any) error {
 		}
 	}
 	return err
+}
+
+// SettlePause base; actual wait scales with settlement line count.
+const SettlePauseBase = 4 * time.Second
+const SettlePausePerLine = 2200 * time.Millisecond
+const SettlePauseMax = 36 * time.Second
+
+func (r *Room) armSettleIfNeededLocked() {
+	if r.Match == nil || r.Match.Phase != PhaseSettle {
+		return
+	}
+	if r.settleTimer != nil {
+		return
+	}
+	n := len(r.Match.Settlement)
+	pause := SettlePauseBase + time.Duration(n)*SettlePausePerLine
+	if pause > SettlePauseMax {
+		pause = SettlePauseMax
+	}
+	r.settleTimer = time.AfterFunc(pause, func() {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		r.settleTimer = nil
+		if r.Match == nil || r.Match.Phase != PhaseSettle {
+			return
+		}
+		r.Match.AdvanceFromSettle()
+		r.broadcastLocked()
+		if r.Match != nil && r.Match.Phase == PhaseGameOver {
+			pub := r.Match.Public()
+			r.Status = "closed"
+			r.closedAt = time.Now()
+			r.closeReason = "finished"
+			mgr := r.manager
+			go func() {
+				_ = r.store.SaveResult(context.Background(), r.ID, r.Code, pub.Players)
+				_ = r.store.UpdateRoomStatus(context.Background(), r.ID, "closed")
+				if mgr != nil {
+					mgr.removeRoom(r)
+				}
+			}()
+		}
+	})
 }
 
 func (r *Room) startLocked(hostID string) error {
@@ -891,11 +944,168 @@ func (r *Room) startLocked(hostID string) error {
 			r.Members[i].Ready = true
 		}
 	}
+	r.clampLobbySeatsLocked()
+	// Match turn order follows seat numbers; host identity stays HostUserID.
 	mem := append([]PlayerView{}, r.Members...)
-	r.Match = NewMatch(mem, nil)
+	sort.SliceStable(mem, func(i, j int) bool { return mem[i].Seat < mem[j].Seat })
+	firstIdx := 0
+	for i, m := range mem {
+		if m.Seat == r.FirstSeat {
+			firstIdx = i
+			break
+		}
+	}
+	for i := range mem {
+		mem[i].Seat = i
+		mem[i].IsHost = mem[i].UserID == r.HostUserID
+		mem[i].Connected = true
+	}
+	r.Match = NewMatchWithStart(mem, nil, firstIdx)
 	r.Status = "playing"
 	go func() { _ = r.store.UpdateRoomStatus(context.Background(), r.ID, "playing") }()
 	return nil
+}
+
+// syncHostFlagsLocked keeps IsHost in sync with HostUserID (never derived from seat).
+func (r *Room) syncHostFlagsLocked() {
+	for i := range r.Members {
+		r.Members[i].IsHost = r.Members[i].UserID == r.HostUserID
+	}
+}
+
+func (r *Room) seatOccupiedLocked(seat int) bool {
+	for _, m := range r.Members {
+		if m.Seat == seat {
+			return true
+		}
+	}
+	return false
+}
+
+func (r *Room) firstEmptySeatLocked() int {
+	for s := 0; s < r.MaxPlayers; s++ {
+		if !r.seatOccupiedLocked(s) {
+			return s
+		}
+	}
+	return -1
+}
+
+// clampLobbySeatsLocked keeps FirstSeat on an occupied pad; does not renumber seats.
+func (r *Room) clampLobbySeatsLocked() {
+	if len(r.Members) == 0 {
+		r.FirstSeat = 0
+		r.syncHostFlagsLocked()
+		return
+	}
+	if r.seatOccupiedLocked(r.FirstSeat) {
+		r.syncHostFlagsLocked()
+		return
+	}
+	best := -1
+	for _, m := range r.Members {
+		if best < 0 || m.Seat < best {
+			best = m.Seat
+		}
+	}
+	if best < 0 {
+		r.FirstSeat = 0
+	} else {
+		r.FirstSeat = best
+	}
+	r.syncHostFlagsLocked()
+}
+
+// claimSeatLocked lets any member sit on an empty lobby pad (livestream-style).
+func (r *Room) claimSeatLocked(userID string, seat int) error {
+	if r.Status != "open" {
+		return ErrAlreadyStart
+	}
+	if seat < 0 || seat >= r.MaxPlayers {
+		return ErrBadAction
+	}
+	me := -1
+	for i, m := range r.Members {
+		if m.UserID == userID {
+			me = i
+		}
+		if m.Seat == seat && m.UserID != userID {
+			return ErrSlotTaken
+		}
+	}
+	if me < 0 {
+		return ErrNotMember
+	}
+	if r.Members[me].Seat == seat {
+		return nil
+	}
+	r.Members[me].Seat = seat
+	r.Members[me].Ready = false // changing seat clears ready, like switching mic seats
+	r.syncHostFlagsLocked()
+	return nil
+}
+
+// swapWithSeatLocked swaps the caller's seat with whoever sits on targetSeat.
+func (r *Room) swapWithSeatLocked(userID string, targetSeat int) error {
+	if r.Status != "open" {
+		return ErrAlreadyStart
+	}
+	if targetSeat < 0 || targetSeat >= r.MaxPlayers {
+		return ErrBadAction
+	}
+	me := -1
+	other := -1
+	for i, m := range r.Members {
+		if m.UserID == userID {
+			me = i
+		}
+		if m.Seat == targetSeat {
+			other = i
+		}
+	}
+	if me < 0 {
+		return ErrNotMember
+	}
+	if other < 0 {
+		return fmt.Errorf("%w: seat empty, claim instead", ErrBadAction)
+	}
+	if me == other {
+		return nil
+	}
+	a, b := r.Members[me].Seat, r.Members[other].Seat
+	r.Members[me].Seat, r.Members[other].Seat = b, a
+	r.Members[me].Ready = false
+	r.Members[other].Ready = false
+	r.syncHostFlagsLocked()
+	return nil
+}
+
+func (r *Room) setFirstSeatLocked(hostID string, seat int) error {
+	if hostID != r.HostUserID {
+		return ErrNotHost
+	}
+	if r.Status != "open" {
+		return ErrAlreadyStart
+	}
+	if seat < 0 || seat >= r.MaxPlayers {
+		return ErrBadAction
+	}
+	if !r.seatOccupiedLocked(seat) {
+		return fmt.Errorf("%w: seat empty", ErrBadAction)
+	}
+	r.FirstSeat = seat
+	r.syncHostFlagsLocked()
+	return nil
+}
+
+func (r *Room) promoteHostLocked() {
+	if len(r.Members) == 0 {
+		r.HostUserID = ""
+		return
+	}
+	// Succession follows join order (Members slice), never seat number.
+	r.HostUserID = r.Members[0].UserID
+	r.syncHostFlagsLocked()
 }
 
 func (r *Room) kickLocked(hostID, targetID string) error {
@@ -912,9 +1122,7 @@ func (r *Room) kickLocked(hostID, targetID string) error {
 		}
 	}
 	r.Members = out
-	for i := range r.Members {
-		r.Members[i].Seat = i
-	}
+	r.clampLobbySeatsLocked()
 	_ = r.dissolveWaitingIfEmptyLocked()
 	return nil
 }
@@ -948,6 +1156,30 @@ func (r *Room) settingsLocked(hostID string, maxPlayers int, hasMax, private, ha
 	}
 	r.MaxPlayers = nextMax
 	r.IsPrivate = nextPrivate
+	// If seats were beyond new max, move them into empty lower pads.
+	for i := range r.Members {
+		if r.Members[i].Seat < nextMax {
+			continue
+		}
+		empty := -1
+		for s := 0; s < nextMax; s++ {
+			taken := false
+			for _, m := range r.Members {
+				if m.Seat == s && m.UserID != r.Members[i].UserID {
+					taken = true
+					break
+				}
+			}
+			if !taken {
+				empty = s
+				break
+			}
+		}
+		if empty >= 0 {
+			r.Members[i].Seat = empty
+		}
+	}
+	r.clampLobbySeatsLocked()
 	go func() {
 		_ = r.store.UpdateRoomSettings(context.Background(), r.ID, nextMax, nextPrivate)
 	}()
@@ -979,13 +1211,11 @@ func (r *Room) leaveLocked(userID string) (dissolved bool) {
 		}
 	}
 	r.Members = out
-	for i := range r.Members {
-		r.Members[i].Seat = i
-		r.Members[i].IsHost = r.Members[i].UserID == r.HostUserID
-	}
-	if len(r.Members) > 0 && wasHost {
-		r.HostUserID = r.Members[0].UserID
-		r.Members[0].IsHost = true
+	r.clampLobbySeatsLocked()
+	if wasHost && len(r.Members) > 0 {
+		r.promoteHostLocked()
+	} else {
+		r.syncHostFlagsLocked()
 	}
 	return r.dissolveWaitingIfEmptyLocked()
 }

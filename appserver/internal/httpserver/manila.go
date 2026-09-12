@@ -30,8 +30,7 @@ func (s *Server) handleManilaCreateRoom(w http.ResponseWriter, r *http.Request, 
 }
 
 func (s *Server) handleManilaListRooms(w http.ResponseWriter, r *http.Request, userID string) {
-	_ = userID
-	writeJSON(w, http.StatusOK, map[string]any{"rooms": s.manilaMgr.ListOpen()})
+	writeJSON(w, http.StatusOK, map[string]any{"rooms": s.manilaMgr.ListLobby(userID)})
 }
 
 func (s *Server) handleManilaJoinRoom(w http.ResponseWriter, r *http.Request, userID string) {

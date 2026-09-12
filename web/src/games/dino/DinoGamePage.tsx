@@ -4,7 +4,9 @@ import { Drawer, Switch } from 'tdesign-react'
 import {
   api,
   apiErrorMessage,
+  AUTH_UNAUTHORIZED_EVENT,
   getToken,
+  isUnauthorizedError,
   type DinoScoreRow,
 } from '@/api'
 import audioResourcesHtml from '@/games/dino/audio-resources.html?raw'
@@ -78,6 +80,9 @@ export function DinoGamePage() {
   useEffect(() => {
     setLoggedIn(!!getToken())
     void refreshBoard()
+    const onUnauth = () => setLoggedIn(false)
+    window.addEventListener(AUTH_UNAUTHORIZED_EVENT, onUnauth)
+    return () => window.removeEventListener(AUTH_UNAUTHORIZED_EVENT, onUnauth)
   }, [refreshBoard])
 
   useEffect(() => {
@@ -128,6 +133,11 @@ export function DinoGamePage() {
           setBoardHint(res.improved ? '新纪录！' : '')
           await refreshBoard()
         } catch (e) {
+          if (isUnauthorizedError(e)) {
+            setLoggedIn(false)
+            setBoardHint('登录已失效')
+            return
+          }
           setBoardHint(apiErrorMessage(e, '成绩上传失败'))
         }
       })()

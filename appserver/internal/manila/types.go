@@ -45,6 +45,7 @@ const (
 	PhasePirateBoard     Phase = "pirate_board"
 	PhasePilot           Phase = "pilot"
 	PhasePiratePlunder   Phase = "pirate_plunder"
+	PhaseSettle          Phase = "settle"
 	PhaseGameOver        Phase = "game_over"
 )
 
@@ -115,31 +116,41 @@ type OccupiedSlot struct {
 	Cost   int    `json:"cost"`
 }
 
+// SettlementLine is one cash change shown during the voyage settle pause.
+type SettlementLine struct {
+	UserID string `json:"userId"`
+	Amount int    `json:"amount"` // +gain / −pay
+	Kind   string `json:"kind"`   // cargo|port|yard|insurance
+	SlotID string `json:"slotId,omitempty"`
+	Label  string `json:"label,omitempty"`
+}
+
 type MatchPublic struct {
-	Phase              Phase           `json:"phase"`
-	Voyage             int             `json:"voyage"`
-	Players            []PlayerView    `json:"players"`
-	HarborMasterID     string          `json:"harborMasterId,omitempty"`
-	AuctionHighBid     int             `json:"auctionHighBid"`
-	AuctionHighBidder  string          `json:"auctionHighBidder,omitempty"`
-	AuctionPassed      []string        `json:"auctionPassed"`
-	AuctionTurnUserID  string          `json:"auctionTurnUserId,omitempty"`
-	TurnUserID         string          `json:"turnUserId,omitempty"`
-	Market             map[Ware]int    `json:"market"`
-	ShareSupply        map[Ware]int    `json:"shareSupply"`
-	Punts              []PuntState     `json:"punts"`
-	Occupied           []OccupiedSlot  `json:"occupied"`
-	PlaceRound         int             `json:"placeRound"` // 1..4
-	MoveRound          int             `json:"moveRound"`  // 0..3
-	MaxPlaceRounds     int             `json:"maxPlaceRounds"`
-	Events             []string        `json:"events"`
-	PirateBoardQueue   []string        `json:"pirateBoardQueue,omitempty"`
-	PirateBoardPunts   []int           `json:"pirateBoardPunts,omitempty"`
-	PilotTurn          string          `json:"pilotTurn,omitempty"` // small|large|done
-	PlunderPunts       []int           `json:"plunderPunts,omitempty"`
-	WinnerUserID       string          `json:"winnerUserId,omitempty"`
-	Version            int             `json:"version"`
-	Slots              []SlotDef       `json:"slots,omitempty"`
+	Phase              Phase            `json:"phase"`
+	Voyage             int              `json:"voyage"`
+	Players            []PlayerView     `json:"players"`
+	HarborMasterID     string           `json:"harborMasterId,omitempty"`
+	AuctionHighBid     int              `json:"auctionHighBid"`
+	AuctionHighBidder  string           `json:"auctionHighBidder,omitempty"`
+	AuctionPassed      []string         `json:"auctionPassed"`
+	AuctionTurnUserID  string           `json:"auctionTurnUserId,omitempty"`
+	TurnUserID         string           `json:"turnUserId,omitempty"`
+	Market             map[Ware]int     `json:"market"`
+	ShareSupply        map[Ware]int     `json:"shareSupply"`
+	Punts              []PuntState      `json:"punts"`
+	Occupied           []OccupiedSlot   `json:"occupied"`
+	PlaceRound         int              `json:"placeRound"` // 1..4
+	MoveRound          int              `json:"moveRound"`  // 0..3
+	MaxPlaceRounds     int              `json:"maxPlaceRounds"`
+	Events             []string         `json:"events"`
+	PirateBoardQueue   []string         `json:"pirateBoardQueue,omitempty"`
+	PirateBoardPunts   []int            `json:"pirateBoardPunts,omitempty"`
+	PilotTurn          string           `json:"pilotTurn,omitempty"` // small|large|done
+	PlunderPunts       []int            `json:"plunderPunts,omitempty"`
+	Settlement         []SettlementLine `json:"settlement,omitempty"`
+	WinnerUserID       string           `json:"winnerUserId,omitempty"`
+	Version            int              `json:"version"`
+	Slots              []SlotDef        `json:"slots,omitempty"`
 }
 
 type RoomPublic struct {
@@ -151,4 +162,8 @@ type RoomPublic struct {
 	IsPrivate  bool         `json:"isPrivate"`
 	Members    []PlayerView `json:"members"`
 	Match      *MatchPublic `json:"match,omitempty"`
+	// FirstSeat is the lobby seat that opens the first auction (0-based).
+	FirstSeat int `json:"firstSeat"`
+	// Joined is true when the listing viewer is already a member.
+	Joined bool `json:"joined,omitempty"`
 }

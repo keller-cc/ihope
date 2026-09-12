@@ -1,30 +1,32 @@
 import type { ManilaMatch, ManilaWare } from '@/api'
-import { PRICE_MARKER, shareSrc, type ManilaRoleTag } from './assets'
+import { PRICE_MARKER, shareSrc } from './assets'
+import { useBoardPx } from './BoardPx'
 import {
   BOARD_MARKET,
   berthConfig,
+  marketPanelBox,
   marketPanelStyle,
+  payPadQuad,
   spotConfig,
-  SHIP_SEATS_CFG,
+  type RoleTagId,
 } from './boardConfig'
 import { berthQuad, costPadQuad } from './boardAnchors'
 import {
-  LANE_X,
   PIRATE_SEAT_POS,
   PIRATE_SLOT_IDS,
   PORT_BERTH,
   PORT_SPOT,
   SHORE_POS,
-  TRACK_MAX,
-  TRACK_NUM_X,
   YARD_BERTH,
   YARD_SPOT,
+  WARE_SEAT_COSTS,
   berthHeading,
+  lanePose,
   nextPirateSlotId,
-  trackY,
+  nextPuntSeatId,
 } from './boardLayout'
 import { ManilaShipToken, type ShipSeat } from './ManilaShipToken'
-import { ManilaSpot } from './ManilaSpot'
+import { ManilaPayBadge, ManilaSpot } from './ManilaSpot'
 import { coverBerthStyle, padSpotStyle } from './quadWarp'
 import { WARE_LABEL } from './rulesContent'
 
@@ -139,26 +141,55 @@ function renderSeaShip(punt: PuntT, i: number, ctx: Shared) {
     .filter((s) => s.kind === 'punt' && s.puntIndex === punt.index)
     .sort((a, b) => (a.seatIndex || 0) - (b.seatIndex || 0))
 
-  const seats: ShipSeat[] = puntSlots.map((slot) => {
-    const owner = occupiedMap.get(slot.id)
-    const free = !owner
-    return {
-      id: slot.id,
-      cost: slot.cost,
-      free,
-      clickable: canPlace && free,
-      ownerSeat: owner ? seatOf(match.players, owner) : undefined,
-      ownerName: owner ? nameOf(match.players, owner) : undefined,
-      onPlace: () => place(slot.id),
-      title: spotTitle(slot),
-    }
-  })
+  const fallbackCosts = WARE_SEAT_COSTS[punt.ware] || [3, 4, 5]
+  const seatCount = puntSlots.length > 0 ? puntSlots.length : fallbackCosts.length
+  const nextSeatId = nextPuntSeatId(punt.index, seatCount, occupiedMap)
 
-  const lx = LANE_X[i] ?? LANE_X[1]
-  const ly = trackY(posN)
+  const seats: ShipSeat[] =
+    puntSlots.length > 0
+      ? puntSlots.map((slot) => {
+          const owner = occupiedMap.get(slot.id)
+          const free = !owner
+          const isNext = free && slot.id === nextSeatId
+          return {
+            id: slot.id,
+            cost: slot.cost,
+            free,
+            clickable: canPlace && isNext,
+            ownerSeat: owner ? seatOf(match.players, owner) : undefined,
+            ownerName: owner ? nameOf(match.players, owner) : undefined,
+            onPlace: () => place(slot.id),
+            title: isNext
+              ? `${spotTitle(slot)}（须从前往后入座）`
+              : free
+                ? `${spotTitle(slot)}（请先坐船头空位）`
+                : spotTitle(slot),
+          }
+        })
+      : fallbackCosts.map((cost, seatIndex) => {
+          const id = `punt${punt.index}_${seatIndex}`
+          const owner = occupiedMap.get(id)
+          const free = !owner
+          const isNext = free && id === nextSeatId
+          return {
+            id,
+            cost,
+            free,
+            clickable: canPlace && isNext,
+            ownerSeat: owner ? seatOf(match.players, owner) : undefined,
+            ownerName: owner ? nameOf(match.players, owner) : undefined,
+            onPlace: () => place(id),
+            title: isNext
+              ? `${WARE_LABEL[punt.ware] || '船'} · 花费 ${cost}₱（须从前往后入座）`
+              : free
+                ? `${WARE_LABEL[punt.ware] || '船'} · 花费 ${cost}₱（请先坐船头空位）`
+                : `${WARE_LABEL[punt.ware] || '船'} · 花费 ${cost}₱`,
+          }
+        })
+
+  const pose = lanePose(i, posN)
   const nudge = pilotNudge?.[punt.index] ?? 0
   const draftVal = startDraft?.[i] ?? 0
-  const seaRot = (SHIP_SEATS_CFG as { rot_deg?: { sea?: number } })?.rot_deg?.sea ?? 4
 
   return (
     <div
@@ -166,10 +197,10 @@ function renderSeaShip(punt: PuntT, i: number, ctx: Shared) {
       className="manila-sea-canvas__ship"
       data-manila-punt={punt.index}
       style={{
-        left: `${lx}%`,
-        top: `${ly}%`,
-        transform: `translate(-50%, 0.45rem) rotate(${seaRot}deg)`,
-        ['--ship-rot' as string]: `${seaRot}deg`,
+        left: `${pose.x}%`,
+        top: `${pose.y}%`,
+        transform: `translate(-50%, -50%) rotate(${pose.rot}deg)`,
+        ['--ship-rot' as string]: `${pose.rot}deg`,
       }}
     >
       {placingStarts && bumpStart ? (
@@ -192,6 +223,10 @@ function renderSeaShip(punt: PuntT, i: number, ctx: Shared) {
             ▼
           </button>
         </div>
+      ) : atSea ? (
+        <span className="manila-sea-pos" aria-label={`航位 ${posN}`}>
+          {posN}
+        </span>
       ) : null}
       <ManilaShipToken
         ware={punt.ware}
@@ -205,57 +240,104 @@ function renderSeaShip(punt: PuntT, i: number, ctx: Shared) {
   )
 }
 
-export function SeaTrackNums() {
-  const nums = Array.from({ length: TRACK_MAX + 1 }, (_, n) => n)
-  return (
-    <ol className="manila-track-nums" aria-hidden>
-      {nums.map((n) => (
-        <li key={n} style={{ left: `${TRACK_NUM_X}%`, top: `${trackY(n)}%` }}>
-          {n}
-        </li>
-      ))}
-    </ol>
-  )
-}
-
+/** Stock panel — geometry mirrors `_rebuild_spots.py` bake (pad / row / icon fractions of panel px). */
 export function MarketPlate({ match }: { match: ManilaMatch }) {
   const m = BOARD_MARKET
   const panel = marketPanelStyle()
+  const box = marketPanelBox()
+  const { w: boardW, h: boardH } = useBoardPx()
   const valueCols = m.track_values?.length ? m.track_values : [...m.value_rows].reverse()
+  const pw = boardW > 1 ? (box.w / 100) * boardW : 0
+  const ph = boardH > 1 ? (box.h / 100) * boardH : 0
+  const ready = pw > 8 && ph > 8
+  const pad = ready ? Math.max(4, Math.round(Math.min(pw, ph) * 0.034)) : 0
+  const bodyH = ready ? ph - pad * 2 : 0
+  const rowH = ready ? bodyH / 4 : 0
+  const iconS = ready ? Math.max(12, Math.round(rowH * 0.78)) : 0
+  const trackX0 = ready ? pad + iconS + Math.max(6, Math.round(pw * 0.026)) : 0
+  const trackW = ready ? pw - trackX0 - pad : 0
+  const cellW = ready ? trackW / valueCols.length : 0
+  const fontPx = ready ? Math.max(10, Math.round(rowH * 0.4)) : 0
+  const pinS = ready ? Math.max(10, Math.round(rowH * 0.55)) : 0
+
   return (
     <div className="manila-market-hit" aria-label={m.label}>
       <div className="manila-market-hit__panel" style={panel}>
-        <div className="manila-market-hit__face">
-          <div className="manila-market-hit__grid" role="table">
-            {m.wares.map((ware) => {
-              const w = ware as ManilaWare
-              const price = match.market?.[w] ?? 0
-              return (
-                <div key={w} className="manila-market-hit__row" role="row">
-                  <div className="manila-market-hit__ware" role="rowheader" title={WARE_LABEL[w]}>
-                    <img src={shareSrc(w)} alt={WARE_LABEL[w] || w} draggable={false} />
-                  </div>
-                  <div className="manila-market-hit__track" role="cell">
-                    {valueCols.map((value) => {
+        <div className="manila-market-hit__face manila-market-hit__face--abs">
+          {m.wares.map((ware, ri) => {
+            const w = ware as ManilaWare
+            const price = match.market?.[w] ?? 0
+            const y0 = pad + rowH * ri
+            const yMid = y0 + rowH * 0.5
+            return (
+              <div key={w} className="manila-market-hit__row-abs" role="row">
+                {ri % 2 === 1 && ready ? (
+                  <div
+                    className="manila-market-hit__row-bg"
+                    style={{
+                      left: 4,
+                      top: y0 + 1,
+                      width: pw - 8,
+                      height: Math.max(0, rowH - 2),
+                    }}
+                    aria-hidden
+                  />
+                ) : null}
+                {ready ? (
+                  <img
+                    className="manila-market-hit__ware-abs"
+                    src={shareSrc(w)}
+                    alt={WARE_LABEL[w] || w}
+                    title={WARE_LABEL[w]}
+                    draggable={false}
+                    style={{
+                      left: pad,
+                      top: yMid - iconS / 2,
+                      width: iconS,
+                      height: iconS,
+                    }}
+                  />
+                ) : null}
+                {ready
+                  ? valueCols.map((value, ci) => {
                       const here = price === value
+                      const x0 = trackX0 + cellW * ci + 2
+                      const cellH = rowH * 0.64
                       return (
                         <span
                           key={`${w}-${value}`}
-                          className={`manila-market-hit__cell${here ? ' is-here' : ''}`}
+                          className={`manila-market-hit__cell-abs${here ? ' is-here' : ''}`}
                           aria-current={here ? 'true' : undefined}
+                          style={{
+                            left: x0,
+                            top: yMid - cellH / 2,
+                            width: Math.max(0, cellW - 4),
+                            height: cellH,
+                            fontSize: fontPx,
+                          }}
                         >
                           <em>{value}</em>
                           {here ? (
-                            <img className="manila-market-hit__pin" src={PRICE_MARKER} alt="" draggable={false} />
+                            <img
+                              className="manila-market-hit__pin-abs"
+                              src={PRICE_MARKER}
+                              alt=""
+                              draggable={false}
+                              style={{
+                                width: pinS,
+                                height: pinS,
+                                right: -pinS * 0.15,
+                                bottom: -pinS * 0.2,
+                              }}
+                            />
                           ) : null}
                         </span>
                       )
-                    })}
-                  </div>
-                </div>
-              )
-            })}
-          </div>
+                    })
+                  : null}
+              </div>
+            )
+          })}
         </div>
       </div>
     </div>
@@ -268,42 +350,46 @@ export function PortDock({
   canPlace,
   place,
 }: Omit<Shared, 'sailing' | 'startDraft' | 'placingStarts' | 'pilotNudge'>) {
+  const { w: boardW, h: boardH } = useBoardPx()
+  /* BERTH_LETTER_PX=46 @ 1024 plate — keep CSS px so zoom matches effect bake */
+  const letterPx = boardW > 1 ? Math.max(10, (boardW * 46) / 1024) : undefined
   return (
     <aside className="manila-dock manila-dock--port" aria-label="马尼拉港">
       {(['A', 'B', 'C'] as const).map((letter) => {
         const slot = (match.slots || []).find((s) => s.id === `port_${letter}`)
         const ship = (match.punts || []).find((p) => p.berth === `port_${letter}`)
         const spot = PORT_SPOT[letter]
-        const def = spotConfig(`port_${letter}`)
+        const bCfg = berthConfig(`port_${letter}`)
         const padQ = costPadQuad(`port_${letter}`)
         const quad = berthQuad(`port_${letter}`)
-        const payBeside =
-          def?.pad.display.pay_beside === 'left'
-            ? 'left'
-            : def?.pad.display.pay_beside === 'up-right'
-              ? 'up-right'
-              : 'right'
-        const berthPos = PORT_BERTH[letter]
+        const berthPos = bCfg?.center ?? PORT_BERTH[letter]
+        const label = (bCfg?.display.letter ?? letter) || letter
         return (
           <div key={letter} className="manila-dock__berth manila-dock__berth--port">
-            <span
-              className="manila-dock__letter manila-dock__letter--port"
-              style={{ left: `${berthPos.x}%`, top: `${berthPos.y}%` }}
-              aria-hidden
-            >
-              {letter}
-            </span>
+            {/* Letters sit on water slips; hide under docked ships (same as board-effect bake) */}
+            {!ship ? (
+              <span
+                className="manila-dock__letter manila-dock__letter--port"
+                style={{
+                  left: `${berthPos.x}%`,
+                  top: `${berthPos.y}%`,
+                  ...(letterPx ? { fontSize: letterPx } : null),
+                }}
+                aria-hidden
+              >
+                {label}
+              </span>
+            ) : null}
             {slot && padQ ? (
-              <div className="manila-dock__spot manila-dock__spot--warped" style={padSpotStyle(padQ)}>
-                <SpotFromSlot
-                  slot={slot}
-                  occupiedMap={occupiedMap}
-                  players={match.players}
-                  canPlace={canPlace}
-                  place={place}
-                  payBeside={payBeside}
-                />
-              </div>
+              <WarpedBoardSpot
+                slot={slot}
+                occupiedMap={occupiedMap}
+                players={match.players}
+                canPlace={canPlace}
+                place={place}
+                boardW={boardW}
+                boardH={boardH}
+              />
             ) : slot ? (
               <div
                 className="manila-dock__spot"
@@ -315,7 +401,6 @@ export function PortDock({
                   players={match.players}
                   canPlace={canPlace}
                   place={place}
-                  payBeside={payBeside}
                 />
               </div>
             ) : null}
@@ -345,42 +430,44 @@ export function YardDock({
   canPlace,
   place,
 }: Omit<Shared, 'sailing' | 'startDraft' | 'placingStarts' | 'pilotNudge'>) {
+  const { w: boardW, h: boardH } = useBoardPx()
+  const letterPx = boardW > 1 ? Math.max(10, (boardW * 46) / 1024) : undefined
   return (
     <aside className="manila-dock manila-dock--yard" aria-label="修船厂">
       {(['A', 'B', 'C'] as const).map((letter) => {
         const slot = (match.slots || []).find((s) => s.id === `shipyard_${letter}`)
         const ship = (match.punts || []).find((p) => p.berth === `shipyard_${letter}`)
         const spot = YARD_SPOT[letter]
-        const def = spotConfig(`shipyard_${letter}`)
+        const bCfg = berthConfig(`yard_${letter}`)
         const padQ = costPadQuad(`shipyard_${letter}`)
         const quad = berthQuad(`yard_${letter}`)
-        const payBeside =
-          def?.pad.display.pay_beside === 'up-right'
-            ? 'up-right'
-            : def?.pad.display.pay_beside === 'left'
-              ? 'left'
-              : 'right'
-        const berthPos = YARD_BERTH[letter]
+        const berthPos = bCfg?.center ?? YARD_BERTH[letter]
+        const label = (bCfg?.display.letter ?? letter) || letter
         return (
           <div key={letter} className="manila-dock__berth manila-dock__berth--yard">
-            <span
-              className="manila-dock__letter manila-dock__letter--yard"
-              style={{ left: `${berthPos.x}%`, top: `${berthPos.y}%` }}
-              aria-hidden
-            >
-              {letter}
-            </span>
+            {!ship ? (
+              <span
+                className="manila-dock__letter manila-dock__letter--yard"
+                style={{
+                  left: `${berthPos.x}%`,
+                  top: `${berthPos.y}%`,
+                  ...(letterPx ? { fontSize: letterPx } : null),
+                }}
+                aria-hidden
+              >
+                {label}
+              </span>
+            ) : null}
             {slot && padQ ? (
-              <div className="manila-dock__spot manila-dock__spot--warped" style={padSpotStyle(padQ)}>
-                <SpotFromSlot
-                  slot={slot}
-                  occupiedMap={occupiedMap}
-                  players={match.players}
-                  canPlace={canPlace}
-                  place={place}
-                  payBeside={payBeside}
-                />
-              </div>
+              <WarpedBoardSpot
+                slot={slot}
+                occupiedMap={occupiedMap}
+                players={match.players}
+                canPlace={canPlace}
+                place={place}
+                boardW={boardW}
+                boardH={boardH}
+              />
             ) : slot ? (
               <div
                 className="manila-dock__spot"
@@ -392,7 +479,6 @@ export function YardDock({
                   players={match.players}
                   canPlace={canPlace}
                   place={place}
-                  payBeside={payBeside}
                 />
               </div>
             ) : null}
@@ -424,6 +510,7 @@ export function PirateBerth({
 }: Omit<Shared, 'sailing' | 'startDraft' | 'placingStarts' | 'pilotNudge'> & {
   overlay?: boolean
 }) {
+  const { w: boardW, h: boardH } = useBoardPx()
   const nextId = nextPirateSlotId(occupiedMap)
 
   // Scenic board.jpg already paints the pirate boat — only seat hits on top.
@@ -434,30 +521,46 @@ export function PirateBerth({
         const owner = occupiedMap.get(id)
         const isNext = id === nextId
         const clickable = canPlace && isNext && !!slot
-        const pos = PIRATE_SEAT_POS[i]
+        const padQ = costPadQuad(id)
+        const fallback = PIRATE_SEAT_POS[i]
+        if (!slot) return null
+        const body = (
+          <ManilaSpot
+            slotId={id}
+            cost={!owner ? slot.cost : null}
+            ownerSeat={owner ? seatOf(match.players, owner) : undefined}
+            ownerName={owner ? nameOf(match.players, owner) : undefined}
+            live={clickable}
+            taken={!!owner}
+            disabled={!clickable}
+            title={
+              owner
+                ? nameOf(match.players, owner)
+                : isNext
+                  ? `海盗 · 花费 ${slot.cost ?? 5}₱（须从右侧依次入座）`
+                  : '须先占前方座位'
+            }
+            onClick={clickable ? () => place(id) : undefined}
+          />
+        )
+        if (padQ) {
+          return (
+            <div
+              key={id}
+              className="manila-pirate-seats__seat manila-pirate-seats__seat--warped"
+              style={padSpotStyle(padQ, boardW, boardH)}
+            >
+              {body}
+            </div>
+          )
+        }
         return (
           <div
             key={id}
             className="manila-pirate-seats__seat"
-            style={{ left: `${pos.x}%`, top: `${pos.y}%` }}
+            style={{ left: `${fallback.x}%`, top: `${fallback.y}%` }}
           >
-            <ManilaSpot
-              slotId={id}
-              cost={slot && !owner ? slot.cost : null}
-              ownerSeat={owner ? seatOf(match.players, owner) : undefined}
-              ownerName={owner ? nameOf(match.players, owner) : undefined}
-              live={clickable}
-              taken={!!owner}
-              disabled={!clickable}
-              title={
-                owner
-                  ? nameOf(match.players, owner)
-                  : isNext
-                    ? `海盗 · 花费 ${slot?.cost ?? 5}₱（须从船头依次入座）`
-                    : '须先占前方座位'
-              }
-              onClick={clickable ? () => place(id) : undefined}
-            />
+            {body}
           </div>
         )
       })}
@@ -476,9 +579,27 @@ export function ShoreModule({
   slotId: string
   label: string
 }) {
+  const { w: boardW, h: boardH } = useBoardPx()
   const slot = (match.slots || []).find((s) => s.id === slotId)
+  const padQ = costPadQuad(slotId)
   const pos = SHORE_POS[slotId]
-  if (!slot || !pos) return null
+  if (!slot) return null
+  if (padQ) {
+    return (
+      <aside className="manila-module manila-module--shore-wrap" aria-label={label}>
+        <WarpedBoardSpot
+          slot={slot}
+          occupiedMap={occupiedMap}
+          players={match.players}
+          canPlace={canPlace}
+          place={place}
+          boardW={boardW}
+          boardH={boardH}
+        />
+      </aside>
+    )
+  }
+  if (!pos) return null
   return (
     <aside
       className={`manila-module manila-module--hit manila-module--${slotId}`}
@@ -491,7 +612,6 @@ export function ShoreModule({
         players={match.players}
         canPlace={canPlace}
         place={place}
-        payBeside="right"
       />
     </aside>
   )
@@ -503,24 +623,18 @@ function SpotFromSlot({
   players,
   canPlace,
   place,
-  payBeside,
 }: {
   slot: SlotT
   occupiedMap: Map<string, string>
   players: ManilaMatch['players']
   canPlace: boolean
   place: (id: string) => void
-  payBeside?: 'left' | 'right' | 'up-right' | 'on'
 }) {
   const owner = occupiedMap.get(slot.id)
   const free = !owner
   const clickable = canPlace && free
   const cfg = spotConfig(slot.id)
-  const beside = payBeside ?? cfg?.pad.display.pay_beside
-  const roleTag =
-    slot.id === 'pilot_small' || slot.id === 'pilot_large' || slot.id === 'insurance'
-      ? (slot.id as ManilaRoleTag)
-      : null
+  const roleTag = (cfg?.pad.display.role_tag ?? null) as RoleTagId | null
   const isInsurance = slot.kind === 'insurance'
   return (
     <ManilaSpot
@@ -528,8 +642,8 @@ function SpotFromSlot({
       cost={isInsurance ? null : slot.cost}
       payout={isInsurance ? 10 : slot.payout > 0 ? slot.payout : null}
       insuranceBonus={isInsurance}
-      roleTag={isInsurance ? null : roleTag}
-      payBeside={isInsurance ? 'on' : beside === 'none' ? undefined : beside}
+      roleTag={roleTag}
+      payBeside={isInsurance ? 'on' : undefined}
       ownerSeat={owner ? seatOf(players, owner) : undefined}
       ownerName={owner ? nameOf(players, owner) : undefined}
       live={clickable}
@@ -538,6 +652,88 @@ function SpotFromSlot({
       title={spotTitle(slot)}
       onClick={clickable ? () => place(slot.id) : undefined}
     />
+  )
+}
+
+/** Cost + pay from boardConfig: quad warp, or centered circle (insurance bake). */
+function WarpedBoardSpot({
+  slot,
+  occupiedMap,
+  players,
+  canPlace,
+  place,
+  boardW,
+  boardH,
+}: {
+  slot: SlotT
+  occupiedMap: Map<string, string>
+  players: ManilaMatch['players']
+  canPlace: boolean
+  place: (id: string) => void
+  boardW: number
+  boardH: number
+}) {
+  const cfg = spotConfig(slot.id)
+  const padQ = costPadQuad(slot.id)
+  const payQ = payPadQuad(slot.id)
+  const disp = cfg?.pad.display
+  const centered = disp?.paste_mode === 'centered'
+  const badgeD = disp?.badge_d_px ?? 56
+  const showPay = Boolean(payQ && slot.payout > 0 && !centered && disp?.pay_beside !== 'on')
+
+  if (centered && cfg) {
+    const c = cfg.pad.center
+    const dPct = (badgeD / 1024) * 100
+    return (
+      <div
+        className="manila-dock__spot manila-dock__spot--centered"
+        data-manila-pay={slot.id}
+        style={{
+          left: `${c.x}%`,
+          top: `${c.y}%`,
+          width: `${dPct}%`,
+          height: `${dPct}%`,
+          transform: 'translate(-50%, -50%)',
+        }}
+      >
+        <SpotFromSlot
+          slot={slot}
+          occupiedMap={occupiedMap}
+          players={players}
+          canPlace={canPlace}
+          place={place}
+        />
+      </div>
+    )
+  }
+
+  if (!padQ) return null
+  const payStyle = payQ && showPay ? padSpotStyle(payQ, boardW, boardH) : null
+  return (
+    <>
+      {payStyle ? (
+        <div
+          className="manila-dock__pay manila-dock__pay--warped"
+          data-manila-pay={slot.id}
+          style={payStyle}
+          aria-hidden
+        >
+          <ManilaPayBadge value={slot.payout} />
+        </div>
+      ) : null}
+      <div
+        className="manila-dock__spot manila-dock__spot--warped"
+        style={padSpotStyle(padQ, boardW, boardH)}
+      >
+        <SpotFromSlot
+          slot={slot}
+          occupiedMap={occupiedMap}
+          players={players}
+          canPlace={canPlace}
+          place={place}
+        />
+      </div>
+    </>
   )
 }
 

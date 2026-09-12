@@ -1,69 +1,114 @@
 import { useEffect, useRef, useState } from 'react'
-import Dice from 'react-dice-roll'
-import type { DiceRef } from 'react-dice-roll'
 import { dieSrc } from './assets'
 
 type Props = {
-  /** Server-authoritative faces for the three sailing ships (1–6). */
+  /** Server-authoritative faces (1–6), one per ship that rolled. */
   values: number[] | null
+  /** Harbor master clicked roll; animate drop while waiting for server. */
+  pending?: boolean
   onDone?: () => void
 }
 
-const FACES = [1, 2, 3, 4, 5, 6].map((n) => dieSrc(n))
+type Phase = 'idle' | 'falling' | 'settle'
+
+function randFaces(n: number): number[] {
+  return Array.from({ length: n }, () => 1 + Math.floor(Math.random() * 6))
+}
 
 /**
- * Plays a 3d6 tumble via react-dice-roll once values arrive from the server.
+ * Dice fall from above with spin, then settle on server faces.
  */
-export function ManilaDiceOverlay({ values, onDone }: Props) {
-  const refs = [useRef<DiceRef>(null), useRef<DiceRef>(null), useRef<DiceRef>(null)]
-  const [open, setOpen] = useState(false)
-  const doneCount = useRef(0)
+export function ManilaDiceOverlay({ values, pending = false, onDone }: Props) {
+  const [phase, setPhase] = useState<Phase>('idle')
+  const [faces, setFaces] = useState<number[]>([1, 1, 1])
+  const [session, setSession] = useState(0)
+  const count = Math.max(1, values?.length || 3)
   const key = values?.join('-') ?? ''
+  const doneRef = useRef(false)
+  const spinRef = useRef(0)
+  const lastKey = useRef('')
+  const phaseRef = useRef<Phase>('idle')
 
   useEffect(() => {
-    if (!values || values.length < 3) return
-    setOpen(true)
-    doneCount.current = 0
-    const t = window.setTimeout(() => {
-      values.slice(0, 3).forEach((v, i) => {
-        refs[i].current?.rollDice(v)
-      })
-    }, 80)
-    return () => window.clearTimeout(t)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key])
+    phaseRef.current = phase
+  }, [phase])
 
-  if (!open || !values || values.length < 3) return null
-
-  const onOneDone = () => {
-    doneCount.current += 1
-    if (doneCount.current >= 3) {
-      window.setTimeout(() => {
-        setOpen(false)
-        onDone?.()
-      }, 480)
-    }
+  const beginFall = (n: number) => {
+    doneRef.current = false
+    setSession((s) => s + 1)
+    setFaces(randFaces(n))
+    setPhase('falling')
   }
+
+  useEffect(() => {
+    if (!pending) return
+    if (phaseRef.current === 'falling' || phaseRef.current === 'settle') return
+    beginFall(count)
+  }, [pending, count])
+
+  useEffect(() => {
+    if (!values || values.length < 1) return
+    if (key === lastKey.current) return
+    lastKey.current = key
+    if (phaseRef.current === 'idle') beginFall(values.length)
+  }, [key, values])
+
+  useEffect(() => {
+    if (phase !== 'falling') {
+      window.clearInterval(spinRef.current)
+      return
+    }
+    const n = faces.length || count
+    spinRef.current = window.setInterval(() => setFaces(randFaces(n)), 70)
+    return () => window.clearInterval(spinRef.current)
+  }, [phase, count, faces.length])
+
+  useEffect(() => {
+    if (!values || values.length < 1 || phase !== 'falling') return
+    const delay = pending ? 780 : 560
+    const settleAt = window.setTimeout(() => {
+      window.clearInterval(spinRef.current)
+      setFaces(values.map((v) => Math.min(6, Math.max(1, v || 1))))
+      setPhase('settle')
+    }, delay)
+    return () => window.clearTimeout(settleAt)
+  }, [values, phase, pending])
+
+  useEffect(() => {
+    if (phase !== 'settle' || doneRef.current) return
+    const t = window.setTimeout(() => {
+      doneRef.current = true
+      setPhase('idle')
+      onDone?.()
+    }, 1250)
+    return () => window.clearTimeout(t)
+  }, [phase, onDone])
+
+  if (phase === 'idle') return null
 
   return (
     <div className="manila-dice-overlay" role="status" aria-live="polite">
-      <div className="manila-dice-overlay__panel">
-        <p>掷骰</p>
+      <div className={`manila-dice-overlay__stage is-${phase}`}>
+        <p className="manila-dice-overlay__label">{phase === 'settle' ? '前进！' : '掷骰…'}</p>
         <div className="manila-dice-overlay__row">
-          {values.slice(0, 3).map((v, i) => (
-            <Dice
-              key={`${key}-${i}`}
-              ref={refs[i]}
-              size={72}
-              rollingTime={1100}
-              faces={FACES}
-              cheatValue={v as 1 | 2 | 3 | 4 | 5 | 6}
-              defaultValue={1}
-              triggers={[]}
-              onRoll={onOneDone}
-            />
+          {faces.map((face, i) => (
+            <div
+              key={`${session}-${i}`}
+              className={`manila-die-drop is-${phase}`}
+              style={{ animationDelay: `${i * 95}ms` }}
+            >
+              <img
+                className="manila-die-drop__face"
+                src={dieSrc(face)}
+                alt={phase === 'settle' ? String(face) : ''}
+                draggable={false}
+              />
+            </div>
           ))}
         </div>
+        {phase === 'settle' && values && values.length >= 1 ? (
+          <p className="manila-dice-overlay__sum">{values.join(' · ')}</p>
+        ) : null}
       </div>
     </div>
   )

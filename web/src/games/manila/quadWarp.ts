@@ -79,8 +79,13 @@ export function matrix3dForQuad(quadLocal: [number, number][], w: number, h: num
   return `matrix3d(${m.map((v) => Number(v.toFixed(6))).join(',')})`
 }
 
-/** Berth ship style: absolute box + perspective warp onto quad. */
-export function berthShipStyle(quad: QuadPct): {
+/** Berth ship style: absolute box + perspective warp onto quad.
+ * Pass board size in CSS px so matrix maps element pixels correctly under zoom. */
+export function berthShipStyle(
+  quad: QuadPct,
+  boardW = 0,
+  boardH = 0,
+): {
   left: string
   top: string
   width: string
@@ -89,17 +94,35 @@ export function berthShipStyle(quad: QuadPct): {
   transformOrigin: string
 } {
   const box = quadBBox(quad)
+  if (boardW < 2 || boardH < 2) {
+    return {
+      left: `${box.x}%`,
+      top: `${box.y}%`,
+      width: `${box.w}%`,
+      height: `${box.h}%`,
+      transform: 'none',
+      transformOrigin: '0 0',
+    }
+  }
+  const pxW = (box.w / 100) * boardW
+  const pxH = (box.h / 100) * boardH
   const local: [number, number][] = quad.map(
-    ([x, y]) => [x - box.x, y - box.y] as [number, number],
+    ([x, y]) =>
+      [((x - box.x) / 100) * boardW, ((y - box.y) / 100) * boardH] as [number, number],
   )
   return {
     left: `${box.x}%`,
     top: `${box.y}%`,
     width: `${box.w}%`,
     height: `${box.h}%`,
-    transform: matrix3dForQuad(local, box.w, box.h),
+    transform: matrix3dForQuad(local, pxW, pxH),
     transformOrigin: '0 0',
   }
+}
+
+/** Translate a pad quad by board % — used for pay badges (same plane as cost). */
+export function shiftQuad(quad: QuadPct, dxPct: number, dyPct: number): QuadPct {
+  return quad.map(([x, y]) => [x + dxPct, y + dyPct]) as QuadPct
 }
 
 /** Cover berth: fixed ship size everywhere; only position + heading change. */
@@ -129,7 +152,11 @@ export function coverBerthStyle(
 }
 
 /** Cost-pad spot: same perspective box so badge sits on the mat plane. */
-export function padSpotStyle(quad: QuadPct): {
+export function padSpotStyle(
+  quad: QuadPct,
+  boardW = 0,
+  boardH = 0,
+): {
   left: string
   top: string
   width: string
@@ -137,5 +164,5 @@ export function padSpotStyle(quad: QuadPct): {
   transform: string
   transformOrigin: string
 } {
-  return berthShipStyle(quad)
+  return berthShipStyle(quad, boardW, boardH)
 }

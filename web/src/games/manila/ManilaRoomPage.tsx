@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { MessagePlugin } from 'tdesign-react'
-import { api, apiErrorMessage, getToken, type ManilaPlayer, type ManilaRoom } from '@/api'
+import { api, apiErrorMessage, getToken, isUnauthorizedError, type ManilaPlayer, type ManilaRoom } from '@/api'
 import { ManilaBoard } from './ManilaBoard'
 import { COIN, meepleSrc, PAWN_LABEL, SHARE_BACK, shareSrc } from './assets'
 import { WARE_LABEL } from './rulesContent'
@@ -11,6 +11,53 @@ import './manila.css'
 const LOGIN_HREF = (code: string) => `/?next=${encodeURIComponent(`/game/manila/r/${code}`)}`
 
 const WARES = ['nutmeg', 'silk', 'ginseng', 'jade'] as const
+
+type HudShare = {
+  key: string
+  ware: string
+  n: number
+  secret: boolean
+  enc: boolean
+  /** 本人：该货种里有多少张是暗股（合并展示用） */
+  secretN?: number
+}
+
+function buildHudShares(player: ManilaPlayer, isSelf: boolean): HudShare[] {
+  const out: HudShare[] = []
+  for (const w of WARES) {
+    const pub = player.publicShares?.[w] || 0
+    const sec = isSelf ? player.secretShares?.[w] || 0 : 0
+    const free = pub + sec
+    if (free > 0) {
+      out.push({
+        key: `free-${w}`,
+        ware: w,
+        n: free,
+        secret: sec > 0 && pub === 0,
+        enc: false,
+        secretN: sec,
+      })
+    }
+  }
+  if (!isSelf && (player.secretCount || 0) > 0) {
+    out.push({
+      key: 'secret-back',
+      ware: 'back',
+      n: player.secretCount || 0,
+      secret: true,
+      enc: false,
+    })
+  }
+  if (isSelf) {
+    for (const w of WARES) {
+      const n = player.encumbered?.[w] || 0
+      if (n > 0) {
+        out.push({ key: `enc-${w}`, ware: w, n, secret: false, enc: true })
+      }
+    }
+  }
+  return out
+}
 
 function PlayerHudIcons({
   player,
@@ -24,27 +71,7 @@ function PlayerHudIcons({
   isTurn?: boolean
 }) {
   const left = Math.max(0, player.accomplicesLeft ?? 0)
-  const pub = WARES.flatMap((w) => {
-    const n = player.publicShares?.[w] || 0
-    return n > 0 ? [{ ware: w, n, secret: false as const, enc: false as const }] : []
-  })
-  const secSelf = isSelf
-    ? WARES.flatMap((w) => {
-        const n = player.secretShares?.[w] || 0
-        return n > 0 ? [{ ware: w, n, secret: true as const, enc: false as const }] : []
-      })
-    : []
-  const secOther =
-    !isSelf && (player.secretCount || 0) > 0
-      ? [{ ware: 'back', n: player.secretCount || 0, secret: true as const, enc: false as const }]
-      : []
-  const enc = isSelf
-    ? WARES.flatMap((w) => {
-        const n = player.encumbered?.[w] || 0
-        return n > 0 ? [{ ware: w, n, secret: false as const, enc: true as const }] : []
-      })
-    : []
-  const shares = [...pub, ...secSelf, ...secOther, ...enc]
+  const shares = buildHudShares(player, isSelf)
 
   return (
     <div className="manila-rail-card__inner">
@@ -64,7 +91,11 @@ function PlayerHudIcons({
         </div>
       </div>
       <div className="manila-rail-card__stats">
-        <span className="manila-rail-stat" title={`现金 ${player.cash}`}>
+        <span
+          className="manila-rail-stat"
+          data-manila-rail-cash={player.userId}
+          title={`现金 ${player.cash}`}
+        >
           <img src={COIN} alt="" className="manila-rail-stat__ico" />
           <em>{player.cash}</em>
         </span>
@@ -94,24 +125,26 @@ function PlayerHudIcons({
           shares.map((s) => {
             const src =
               s.secret && (s.ware === 'back' || !isSelf) ? SHARE_BACK : shareSrc(s.ware)
+            const label = WARE_LABEL[s.ware] || s.ware
+            const title = s.enc
+              ? `已抵押 ${label} ×${s.n}`
+              : s.ware === 'back'
+                ? `暗股 ×${s.n}`
+                : s.secretN && s.secretN > 0 && s.secretN < s.n
+                  ? `${label} ×${s.n}（含暗股 ${s.secretN}）`
+                  : s.secret || (s.secretN ?? 0) > 0
+                    ? `暗股 ${label} ×${s.n}`
+                    : `${label} ×${s.n}`
             return (
               <span
-                key={`${s.enc ? 'e' : s.secret ? 's' : 'p'}-${s.ware}`}
-              className={`manila-rail-share is-tag${s.secret ? ' is-secret' : ''}${
+                key={s.key}
+                className={`manila-rail-share is-tag${s.secret || (s.secretN ?? 0) > 0 ? ' is-secret' : ''}${
                   s.enc ? ' is-enc' : ''
                 }`}
-                title={
-                  s.enc
-                    ? `已抵押 ${WARE_LABEL[s.ware] || s.ware} ×${s.n}`
-                    : s.secret
-                      ? s.ware === 'back'
-                        ? `暗股 ×${s.n}`
-                        : `暗股 ${WARE_LABEL[s.ware] || s.ware} ×${s.n}`
-                      : `${WARE_LABEL[s.ware] || s.ware} ×${s.n}`
-                }
+                title={title}
               >
                 <img src={src} alt="" />
-                <em>×{s.n}</em>
+                {s.n > 1 ? <em className="manila-rail-share__qty">×{s.n}</em> : null}
               </span>
             )
           })
@@ -144,9 +177,17 @@ export function ManilaRoomPage() {
       .manilaJoinRoom(code)
       .then(setRoom)
       .catch(async (e) => {
+        if (isUnauthorizedError(e)) {
+          navigate(LOGIN_HREF(code), { replace: true })
+          return
+        }
         try {
           setRoom(await api.manilaGetRoom(code))
-        } catch {
+        } catch (e2) {
+          if (isUnauthorizedError(e2)) {
+            navigate(LOGIN_HREF(code), { replace: true })
+            return
+          }
           MessagePlugin.error(apiErrorMessage(e, '无法进入房间'))
           navigate('/game/manila')
         }
@@ -201,26 +242,84 @@ export function ManilaRoomPage() {
             </span>
             <span>{room?.isPrivate ? '私密房' : '公开房'}</span>
           </div>
-          <ul className="manila-seats">
-            {(room?.members || []).map((m) => (
-              <li key={m.userId} className={`manila-seat${m.connected ? '' : ' is-away'}`}>
-                <strong>{m.username}</strong>
-                <span>
-                  {m.isHost ? '房主' : m.ready ? '已准备' : '未准备'}
-                  {!m.connected ? ' · 离线' : ''}
-                </span>
-                {isHost && m.userId !== meId && (
-                  <button
-                    type="button"
-                    className="manila-text-btn"
-                    onClick={() => send({ type: 'kick', userId: m.userId })}
-                  >
-                    踢出
-                  </button>
-                )}
-              </li>
-            ))}
-          </ul>
+          <div className="manila-seat-stage" aria-label="座位">
+            {Array.from({ length: room?.maxPlayers || 4 }, (_, seat) => {
+              const m = (room?.members || []).find((x) => (x.seat ?? -1) === seat)
+              const isFirst = (room?.firstSeat ?? 0) === seat
+              const isMe = m?.userId === meId
+              const canSit = !m && !!meId
+              return (
+                <div
+                  key={seat}
+                  className={`manila-pad-seat${m ? ' is-filled' : ' is-empty'}${
+                    isFirst ? ' is-first' : ''
+                  }${isMe ? ' is-me' : ''}${!m?.connected && m ? ' is-away' : ''}`}
+                >
+                  <span className="manila-pad-seat__idx">{seat + 1}</span>
+                  {isFirst ? <em className="manila-pad-seat__tag">起始</em> : null}
+                  {m ? (
+                    <>
+                      <img
+                        className="manila-pad-seat__avatar"
+                        src={meepleSrc(m.seat)}
+                        alt=""
+                        draggable={false}
+                      />
+                      <strong className="manila-pad-seat__name">{m.username}</strong>
+                      <span className="manila-pad-seat__meta">
+                        {m.isHost ? '房主' : m.ready ? '已准备' : '未准备'}
+                        {!m.connected ? ' · 离线' : ''}
+                      </span>
+                      <div className="manila-pad-seat__acts">
+                        {!isMe && me ? (
+                          <button
+                            type="button"
+                            className="manila-text-btn manila-pad-seat__swap"
+                            onClick={() => send({ type: 'swap_seat', seat })}
+                          >
+                            交换座位
+                          </button>
+                        ) : null}
+                        {isHost && !isFirst ? (
+                          <button
+                            type="button"
+                            className="manila-text-btn"
+                            onClick={() => send({ type: 'set_first_seat', seat })}
+                          >
+                            设为起始
+                          </button>
+                        ) : null}
+                        {isHost && m.userId !== meId ? (
+                          <button
+                            type="button"
+                            className="manila-text-btn"
+                            onClick={() => send({ type: 'kick', userId: m.userId })}
+                          >
+                            踢出
+                          </button>
+                        ) : null}
+                      </div>
+                    </>
+                  ) : (
+                    <button
+                      type="button"
+                      className="manila-pad-seat__sit"
+                      disabled={!canSit}
+                      onClick={() => send({ type: 'claim_seat', seat })}
+                    >
+                      <span className="manila-pad-seat__sit-ico" aria-hidden>
+                        ＋
+                      </span>
+                      入座
+                    </button>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+          <p className="manila-muted manila-waiting-seat-hint">
+            空位点「入座」，他人座位点「交换座位」；房主可指定起始与踢出。换座不更换房主。
+          </p>
           <div className="manila-waiting-actions">
             {isHost && (
               <div className="manila-waiting-settings">

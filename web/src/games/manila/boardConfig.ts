@@ -8,7 +8,7 @@
  * File: boardConfig.json (synced under public/games/manila/board/)
  */
 import cfg from './boardConfig.json'
-import { berthShipStyle, coverBerthStyle, padSpotStyle, quadBBox, type PctPos, type QuadPct } from './quadWarp'
+import { berthShipStyle, coverBerthStyle, padSpotStyle, quadBBox, shiftQuad, type PctPos, type QuadPct } from './quadWarp'
 
 export type { PctPos, QuadPct } from './quadWarp'
 
@@ -23,6 +23,10 @@ export type SpotDisplay = {
   pay_beside: PayBeside
   pay_offset_pct?: [number, number]
   role_tag: RoleTagId | null
+  /** board-effect: centered circle (no pad-quad warp), e.g. insurance */
+  paste_mode?: 'centered' | 'quad'
+  /** Fixed badge diameter in board px when paste_mode=centered (bake uses 56) */
+  badge_d_px?: number
 }
 
 export type SpotConfig = {
@@ -100,6 +104,18 @@ export function spotConfig(id: string): SpotConfig | null {
 export function spotPadQuad(id: string): QuadPct | null {
   const s = spotConfig(id)
   return s ? s.pad.quad_pct : null
+}
+
+/** Pay badge quad = cost pad shifted by display.pay_offset_pct (board-effect bake). */
+export function payPadQuad(id: string): QuadPct | null {
+  const s = spotConfig(id)
+  if (!s?.pad.display.pay_badge) return null
+  const beside = s.pad.display.pay_beside
+  if (!beside || beside === 'none' || beside === 'on') return null
+  const off = s.pad.display.pay_offset_pct
+  if (!off) return null
+  const q = s.pad.quad_pct
+  return shiftQuad(q, off[0], off[1])
 }
 
 export function spotPadCenter(id: string): PctPos | null {
@@ -213,4 +229,4 @@ export function boardSpotDefs() {
   }))
 }
 
-export { berthShipStyle, coverBerthStyle, padSpotStyle }
+export { berthShipStyle, coverBerthStyle, padSpotStyle, shiftQuad }

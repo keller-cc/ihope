@@ -607,7 +607,7 @@ def build_anchors():
     }
 
     # Pirate seats: on painted deck pads (auto-detected gray pad centers)
-    for pid, x, y in [("pirate_0", 27.8, 42.8), ("pirate_1", 31.5, 43.1), ("pirate_2", 35.3, 43.4)]:
+    for pid, x, y in [("pirate_0", 35.3, 43.4), ("pirate_1", 31.5, 43.1), ("pirate_2", 27.8, 42.8)]:
         plane = REGION_PAD["pirate"]
         cost_pads[pid] = {
             "id": pid,

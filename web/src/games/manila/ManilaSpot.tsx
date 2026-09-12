@@ -19,17 +19,19 @@ export type ManilaSpotProps = {
   disabled?: boolean
   title?: string
   className?: string
-  /** Port / yard: payout chip relative to cost well. */
-  payBeside?: 'left' | 'right' | 'up-right' | 'on'
+  /**
+   * - omit: cost disc only (pay is a separate warped layer)
+   * - 'on': yellow pay disc on this pad (insurance)
+   */
+  payBeside?: 'on'
   /** Stable id for fly-to / confirm targeting */
   slotId?: string
   onClick?: () => void
 }
 
 /**
- * Badge overlays the painted well; meeple stacks on top.
- * Cost always ON the pad when present.
- * Payout / role icons sit BESIDE the pad (never covering the well).
+ * Cost / on-pad pay disc fills the parent box.
+ * Insurance uses the yellow pay art (+N), same as board-effect bake.
  */
 export function ManilaSpot({
   cost,
@@ -51,36 +53,29 @@ export function ManilaSpot({
   const hasCost = cost != null && cost > 0
   const hasPay = payout != null && payout > 0
   const roleSrc = roleTag ? ROLE_TAG[roleTag] : null
+  const payOnPad = payBeside === 'on' || !!insuranceBonus
 
-  // Cost stays in the well (pad). Role icons + pay go beside — except insurance pay ON pad.
-  const inWellCost =
-    insuranceBonus || payBeside === 'on'
-      ? hasPay || insuranceBonus
-        ? `+${insuranceBonus ? 10 : payout}`
-        : null
+  const showWellDisc = hasCost || payOnPad || occupied
+  const wellText = occupied
+    ? null
+    : payOnPad
+      ? `+${insuranceBonus ? 10 : payout}`
       : hasCost
         ? String(cost)
         : null
-  const besidePay =
-    insuranceBonus || payBeside === 'on'
-      ? null
-      : hasPay
-        ? `+${payout}`
-        : null
-  const besideSide = payBeside === 'left' || payBeside === 'up-right' ? payBeside : 'right'
 
   const label =
     title ||
     (occupied
       ? ownerName || '已占用'
-      : insuranceBonus
+      : insuranceBonus || payOnPad
         ? '保险 · 立即 +10₱'
         : hasCost && hasPay
           ? `花费 ${cost} · 到账 ${payout}`
           : hasCost
             ? `花费 ${cost}`
-            : hasPay || insuranceBonus
-              ? `到账 ${insuranceBonus ? 10 : payout}`
+            : hasPay
+              ? `到账 ${payout}`
               : '空位')
 
   return (
@@ -89,27 +84,19 @@ export function ManilaSpot({
       data-manila-slot={slotId || undefined}
       className={`manila-spot${live ? ' is-live' : ''}${taken || occupied ? ' is-taken' : ''}${
         roleSrc ? ' manila-spot--role' : ''
-      }${besidePay || roleSrc ? ` manila-spot--pay-${besideSide}` : ''}${
-        payBeside === 'on' || insuranceBonus ? ' manila-spot--pay-on' : ''
-      }${className ? ` ${className}` : ''}`}
+      }${payOnPad ? ' manila-spot--pay-on' : ''}${className ? ` ${className}` : ''}`}
       disabled={disabled || !onClick}
       onClick={onClick}
       title={label}
       aria-label={label}
     >
-      {inWellCost != null ? (
+      {showWellDisc ? (
         <span
-          className={`manila-spot__badge${
-            payBeside === 'on' || insuranceBonus ? ' manila-spot__badge--pay' : ' manila-spot__badge--cost'
-          }`}
+          className={`manila-spot__badge ${payOnPad ? 'manila-spot__badge--pay' : 'manila-spot__badge--cost'}`}
           aria-hidden
         >
-          <img
-            src={payBeside === 'on' || insuranceBonus ? SPOT_BADGE_PAY : SPOT_BADGE_COST}
-            alt=""
-            draggable={false}
-          />
-          <em>{inWellCost}</em>
+          <img src={payOnPad ? SPOT_BADGE_PAY : SPOT_BADGE_COST} alt="" draggable={false} />
+          {wellText != null ? <em>{wellText}</em> : null}
         </span>
       ) : null}
 
@@ -119,21 +106,21 @@ export function ManilaSpot({
         </span>
       ) : null}
 
-      {besidePay != null ? (
-        <span
-          className={`manila-spot__outer manila-spot__badge manila-spot__badge--pay${
-            roleSrc ? ' manila-spot__outer--stack' : ''
-          }`}
-          aria-hidden
-        >
-          <img src={SPOT_BADGE_PAY} alt="" draggable={false} />
-          <em>{besidePay}</em>
-        </span>
-      ) : null}
-
       {occupied ? (
         <img className="manila-spot__meeple" src={meepleSrc(ownerSeat)} alt={ownerName || ''} />
       ) : null}
     </button>
+  )
+}
+
+/** Yellow pay disc — parent must be the pay pad’s warped quad. */
+export function ManilaPayBadge({ value }: { value: number }) {
+  return (
+    <span className="manila-spot manila-spot--pay-layer" aria-hidden>
+      <span className="manila-spot__badge manila-spot__badge--pay">
+        <img src={SPOT_BADGE_PAY} alt="" draggable={false} />
+        <em>+{value}</em>
+      </span>
+    </span>
   )
 }

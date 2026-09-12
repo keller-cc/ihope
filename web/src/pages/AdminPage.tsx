@@ -15,6 +15,7 @@ import {
   getAdminToken,
   setAdminToken,
   type AdminConversation,
+  type AdminDinoScore,
   type AdminDomain,
   type AdminFellowship,
   type AdminGroupDetail,
@@ -71,6 +72,12 @@ export function AdminPage() {
   const [manilaRooms, setManilaRooms] = useState<AdminManilaRoom[]>([])
   const [manilaResults, setManilaResults] = useState<AdminManilaResult[]>([])
   const [manilaMaxAge, setManilaMaxAge] = useState('1h0m0s')
+  const [dinoScores, setDinoScores] = useState<AdminDinoScore[]>([])
+  const [dinoScoreEdit, setDinoScoreEdit] = useState<{
+    userId: string
+    username: string
+    score: string
+  } | null>(null)
 
   const fellowshipOptions = fellowships.map((f) => ({
     label: `${f.name || f.code}（${f.domainName}）`,
@@ -85,13 +92,13 @@ export function AdminPage() {
     fellowships: fellowships.length,
     qq: qqBindings.length,
     conversations: conversations.length,
-    games: manilaRooms.length,
+    games: manilaRooms.length + dinoScores.length,
   }
 
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const [u, c, qq, d, f, manilaLive, manilaHist] = await Promise.all([
+      const [u, c, qq, d, f, manilaLive, manilaHist, dinoBoard] = await Promise.all([
         adminApi.listUsers(),
         adminApi.listConversations(),
         adminApi.listQQBindings(),
@@ -99,6 +106,7 @@ export function AdminPage() {
         adminApi.listFellowships(),
         adminApi.listManilaRooms(),
         adminApi.listManilaResults(50),
+        adminApi.listDinoLeaderboard(200),
       ])
       setUsers(u.users)
       setConversations(c.conversations)
@@ -110,6 +118,7 @@ export function AdminPage() {
       setManilaRooms(manilaLive.rooms || [])
       setManilaMaxAge(manilaLive.maxAge || '1h0m0s')
       setManilaResults(manilaHist.results || [])
+      setDinoScores(dinoBoard.scores || [])
       setFellowshipDraft((prev) => ({
         ...prev,
         domainId: prev.domainId || d.domains?.[0]?.id || '',
@@ -227,6 +236,27 @@ export function AdminPage() {
       setPasswordDialog(null)
     } catch (e) {
       MessagePlugin.error(apiErrorMessage(e, '设置密码失败'))
+    }
+  }
+
+  const submitDinoScoreEdit = async () => {
+    if (!dinoScoreEdit) return
+    const score = Number(dinoScoreEdit.score)
+    if (!Number.isFinite(score) || score < 0 || !Number.isInteger(score)) {
+      MessagePlugin.warning('请输入非负整数分数')
+      return
+    }
+    if (score > 1_000_000) {
+      MessagePlugin.warning('分数过高')
+      return
+    }
+    try {
+      await adminApi.setDinoScore(dinoScoreEdit.userId, score)
+      MessagePlugin.success('成绩已更新')
+      setDinoScoreEdit(null)
+      await load()
+    } catch (e) {
+      MessagePlugin.error(apiErrorMessage(e, '改分失败'))
     }
   }
 
@@ -888,7 +918,7 @@ export function AdminPage() {
             马尼拉 · 房间创建后超过 {manilaMaxAge} 会自动结束并释放内存。可强制结束异常对局；玩家可在大厅查看自己的历史战绩。
           </p>
         </div>
-        <h3 style={{ margin: '0 0 8px', fontSize: 15 }}>进行中房间</h3>
+        <h3 style={{ margin: '0 0 8px', fontSize: 15 }}>马尼拉 · 进行中房间</h3>
         <Table
           rowKey="id"
           className="im-admin-table"
@@ -994,7 +1024,7 @@ export function AdminPage() {
             },
           ]}
         />
-        <h3 style={{ margin: '20px 0 8px', fontSize: 15 }}>最近战绩</h3>
+        <h3 style={{ margin: '20px 0 8px', fontSize: 15 }}>马尼拉 · 最近战绩</h3>
         <Table
           rowKey="id"
           className="im-admin-table"
@@ -1029,6 +1059,100 @@ export function AdminPage() {
                 (row.players || [])
                   .map((p) => `#${p.rank} ${p.username}(${p.fortune})`)
                   .join(' · ') || '—',
+            },
+          ]}
+        />
+
+        <h3 style={{ margin: '28px 0 8px', fontSize: 15 }}>Dino Dasher · 排行榜</h3>
+        <p className="im-muted im-admin__hint" style={{ margin: '0 0 8px' }}>
+          每位用户只保留最高分。可改分或清除成绩（从公开榜移除）。
+        </p>
+        <Table
+          rowKey="userId"
+          className="im-admin-table"
+          data={dinoScores}
+          loading={loading}
+          empty="暂无 Dino 成绩"
+          maxHeight={420}
+          resizable
+          tableLayout="fixed"
+          columns={[
+            {
+              colKey: 'rank',
+              title: '名次',
+              width: 64,
+              align: 'center',
+              cell: ({ row }) => <span className="im-admin-mono">#{row.rank}</span>,
+            },
+            {
+              colKey: 'username',
+              title: '用户',
+              width: 140,
+              ellipsis: true,
+            },
+            {
+              colKey: 'score',
+              title: '最高分',
+              width: 100,
+              cell: ({ row }) => <span className="im-admin-mono">{row.score}</span>,
+            },
+            {
+              colKey: 'createdAt',
+              title: '达成时间',
+              width: 160,
+              cell: ({ row }) => (
+                <span className="im-admin-mono">{formatTime(row.createdAt)}</span>
+              ),
+            },
+            {
+              colKey: 'userId',
+              title: '用户 ID',
+              ellipsis: true,
+              cell: ({ row }) => <span className="im-admin-mono">{row.userId}</span>,
+            },
+            {
+              colKey: 'op',
+              title: '操作',
+              align: 'center',
+              fixed: 'right',
+              resizable: false,
+              width: 140,
+              cell: ({ row }) => (
+                <div className="im-admin__ops">
+                  <Button
+                    size="small"
+                    variant="text"
+                    onClick={() =>
+                      setDinoScoreEdit({
+                        userId: row.userId,
+                        username: row.username,
+                        score: String(row.score),
+                      })
+                    }
+                  >
+                    改分
+                  </Button>
+                  <Button
+                    size="small"
+                    theme="danger"
+                    variant="text"
+                    onClick={() =>
+                      confirmAction({
+                        header: '清除成绩',
+                        body: `确定清除「${row.username}」的全部 Dino 成绩？公开排行榜将不再显示该用户。`,
+                        confirm: '清除',
+                        danger: true,
+                        success: '已清除',
+                        onOk: async () => {
+                          await adminApi.deleteDinoScores(row.userId)
+                        },
+                      })
+                    }
+                  >
+                    清除
+                  </Button>
+                </div>
+              ),
             },
           ]}
         />
@@ -1372,6 +1496,32 @@ export function AdminPage() {
                   setPasswordDialog((p) => (p ? { ...p, password: String(v) } : p))
                 }
                 onEnter={() => void submitAdminPassword()}
+              />
+            </label>
+          </div>
+        )}
+      </Dialog>
+
+      <Dialog
+        visible={!!dinoScoreEdit}
+        header={dinoScoreEdit ? `修改「${dinoScoreEdit.username}」的 Dino 成绩` : '修改成绩'}
+        onClose={() => setDinoScoreEdit(null)}
+        confirmBtn="保存"
+        cancelBtn="取消"
+        onConfirm={() => void submitDinoScoreEdit()}
+      >
+        {dinoScoreEdit && (
+          <div className="im-admin__form">
+            <label>
+              最高分（将覆盖该用户全部历史成绩）
+              <Input
+                type="number"
+                clearable
+                value={dinoScoreEdit.score}
+                onChange={(v) =>
+                  setDinoScoreEdit((p) => (p ? { ...p, score: String(v) } : p))
+                }
+                onEnter={() => void submitDinoScoreEdit()}
               />
             </label>
           </div>
