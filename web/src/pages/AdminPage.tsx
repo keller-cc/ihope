@@ -377,6 +377,8 @@ export function AdminPage() {
           data={filteredUsers}
           loading={loading}
           maxHeight={520}
+          resizable
+          tableLayout="fixed"
           columns={[
             { colKey: 'username', title: '用户名', width: 96, ellipsis: true },
             {
@@ -413,21 +415,21 @@ export function AdminPage() {
             {
               colKey: 'qqBound',
               title: 'QQ',
-              width: 56,
+              width: 60,
               align: 'center',
               cell: ({ row }) => (row.qqBound ? '已绑' : '未绑'),
             },
             {
               colKey: 'emailVerified',
               title: '已验证',
-              width: 64,
+              width: 80,
               align: 'center',
               cell: ({ row }) => (row.emailVerified ? '是' : '否'),
             },
             {
               colKey: 'lastSeenAt',
               title: '上次在线',
-              width: 128,
+              width: 140,
               cell: ({ row }) => (
                 <span className="im-admin-mono">
                   {row.online ? '在线' : formatLastSeen(row.lastSeenAt)}
@@ -437,7 +439,7 @@ export function AdminPage() {
             {
               colKey: 'createdAt',
               title: '注册',
-              width: 128,
+              width: 144,
               cell: ({ row }) => (
                 <span className="im-admin-mono">{formatTime(row.createdAt)}</span>
               ),
@@ -447,7 +449,8 @@ export function AdminPage() {
               title: '操作',
               align: 'center',
               fixed: 'right',
-              width: 280,
+              resizable: false,
+              width: 220,
               cell: ({ row }) => (
                 <div className="im-admin__ops">
                   <Button
@@ -532,6 +535,8 @@ export function AdminPage() {
           data={domains}
           loading={loading}
           maxHeight={520}
+          resizable
+          tableLayout="fixed"
           columns={[
             { colKey: 'name', title: '名称', ellipsis: true },
             {
@@ -553,6 +558,7 @@ export function AdminPage() {
               title: '操作',
               align: 'center',
               fixed: 'right',
+              resizable: false,
               width: 120,
               cell: ({ row }) => (
                 <div className="im-admin__ops">
@@ -641,6 +647,8 @@ export function AdminPage() {
           data={fellowships}
           loading={loading}
           maxHeight={520}
+          resizable
+          tableLayout="fixed"
           columns={[
             { colKey: 'code', title: '团契码', width: 140 },
             { colKey: 'name', title: '名称', width: 140, ellipsis: true },
@@ -659,6 +667,7 @@ export function AdminPage() {
               title: '操作',
               align: 'center',
               fixed: 'right',
+              resizable: false,
               width: 108,
               cell: ({ row }) => (
                 <div className="im-admin__ops">
@@ -708,6 +717,8 @@ export function AdminPage() {
         loading={loading}
         empty="暂无 QQ 绑定"
         maxHeight={520}
+        resizable
+        tableLayout="fixed"
         columns={[
           { colKey: 'username', title: '用户名', width: 120, ellipsis: true },
           {
@@ -746,6 +757,7 @@ export function AdminPage() {
             title: '操作',
             align: 'center',
             fixed: 'right',
+            resizable: false,
             width: 72,
             cell: ({ row }) => (
               <Button
@@ -782,6 +794,8 @@ export function AdminPage() {
           data={filteredConversations}
           loading={loading}
           maxHeight={520}
+          resizable
+          tableLayout="fixed"
           columns={[
             {
               colKey: 'type',
@@ -826,6 +840,7 @@ export function AdminPage() {
               title: '操作',
               align: 'center',
               fixed: 'right',
+              resizable: false,
               width: 108,
               cell: ({ row }) => (
                 <div className="im-admin__ops">
@@ -881,6 +896,8 @@ export function AdminPage() {
           loading={loading}
           empty="暂无内存中的马尼拉房间"
           maxHeight={320}
+          resizable
+          tableLayout="fixed"
           columns={[
             {
               colKey: 'code',
@@ -949,6 +966,7 @@ export function AdminPage() {
               title: '操作',
               align: 'center',
               fixed: 'right',
+              resizable: false,
               width: 100,
               cell: ({ row }) => (
                 <div className="im-admin__ops">
@@ -984,6 +1002,8 @@ export function AdminPage() {
           loading={loading}
           empty="暂无已落库战绩"
           maxHeight={320}
+          resizable
+          tableLayout="fixed"
           columns={[
             {
               colKey: 'roomCode',

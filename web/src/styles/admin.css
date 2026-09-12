@@ -106,20 +106,12 @@
 .im-admin__panel {
   margin-bottom: 0;
   padding: 12px;
-  overflow: hidden;
+  overflow: visible;
   min-height: 0;
 }
 
 .im-admin__panel .t-table {
   background: transparent;
-}
-
-.im-admin__panel .t-table .t-table__cell--fixed-right {
-  background: #fff !important;
-}
-
-.im-admin__panel .t-table__header .t-table__cell--fixed-right {
-  background: var(--td-bg-color-container, #fff) !important;
 }
 
 .im-admin__toolbar {
@@ -132,13 +124,12 @@
 
 .im-admin-table {
   width: 100%;
-  overflow-x: auto;
 }
 
+/* 可拉伸列宽交给 TDesign；勿强制覆盖 table 宽度，以免固定列盖住左列 */
+.im-admin-table.t-table,
 .im-admin-table .t-table {
-  table-layout: fixed;
-  width: 100%;
-  min-width: 980px;
+  background: transparent;
 }
 
 .im-admin-table .t-table__th,
@@ -154,22 +145,29 @@
   min-width: 0;
 }
 
-/* 操作列：左侧留出与「注册」等列的间距 */
-.im-admin-table .t-table__th--fixed-right,
-.im-admin-table .t-table__td--fixed-right,
-.im-admin-table th[class*='t-table__cell--fixed-right'],
-.im-admin-table td[class*='t-table__cell--fixed-right'] {
-  padding-left: 14px !important;
-  padding-right: 8px !important;
-  text-align: center !important;
+.im-admin-table .t-table__th {
+  position: relative;
 }
 
-/* 紧挨操作列的上一列（如「注册」）右侧留白，避免贴住分隔线 */
-.im-admin-table .t-table__th:has(+ .t-table__th--fixed-right),
-.im-admin-table .t-table__td:has(+ .t-table__td--fixed-right),
-.im-admin-table th:has(+ th[class*='t-table__cell--fixed-right']),
-.im-admin-table td:has(+ td[class*='t-table__cell--fixed-right']) {
-  padding-right: 16px !important;
+/* 右侧固定操作列：实底 + 左侧阴影，滚动时不透出左列文字 */
+.im-admin-table .t-table__cell--fixed-right,
+.im-admin-table .t-table__th--fixed-right,
+.im-admin-table .t-table__td--fixed-right,
+.im-admin-table th[class*='fixed-right'],
+.im-admin-table td[class*='fixed-right'] {
+  background: #fff !important;
+  box-shadow: -6px 0 8px -4px rgba(15, 23, 42, 0.12);
+  padding-left: 12px !important;
+  padding-right: 8px !important;
+  text-align: center !important;
+  z-index: 2;
+}
+
+.im-admin-table .t-table__header .t-table__cell--fixed-right,
+.im-admin-table .t-table__header .t-table__th--fixed-right,
+.im-admin-table thead th[class*='fixed-right'] {
+  background: var(--td-bg-color-container, #fff) !important;
+  z-index: 3;
 }
 
 .im-admin-mono {
