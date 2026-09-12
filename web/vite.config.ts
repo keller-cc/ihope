@@ -15,6 +15,8 @@ export default defineConfig({
   build: {
     // TDesign vendor alone is ~550 kB minified; routes are already lazy-split.
     chunkSizeWarningLimit: 600,
+    // Skip per-chunk gzip accounting (noticeable on Docker / CI).
+    reportCompressedSize: false,
     rolldownOptions: {
       output: {
         codeSplitting: {
@@ -80,7 +82,9 @@ export default defineConfig({
       workbox: {
         navigateFallback: '/index.html',
         navigateFallbackDenylist: [/^\/api/, /^\/ws/, /^\/uploads/],
-        globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2,webmanifest}'],
+        // App shell only — game art is large and fetched on demand.
+        globPatterns: ['**/*.{js,css,html,ico,woff2,webmanifest}'],
+        globIgnores: ['**/games/**'],
       },
     }),
   ],

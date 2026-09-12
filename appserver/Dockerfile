@@ -1,30 +1,35 @@
 # syntax=docker/dockerfile:1
-
-# Web + Go stages can run in parallel under BuildKit (heavy on Docker Desktop).
-# Tip (Windows): Docker Desktop → Settings → Resources — leave ≥2 CPU / 4GB for the host.
-# Tip: limit BuildKit workers via Docker Engine JSON: "builder": { "gc": { ... } }
-#   or create a builder with buildkitd.toml: [worker.oci] max-parallelism = 2
+#
+# Peak CPU is the main pain on Docker Desktop (Windows VM). This file:
+# 1) finishes the web build before starting Go (no parallel compile spikes)
+# 2) skips tsc in-image (CI/dev still run `pnpm build`)
+# 3) reuses pnpm / Go caches across builds
+#
+# Tip: Docker Desktop → Resources — leave ≥2 CPU / 4GB for the host.
 
 FROM node:22-bookworm-slim AS web
 WORKDIR /src/web
 ENV CI=true
 ENV PNPM_HOME=/pnpm
 ENV PATH=$PNPM_HOME:$PATH
-# Fewer Vite/tsc workers → less host stutter on small machines
-ENV NODE_OPTIONS=--max-old-space-size=2048
-RUN npm install -g pnpm@10.32.0
+ENV NODE_OPTIONS=--max-old-space-size=1536
+# Keep Vite/Node from spawning too many helpers beside the Go stage later.
+ENV UV_THREADPOOL_SIZE=2
+RUN corepack enable && corepack prepare pnpm@10.32.0 --activate
 COPY web/package.json web/pnpm-lock.yaml ./
 RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
     pnpm install --frozen-lockfile
 COPY web/ .
+# Docker image: vite only (typecheck locally / in CI).
 RUN --mount=type=cache,id=web-vite,target=/src/web/node_modules/.vite \
-    pnpm run build
+    pnpm run build:docker
 
 FROM golang:1.25-bookworm AS builder
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
 WORKDIR /src/appserver
-# Cap Go compile parallelism so it does not fight the Node stage / host UI
-ENV GOMAXPROCS=2
+# Serialize: do not touch Go modules until web dist exists (halves peak CPU).
+COPY --from=web /src/web/dist/index.html /tmp/web-ready.html
+ENV GOMAXPROCS=1
 COPY appserver/go.mod appserver/go.sum ./
 RUN --mount=type=cache,target=/go/pkg/mod \
     go mod download
