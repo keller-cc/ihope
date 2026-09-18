@@ -170,7 +170,9 @@
 .im-list {
   flex: 1;
   min-height: 0;
-  overflow: auto;
+  min-width: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
   list-style: none;
   margin: 0;
   padding: 0;
@@ -181,6 +183,9 @@
   align-items: center;
   gap: 10px;
   width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
   border: 0;
   background: transparent;
   text-align: left;
