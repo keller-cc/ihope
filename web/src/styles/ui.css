@@ -219,20 +219,25 @@
 .im-list-item__body {
   flex: 1;
   min-width: 0;
+  overflow: hidden;
   display: grid;
   gap: 2px;
 }
 
 .im-list-item__row {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
   gap: 8px;
+  min-width: 0;
+  width: 100%;
+  overflow: hidden;
 }
 
 .im-list-item__title {
-  flex: 1;
+  flex: 1 1 0;
   min-width: 0;
+  overflow: hidden;
   display: flex;
   align-items: center;
   gap: 4px;
@@ -241,31 +246,41 @@
 }
 
 .im-list-item__title-text {
+  flex: 1 1 0;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+.im-list-item__title .im-pin-mark,
+.im-list-item__title .im-mute-mark {
+  flex-shrink: 0;
+}
+
 .im-list-item__time {
-  flex: 0 0 4.75rem;
-  width: 4.75rem;
-  max-width: 4.75rem;
+  flex: 0 0 auto;
+  flex-shrink: 0;
   font-size: 0.72rem;
   color: var(--im-color-muted);
   text-align: right;
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
   font-variant-numeric: tabular-nums;
 }
 
 .im-list-item__preview {
+  flex: 1 1 0;
+  min-width: 0;
   font-size: 0.8rem;
   color: var(--im-color-muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.im-list-item__row .im-badge,
+.im-list-item__row .im-mute-mark--trail {
+  flex-shrink: 0;
 }
 
 .im-badge {

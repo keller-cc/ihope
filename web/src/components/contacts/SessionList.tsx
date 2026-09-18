@@ -74,12 +74,10 @@ export function SessionList({
             <span className="im-list-item__body">
               <span className="im-list-item__row">
                 <span className="im-list-item__title">
-                  <span className="im-list-item__title-text">
-                    {c.pinned ? (
-                      <PinFilledIcon className="im-pin-mark" size="14px" />
-                    ) : null}
-                    {conversationTitle(c)}
-                  </span>
+                  {c.pinned ? (
+                    <PinFilledIcon className="im-pin-mark" size="14px" />
+                  ) : null}
+                  <span className="im-list-item__title-text">{conversationTitle(c)}</span>
                   {c.muted ? (
                     <ChatOffIcon className="im-mute-mark" size="14px" />
                   ) : null}
