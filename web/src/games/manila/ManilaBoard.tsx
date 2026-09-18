@@ -101,6 +101,8 @@ export function ManilaBoard({ match, meId, send }: Props) {
   >([])
   const [holdShipPos, setHoldShipPos] = useState<Record<number, number> | null>(null)
   const [suppressBerth, setSuppressBerth] = useState(false)
+  /** Keep last settle sheet until the player dismisses it (next voyage must not auto-close). */
+  const [settleSheet, setSettleSheet] = useState<ManilaMatch | null>(null)
   const prevOccRef = useRef<Map<string, string>>(new Map())
   const prevBerthRef = useRef<Record<number, string | undefined>>({})
   const prevCashRef = useRef<Record<string, number>>({})
@@ -293,6 +295,12 @@ export function ManilaBoard({ match, meId, send }: Props) {
     prevCashRef.current = next
   }, [match.phase, match.players])
 
+  useEffect(() => {
+    if (match.phase === 'settle') {
+      setSettleSheet(match)
+    }
+  }, [match.phase, match.voyage, match.settlement, match.players])
+
   const place = requestPlace
 
   const startSum = startDraft[0] + startDraft[1] + startDraft[2]
@@ -339,7 +347,9 @@ export function ManilaBoard({ match, meId, send }: Props) {
   useEffect(() => {
     const rolling = (match.punts || []).filter((p) => (p.die || 0) > 0)
     if (rolling.length === 0) return
-    const key = `${match.voyage}-${match.moveRound}-${rolling.map((p) => `${p.index}:${p.die}`).join(',')}`
+    // Key on die faces + resulting positions only — ignore moveRound alone so a
+    // phase re-entry with cleared dies cannot rewind ships.
+    const key = `${match.voyage}-${rolling.map((p) => `${p.index}:${p.die}:${p.position}`).join(',')}`
     if (key === prevDiceKey.current) return
     prevDiceKey.current = key
     const hold: Record<number, number> = {}
@@ -350,7 +360,7 @@ export function ManilaBoard({ match, meId, send }: Props) {
     setSuppressBerth(true)
     setDiceAnim(rolling.map((p) => p.die as number))
     setDicePending(false)
-  }, [match.punts, match.voyage, match.moveRound])
+  }, [match.punts, match.voyage])
 
   const releaseShipsAfterDice = () => {
     setDiceAnim(null)
@@ -413,10 +423,11 @@ export function ManilaBoard({ match, meId, send }: Props) {
         onDone={(id) => setPayFlights((prev) => prev.filter((f) => f.id !== id))}
       />
       <ManilaSettlePanel
-        match={match}
+        match={settleSheet}
         occupiedMap={occupiedMap}
-        ready={!holdShipPos && !suppressBerth}
+        ready={Boolean(settleSheet) && !holdShipPos && !suppressBerth}
         onFly={(flight) => setPayFlights((f) => [...f, flight])}
+        onClose={() => setSettleSheet(null)}
       />
       {sailGhosts.map((g) => {
         const seats = WARE_SEATS[g.ware as ManilaWare] || 3
@@ -461,7 +472,9 @@ export function ManilaBoard({ match, meId, send }: Props) {
         <div className="manila-board-scroll">
           <div
             ref={stageRef}
-            className={`manila-board-stage${pendingSlot ? ' has-pending-place' : ''}`}
+            className={`manila-board-stage${pendingSlot ? ' has-pending-place' : ''}${
+              holdShipPos ? ' is-holding-ships' : ''
+            }`}
             data-pending-slot={pendingSlot || undefined}
           >
           <BoardPxProvider stageRef={stageRef}>

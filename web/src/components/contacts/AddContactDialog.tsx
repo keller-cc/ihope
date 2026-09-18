@@ -2,6 +2,7 @@
 import { Button, Dialog, Input, MessagePlugin, Tabs } from 'tdesign-react'
 import { api, apiErrorMessage, type PublicGroup, type PublicUser } from '@/api'
 import { Avatar } from '@/components/Avatar'
+import { joinModeLabel, resolveJoinMode } from '@/lib/joinMode'
 
 type Props = {
   visible: boolean
@@ -105,12 +106,11 @@ export function AddContactDialog({
       <div className="im-auth-fields" style={{ marginTop: 12 }}>
         <div className="im-find-row">
           <Input
-            placeholder={tab === 'group' ? '输入群号' : '用户名或 IHope 号'}
+            placeholder={
+              tab === 'group' ? '群号或群名' : '用户名 / IHope 号（忽略大小写与空格）'
+            }
             value={q}
-            onChange={(v) => {
-              const s = String(v)
-              setQ(tab === 'group' ? s.replace(/\D/g, '') : s)
-            }}
+            onChange={(v) => setQ(String(v))}
             onEnter={search}
           />
           <Button theme="primary" loading={busy} onClick={search}>
@@ -185,6 +185,7 @@ export function AddContactDialog({
               <div className="im-muted">
                 群号 {group.groupNo} · {group.memberCount} 人
               </div>
+              <div className="im-muted">加群方式 · {joinModeLabel(resolveJoinMode(group))}</div>
             </div>
             {group.joined ? (
               <Button
@@ -198,9 +199,9 @@ export function AddContactDialog({
               </Button>
             ) : group.joinPending ? (
               <p className="im-muted">入群申请已发送，等待管理员同意</p>
-            ) : group.joinMode === 'deny' ? (
-              <p className="im-muted">该群不允许加入</p>
-            ) : group.joinMode === 'anyone' ? (
+            ) : resolveJoinMode(group) === 'deny' ? (
+              <p className="im-muted">{joinModeLabel('deny')}</p>
+            ) : resolveJoinMode(group) === 'anyone' ? (
               <Button
                 theme="primary"
                 loading={busy}

@@ -44,12 +44,29 @@
 }
 
 .im-avatar--rail {
-  width: 40px;
-  height: 40px;
+  width: 44px;
+  height: 44px;
   margin-bottom: 8px;
   cursor: pointer;
   border: 0;
   padding: 0;
+  border-radius: 10px;
+  font-size: 1rem;
+}
+
+.im-rail .im-avatar-wrap {
+  margin-bottom: 8px;
+}
+
+.im-rail .im-avatar-wrap .im-avatar--rail {
+  margin-bottom: 0;
+}
+
+.im-rail .im-avatar__dot {
+  width: 13px;
+  height: 13px;
+  right: 0;
+  bottom: 0;
 }
 
 .im-avatar img {
@@ -59,6 +76,41 @@
   object-position: center;
   display: block;
   background: #e8e8e8;
+}
+
+.im-avatar-wrap {
+  position: relative;
+  display: inline-grid;
+  flex-shrink: 0;
+  line-height: 0;
+}
+
+.im-avatar-wrap--btn .im-avatar {
+  margin: 0;
+}
+
+.im-avatar__dot {
+  position: absolute;
+  right: -1px;
+  bottom: -1px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid #fff;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 18%);
+  pointer-events: none;
+}
+
+.im-avatar__dot--online {
+  background: #15b755;
+}
+
+.im-avatar__dot--away {
+  background: #ff9f0a;
+}
+
+.im-avatar__dot--offline {
+  background: #8e8e93;
 }
 
 .im-sidebar__head {

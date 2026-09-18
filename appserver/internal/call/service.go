@@ -40,9 +40,9 @@ type Membership interface {
 	PostCallMessage(ctx context.Context, conversationID, senderID string, body CallMessageBody, markReadUserIDs []string) error
 }
 
-// CallDoorbell 离线 QQ 音视频提醒（可选）。
+// CallDoorbell 离线 QQ 音视频提醒（可选）。与聊天共用会话合并桶。
 type CallDoorbell interface {
-	NotifyCall(ctx context.Context, userID, senderHint, kind, event string)
+	NotifyCall(ctx context.Context, userID, senderHint, kind, event, conversationID string)
 }
 
 type CallMessageBody struct {
@@ -225,7 +225,7 @@ func (s *Service) Start(ctx context.Context, conversationID, userID, kind string
 		hostName := hostInfo.Username
 		for _, uid := range notifyIDs {
 			id := uid
-			go s.doorbell.NotifyCall(context.Background(), id, hostName, kind, "invite")
+			go s.doorbell.NotifyCall(context.Background(), id, hostName, kind, "invite", r.conversationID)
 		}
 	}
 
@@ -690,7 +690,7 @@ func (s *Service) endCall(ctx context.Context, callID, status, hostID, convID, k
 				continue
 			}
 			uid := id
-			go s.doorbell.NotifyCall(context.Background(), uid, hostName, kind, event)
+			go s.doorbell.NotifyCall(context.Background(), uid, hostName, kind, event, convID)
 		}
 	}
 	return nil

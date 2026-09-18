@@ -18,15 +18,19 @@ type OnlineCheck interface {
 }
 
 type Service struct {
-	cfg    config.Config
-	store  *Store
-	client *Client
-	media  *MediaHost
-	online OnlineCheck
+	cfg      config.Config
+	store    *Store
+	client   *Client
+	media    *MediaHost
+	online   OnlineCheck
+	coalesce *coalesceGate
 }
 
 func NewService(cfg config.Config, store *Store, client *Client, media *MediaHost, online OnlineCheck) *Service {
-	return &Service{cfg: cfg, store: store, client: client, media: media, online: online}
+	return &Service{
+		cfg: cfg, store: store, client: client, media: media, online: online,
+		coalesce: newCoalesceGate(),
+	}
 }
 
 func (s *Service) Enabled() bool {
@@ -41,16 +45,45 @@ func (s *Service) Media() *MediaHost { return s.media }
 
 func (s *Service) AddHint() string { return s.cfg.QQBotAddHint }
 
-func (s *Service) NotifyDoorbell(ctx context.Context, userID, senderHint string) {
+// allowChatCoalesce applies chat-style rate limits (also used for call tips):
+//  1) per conversation (QQ_CHAT_COALESCE_SEC, default 120s)
+//  2) per user global (QQ_DOORBELL_COOLDOWN_SEC, default 600s)
+func (s *Service) allowChatCoalesce(userID, conversationID string) bool {
+	threadSec := s.cfg.QQChatCoalesceSec
+	if threadSec <= 0 {
+		threadSec = 120
+	}
+	threadKey := "chat:" + userID + ":" + strings.TrimSpace(conversationID)
+	if conversationID == "" {
+		threadKey = "chat:" + userID + ":_"
+	}
+	if !s.coalesce.allow(threadKey, time.Duration(threadSec)*time.Second) {
+		return false
+	}
+	globalSec := s.cfg.QQDoorbellCooldownSec
+	if globalSec > 0 {
+		if !s.coalesce.allow("chat-global:"+userID, time.Duration(globalSec)*time.Second) {
+			return false
+		}
+	}
+	return true
+}
+
+// NotifyDoorbell coalesces chat tips with allowChatCoalesce.
+func (s *Service) NotifyDoorbell(ctx context.Context, userID, senderHint, conversationID string) {
 	senderHint = strings.TrimSpace(senderHint)
 	if senderHint == "" {
 		senderHint = "有人"
 	}
+	if !s.allowChatCoalesce(userID, conversationID) {
+		return
+	}
 	s.sendDoorbell(ctx, userID, fmt.Sprintf("您有新的聊天消息（%s），请打开 IHope 查看。", senderHint))
 }
 
-// NotifyCall 离线音视频提醒。event: invite | missed | call
-func (s *Service) NotifyCall(ctx context.Context, userID, senderHint, kind, event string) {
+// NotifyCall 离线音视频提醒，与聊天共用会话/全局合并策略（通话算作会话内活动）。
+// event: invite | missed | call
+func (s *Service) NotifyCall(ctx context.Context, userID, senderHint, kind, event, conversationID string) {
 	senderHint = strings.TrimSpace(senderHint)
 	if senderHint == "" {
 		senderHint = "有人"
@@ -68,6 +101,27 @@ func (s *Service) NotifyCall(ctx context.Context, userID, senderHint, kind, even
 	default:
 		text = fmt.Sprintf("您有新的%s消息（%s），请打开 IHope 查看。", label, senderHint)
 	}
+	if !s.allowChatCoalesce(userID, conversationID) {
+		return
+	}
+	s.sendDoorbell(ctx, userID, text)
+}
+
+// NotifySocial 离线社交提醒。dedupeKey 应对齐逻辑事件（如 friend.request:{fromId}），
+// 同 key 默认 60s 内只发一次（幂等 / 防重试双发）。
+func (s *Service) NotifySocial(ctx context.Context, userID, text, dedupeKey string) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return
+	}
+	key := strings.TrimSpace(dedupeKey)
+	if key == "" {
+		key = "social:" + text
+	}
+	key = "social:" + userID + ":" + key
+	if !s.coalesce.allow(key, 60*time.Second) {
+		return
+	}
 	s.sendDoorbell(ctx, userID, text)
 }
 
@@ -80,10 +134,6 @@ func (s *Service) sendDoorbell(ctx context.Context, userID, text string) {
 	}
 	b, err := s.store.GetByUserID(ctx, userID)
 	if err != nil || !b.DoorbellEnabled {
-		return
-	}
-	cooldown := time.Duration(s.cfg.QQDoorbellCooldownSec) * time.Second
-	if cooldown > 0 && b.LastDoorbellAt != nil && time.Since(*b.LastDoorbellAt) < cooldown {
 		return
 	}
 	if err := s.client.SendText(ctx, b.QQOpenID, text, "", 0); err != nil {
@@ -318,7 +368,7 @@ func (s *Service) BroadcastNews(ctx context.Context) {
 func helpText() string {
 	return strings.TrimSpace(`
 IHope QQ 助手
-· 消息提醒：离线时通知你有新聊天消息
+· 消息提醒：离线时通知聊天、好友申请、入群、通话等
 · 诗词：发送古典诗词图卡
 · 金句：发送自定义金句图卡
 · 新闻 / 60s / 读世界：资讯图片

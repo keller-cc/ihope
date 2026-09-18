@@ -924,16 +924,29 @@
   display: none !important;
 }
 
-.im-sidebar__head .im-avatar--rail {
+.im-sidebar__head .im-avatar--rail,
+.im-sidebar__head .im-avatar-wrap {
   display: none;
+}
+
+.im-frame--mobile .im-sidebar__head .im-avatar-wrap {
+  display: inline-grid;
 }
 
 .im-frame--mobile .im-sidebar__head .im-avatar--rail {
   display: grid;
   margin: 0;
-  width: 34px;
-  height: 34px;
-  font-size: 0.85rem;
+  width: 44px;
+  height: 44px;
+  font-size: 1rem;
+  border-radius: 10px;
+}
+
+.im-frame--mobile .im-sidebar__head .im-avatar__dot {
+  width: 13px;
+  height: 13px;
+  right: 0;
+  bottom: 0;
 }
 
 .im-head-actions {

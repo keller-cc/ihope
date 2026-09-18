@@ -5,6 +5,9 @@
   background: #f4f6f8;
   color: #1a1a1a;
   font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  overflow-x: hidden;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .game-shell__head {
@@ -48,11 +51,22 @@
 .game-grid {
   list-style: none;
   margin: 0 auto;
-  padding: 0;
+  padding: 0 0 48px;
   max-width: 960px;
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
   gap: 16px;
+}
+
+@media (max-width: 640px) {
+  .game-shell {
+    padding: 20px 16px 96px;
+  }
+
+  .game-grid {
+    padding-bottom: 80px;
+    gap: 14px;
+  }
 }
 
 .game-card {
@@ -446,6 +460,50 @@ a.game-card:hover .game-card__cta {
   border-radius: 12px;
   overflow: hidden;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+  display: flex;
+  flex-direction: column;
+}
+
+.dino-touch-pad {
+  display: none;
+  appearance: none;
+  border: 0;
+  border-top: 1px solid #e9ecef;
+  background: linear-gradient(180deg, #f8fafc 0%, #eef2f7 100%);
+  color: #64748b;
+  font: inherit;
+  font-weight: 700;
+  font-size: 0.92rem;
+  letter-spacing: 0.04em;
+  min-height: 88px;
+  padding: 12px 16px calc(12px + env(safe-area-inset-bottom, 0px));
+  cursor: pointer;
+  touch-action: manipulation;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.dino-touch-pad:active {
+  background: #e2e8f0;
+  color: #334155;
+}
+
+@media (max-width: 720px), (pointer: coarse) {
+  .dino-touch-pad {
+    display: grid;
+    place-items: center;
+  }
+
+  .game-shell--dino .dino-stage {
+    min-height: 180px;
+  }
+
+  /* Expand chrome runner touch layer to the whole stage. */
+  .game-shell--dino .offline .controller {
+    inset: 0;
+    width: 100%;
+    height: 100%;
+  }
 }
 
 /* Match dinodasher.run game frame proportions */

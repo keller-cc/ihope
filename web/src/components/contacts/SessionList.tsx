@@ -2,6 +2,7 @@
 import { Dropdown } from 'tdesign-react'
 import type { Conversation } from '@/api'
 import { conversationTitle, formatMessageTime } from '@/lib/chatFormat'
+import { fuzzyIncludes } from '@/lib/fuzzyIncludes'
 import { Avatar } from '@/components/Avatar'
 
 type Props = {
@@ -23,8 +24,13 @@ export function SessionList({
   onToggleMute,
   onHide,
 }: Props) {
-  const q = filter.trim().toLowerCase()
-  const filtered = sessions.filter((c) => conversationTitle(c).toLowerCase().includes(q))
+  const q = filter.trim()
+  const filtered = sessions.filter(
+    (c) =>
+      fuzzyIncludes(conversationTitle(c), q) ||
+      fuzzyIncludes(c.peerUsername || '', q) ||
+      fuzzyIncludes(c.groupNo || '', q),
+  )
 
   if (filtered.length === 0) {
     return <p className="im-empty-hint">暂无消息，点右上角 + 加好友或建群</p>

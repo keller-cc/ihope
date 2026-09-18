@@ -90,6 +90,7 @@ export default defineConfig({
   ],
   server: {
     port: 5173,
+    strictPort: true,
     proxy: {
       '/api': {
         target: 'http://127.0.0.1:8090',
@@ -100,8 +101,19 @@ export default defineConfig({
         changeOrigin: true,
       },
       '/ws': {
-        target: 'ws://127.0.0.1:8090',
+        target: 'http://127.0.0.1:8090',
+        changeOrigin: true,
         ws: true,
+        // Keep long-lived sockets; default proxy timeouts abort idle /ws/user.
+        timeout: 0,
+        proxyTimeout: 0,
+        configure: (proxy) => {
+          // Client navigates / StrictMode aborts are normal; don't spam the terminal.
+          proxy.on('error', () => {})
+          proxy.on('proxyReqWs', (_proxyReq, _req, socket) => {
+            socket.on('error', () => {})
+          })
+        },
       },
       '/health': {
         target: 'http://127.0.0.1:8090',

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/gorilla/websocket"
 	"github.com/keller-cc/ihope/appserver/internal/call"
@@ -165,6 +166,15 @@ func (s *Server) handleUserWS(w http.ResponseWriter, r *http.Request) {
 		s.calls.ResyncInvites(userID)
 	}
 
+	// gorilla/websocket allows one concurrent writer; ping replies and hub
+	// publishes must share a lock or the connection gets aborted.
+	var writeMu sync.Mutex
+	writeRaw := func(b []byte) error {
+		writeMu.Lock()
+		defer writeMu.Unlock()
+		return conn.WriteMessage(websocket.TextMessage, b)
+	}
+
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -180,7 +190,7 @@ func (s *Server) handleUserWS(w http.ResponseWriter, r *http.Request) {
 			typ, _ := msg["type"].(string)
 			switch typ {
 			case "ping":
-				_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"pong"}`))
+				_ = writeRaw([]byte(`{"type":"pong"}`))
 			case "call.offer", "call.answer", "call.ice":
 				if s.calls != nil {
 					_ = s.calls.Relay(userID, msg)
@@ -210,7 +220,7 @@ func (s *Server) handleUserWS(w http.ResponseWriter, r *http.Request) {
 			if !ok {
 				return
 			}
-			if err := conn.WriteMessage(websocket.TextMessage, msg); err != nil {
+			if err := writeRaw(msg); err != nil {
 				return
 			}
 		}

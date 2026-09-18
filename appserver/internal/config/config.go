@@ -35,6 +35,7 @@ type Config struct {
 	QQWebhookPath         string
 	QQBotAddHint          string
 	QQDoorbellCooldownSec int
+	QQChatCoalesceSec     int
 	QQQuotesFilePath      string
 	QQPoetryAPIURL        string
 	QQPoetryFontPath      string
@@ -91,6 +92,7 @@ func Load() Config {
 		QQWebhookPath:         env("QQ_WEBHOOK_PATH", "/api/webhooks/qq"),
 		QQBotAddHint:          env("QQ_BOT_ADD_HINT", "请在 QQ 中添加 IHope 机器人，并将绑定码发送给它"),
 		QQDoorbellCooldownSec: envInt("QQ_DOORBELL_COOLDOWN_SEC", 600),
+		QQChatCoalesceSec:     envInt("QQ_CHAT_COALESCE_SEC", 120),
 		QQQuotesFilePath:      env("QQ_QUOTES_FILE_PATH", ""),
 		QQPoetryAPIURL:        env("QQ_POETRY_API_URL", "https://v1.hitokoto.cn/?c=i"),
 		QQPoetryFontPath:      env("QQ_POETRY_FONT_PATH", ""),

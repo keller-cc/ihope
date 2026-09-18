@@ -187,7 +187,8 @@ export class CallController {
     this.unsub?.()
     this.unsub = null
     await this.cleanupMedia()
-    userSocket.disconnect()
+    // Keep shared userSocket alive for chat presence / social pushes;
+    // ChatPage owns connect/disconnect lifecycle.
     this.watchedConversationId = null
     this.state = emptyState()
     this.emit()

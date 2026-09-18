@@ -1,6 +1,7 @@
 ﻿import { initialOf } from '@/lib/chatFormat'
 
 type Size = 'sm' | 'md' | 'lg' | 'xl' | 'rail'
+export type AvatarPresence = 'online' | 'away' | 'offline'
 
 type Props = {
   name: string
@@ -10,6 +11,8 @@ type Props = {
   className?: string
   onClick?: () => void
   title?: string
+  /** QQ-style corner status (green / orange / gray). */
+  presence?: AvatarPresence
 }
 
 const sizeClass: Record<Size, string> = {
@@ -20,7 +23,16 @@ const sizeClass: Record<Size, string> = {
   rail: 'im-avatar--rail',
 }
 
-export function Avatar({ name, src, size = 'md', group, className = '', onClick, title }: Props) {
+export function Avatar({
+  name,
+  src,
+  size = 'md',
+  group,
+  className = '',
+  onClick,
+  title,
+  presence,
+}: Props) {
   const classes = [
     'im-avatar',
     sizeClass[size],
@@ -32,16 +44,28 @@ export function Avatar({ name, src, size = 'md', group, className = '', onClick,
 
   const content = src ? <img src={src} alt="" /> : initialOf(name)
 
-  if (onClick) {
-    return (
-      <button type="button" className={classes} title={title || name} onClick={onClick}>
-        {content}
-      </button>
-    )
-  }
-  return (
+  const avatar = onClick ? (
+    <button type="button" className={classes} title={title || name} onClick={onClick}>
+      {content}
+    </button>
+  ) : (
     <span className={classes} title={title || name}>
       {content}
+    </span>
+  )
+
+  if (!presence) return avatar
+
+  const statusLabel =
+    presence === 'online' ? '在线' : presence === 'away' ? '连接中' : '离线'
+
+  return (
+    <span
+      className={`im-avatar-wrap${onClick ? ' im-avatar-wrap--btn' : ''}`}
+      title={statusLabel}
+    >
+      {avatar}
+      <i className={`im-avatar__dot im-avatar__dot--${presence}`} aria-hidden />
     </span>
   )
 }

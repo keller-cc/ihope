@@ -766,6 +766,11 @@ func (m *Match) beginDiceRound() {
 	m.MoveRound++
 	m.Phase = PhaseDice
 	m.TurnSeat = m.HarborMasterSeat
+	// Clear previous faces so clients don't treat stale die+new moveRound as a roll
+	// (that incorrectly holds ships at position-oldDie ≈ voyage start).
+	for i := range m.Punts {
+		m.Punts[i].Die = 0
+	}
 	m.log("第 %d 次骰子移动", m.MoveRound)
 }
 

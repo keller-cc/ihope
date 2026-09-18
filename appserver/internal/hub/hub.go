@@ -81,24 +81,34 @@ func (h *Hub) Publish(conversationID string, v any) {
 }
 
 func (h *Hub) SubscribeUser(userID string) chan []byte {
-	ch := make(chan []byte, 32)
+	ch := make(chan []byte, 64)
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if h.userSubs[userID] == nil {
-		h.userSubs[userID] = make(map[chan []byte]struct{})
+	// One live /ws/user per account: drop older tabs / stale reconnects.
+	if prev := h.userSubs[userID]; len(prev) > 0 {
+		for old := range prev {
+			delete(prev, old)
+			close(old)
+		}
 	}
-	h.userSubs[userID][ch] = struct{}{}
+	h.userSubs[userID] = map[chan []byte]struct{}{ch: {}}
 	return ch
 }
 
 func (h *Hub) UnsubscribeUser(userID string, ch chan []byte) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if m := h.userSubs[userID]; m != nil {
-		delete(m, ch)
-		if len(m) == 0 {
-			delete(h.userSubs, userID)
-		}
+	m := h.userSubs[userID]
+	if m == nil {
+		return
+	}
+	// Already closed when a newer SubscribeUser replaced this connection.
+	if _, ok := m[ch]; !ok {
+		return
+	}
+	delete(m, ch)
+	if len(m) == 0 {
+		delete(h.userSubs, userID)
 	}
 	close(ch)
 }

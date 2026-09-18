@@ -278,7 +278,9 @@ export function UserDrawer({
               <p className="im-muted">服务器未启用 QQ 机器人。</p>
             ) : !qq.bound ? (
               <>
-                <p className="im-muted">绑定官方机器人后，离线可收到提醒。</p>
+                <p className="im-muted">
+                  绑定官方机器人后，离线可收到：聊天消息、好友申请、入群审核、通话邀请等提醒。
+                </p>
                 <Button
                   theme="primary"
                   size="large"
@@ -305,7 +307,7 @@ export function UserDrawer({
             ) : (
               <>
                 <div className="im-switch-row">
-                  <span>离线消息提醒</span>
+                  <span>离线提醒</span>
                   <Switch
                     value={!!qq.doorbellEnabled}
                     onChange={async (v) => {

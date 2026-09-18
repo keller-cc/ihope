@@ -1987,6 +1987,7 @@
   border: 2px solid color-mix(in srgb, #0f766e 35%, #cbd5e1);
   box-shadow: 0 18px 48px color-mix(in srgb, #0f172a 40%, transparent);
   padding: 16px 16px 14px;
+  pointer-events: auto;
 }
 
 .manila-settle__head {
@@ -2138,6 +2139,28 @@
   margin: 6px 0 0;
   font-size: 0.75rem;
   color: #94a3b8;
+}
+
+.manila-settle__foot {
+  margin-top: 12px;
+  display: flex;
+  justify-content: center;
+}
+
+.manila-settle__foot .manila-btn:disabled {
+  opacity: 0.65;
+  cursor: default;
+}
+
+.manila-settle__foot {
+  margin-top: 12px;
+  display: flex;
+  justify-content: center;
+}
+
+.manila-settle__foot .manila-btn:disabled {
+  opacity: 0.65;
+  cursor: default;
 }
 
 @keyframes manila-settle-bit {
@@ -3465,6 +3488,11 @@
     top 1.6s cubic-bezier(0.22, 0.82, 0.28, 1),
     left 1.6s cubic-bezier(0.22, 0.82, 0.28, 1),
     transform 1.6s cubic-bezier(0.22, 0.82, 0.28, 1);
+}
+
+/* While holding pre-dice pose, snap without easing so cost/meeple don't lag behind. */
+.manila-board-stage.is-holding-ships .manila-sea-canvas__ship {
+  transition: none;
 }
 
 .manila-sea-canvas__ship .manila-ship-seat-wrap,
@@ -4858,7 +4886,17 @@
 
   .manila-sea-canvas__ship,
   .manila-dock__ship {
-    width: var(--manila-ship, 7.0%);
+    width: var(--manila-ship, 8.2%);
+  }
+
+  /* Keep deck cost/meeple glued to hull on small screens (no delayed counter-rotate). */
+  .manila-sea-canvas__ship .manila-ship-seat-wrap,
+  .manila-dock__ship .manila-ship-seat-wrap {
+    will-change: auto;
+  }
+
+  .manila-ship-token__profit-onbow {
+    font-size: calc(100cqi * var(--manila-profit-h, 0.356) * 0.7);
   }
 }
 

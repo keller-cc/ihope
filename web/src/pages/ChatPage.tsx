@@ -4,7 +4,6 @@ import { Button, Checkbox, Dialog, Input, MessagePlugin, Switch } from 'tdesign-
 import {
   api,
   apiErrorMessage,
-  getToken,
   setToken,
   type CallKind,
   type Contact,
@@ -41,7 +40,7 @@ import { useVisualViewportLock } from '@/hooks/useVisualViewportLock'
 import { callController } from '@/lib/call/CallController'
 import { userSocket } from '@/lib/call/userSocket'
 import { chatBgStyle, chatThemeSummary, chatThemeVars, resolveUserTheme, usesFrameWallpaper } from '@/lib/chatBg'
-import { conversationTitle, initialOf } from '@/lib/chatFormat'
+import { conversationTitle } from '@/lib/chatFormat'
 
 type Props = {
   user: User
@@ -126,7 +125,21 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
   )
   const [callSetupBusy, setCallSetupBusy] = useState(false)
   const listRef = useRef<HTMLDivElement>(null)
-  const wsRef = useRef<WebSocket | null>(null)
+  const conversationsRef = useRef(conversations)
+  const groupsRef = useRef(groups)
+  const activeIdRef = useRef(activeId)
+  const userIdRef = useRef(user.id)
+  const rightKindRef = useRef(right.kind)
+  conversationsRef.current = conversations
+  groupsRef.current = groups
+  activeIdRef.current = activeId
+  userIdRef.current = user.id
+  rightKindRef.current = right.kind
+  const [realtimeOk, setRealtimeOk] = useState(() => userSocket.isConnected)
+  const [netOnline, setNetOnline] = useState(() =>
+    typeof navigator === 'undefined' ? true : navigator.onLine,
+  )
+  const selfPresence = netOnline && realtimeOk ? 'online' : 'offline'
 
   const loadConversations = useCallback(async () => {
     try {
@@ -183,23 +196,178 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
 
   useEffect(() => {
     userSocket.connect()
-    return userSocket.on((data) => {
+    let offlineTimer: number | null = null
+    const offConn = userSocket.onConnection((ok) => {
+      if (ok) {
+        if (offlineTimer != null) {
+          window.clearTimeout(offlineTimer)
+          offlineTimer = null
+        }
+        setRealtimeOk(true)
+        void loadConversations()
+        const viewingId = activeIdRef.current
+        if (viewingId && rightKindRef.current === 'chat') {
+          void loadMessages(viewingId)
+        }
+        return
+      }
+      if (offlineTimer != null) window.clearTimeout(offlineTimer)
+      offlineTimer = window.setTimeout(() => {
+        setRealtimeOk(false)
+        offlineTimer = null
+      }, 2500)
+    })
+    const onOnline = () => setNetOnline(true)
+    const onOffline = () => setNetOnline(false)
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') void loadConversations()
+    }
+    window.addEventListener('online', onOnline)
+    window.addEventListener('offline', onOffline)
+    document.addEventListener('visibilitychange', onVisible)
+
+    const sortSessions = (list: Conversation[]) => {
+      const byTime = (a: Conversation, b: Conversation) =>
+        (b.lastMessageAt || '').localeCompare(a.lastMessageAt || '')
+      return [
+        ...list.filter((c) => c.pinned).sort(byTime),
+        ...list.filter((c) => !c.pinned).sort(byTime),
+      ]
+    }
+
+    const bumpSession = (
+      cid: string,
+      patch: { lastMessage?: string; lastMessageAt?: string; unreadDelta?: number },
+    ) => {
+      setConversations((prev) => {
+        const idx = prev.findIndex((c) => c.id === cid)
+        if (idx < 0) {
+          void loadConversations()
+          return prev
+        }
+        const viewing = rightKindRef.current === 'chat' && activeIdRef.current === cid
+        const cur = prev[idx]
+        const nextItem: Conversation = {
+          ...cur,
+          lastMessage: patch.lastMessage ?? cur.lastMessage,
+          lastMessageAt: patch.lastMessageAt || cur.lastMessageAt,
+          unreadCount: viewing
+            ? 0
+            : (cur.unreadCount || 0) + (patch.unreadDelta && patch.unreadDelta > 0 ? patch.unreadDelta : 0),
+        }
+        return sortSessions([nextItem, ...prev.filter((c) => c.id !== cid)])
+      })
+    }
+
+    const offMsg = userSocket.on((data) => {
       const t = String(data.type || '')
+      if (t === 'message') {
+        const msg = data.message as Message | undefined
+        const cid = String(data.conversationId || msg?.conversationId || '')
+        if (!msg?.id || !cid) return
+        if (rightKindRef.current === 'chat' && activeIdRef.current === cid) {
+          setMessages((prev) => (prev.some((m) => m.id === msg.id) ? prev : [...prev, msg]))
+          void api.markRead(cid).then(() => {
+            setConversations((prev) =>
+              prev.map((c) =>
+                c.id === cid
+                  ? {
+                      ...c,
+                      unreadCount: 0,
+                      lastMessage:
+                        msg.type === 'call'
+                          ? '[通话]'
+                          : msg.type === 'image'
+                            ? '[图片]'
+                            : msg.type === 'voice'
+                              ? '[语音]'
+                              : msg.type === 'file'
+                                ? '[文件]'
+                                : msg.recalled
+                                  ? '[消息已撤回]'
+                                  : msg.body || c.lastMessage,
+                      lastMessageAt: msg.createdAt || c.lastMessageAt,
+                    }
+                  : c,
+              ),
+            )
+          }).catch(() => {
+            void loadConversations()
+          })
+        }
+        return
+      }
+      if (t === 'message_recalled') {
+        const msg = data.message as Message | undefined
+        const cid = String(data.conversationId || msg?.conversationId || '')
+        if (!msg?.id) return
+        if (cid && rightKindRef.current === 'chat' && activeIdRef.current === cid) {
+          setMessages((prev) =>
+            prev.map((m) => (m.id === msg.id ? { ...m, ...msg } : m)),
+          )
+        }
+        void loadConversations()
+        return
+      }
+      if (t === 'conversation.updated') {
+        const cid = String(data.conversationId || '')
+        if (!cid) return
+        bumpSession(cid, {
+          lastMessage: data.lastMessage != null ? String(data.lastMessage) : undefined,
+          lastMessageAt: data.lastMessageAt != null ? String(data.lastMessageAt) : undefined,
+          unreadDelta: Number(data.unreadDelta || 0),
+        })
+        return
+      }
       if (t === 'friend.request') {
-        MessagePlugin.info('收到一条好友申请')
+        const req = data.request as FriendRequest | undefined
+        const name = req?.fromUser?.username || '有人'
+        MessagePlugin.info(`${name} 请求添加你为好友`)
         void loadContacts()
+        return
+      }
+      if (t === 'friend.accepted') {
+        const peer = data.peer as Contact | undefined
+        const name = peer?.username || '对方'
+        MessagePlugin.success(`${name} 已同意你的好友申请`)
+        void loadContacts()
+        return
+      }
+      if (t === 'friend.rejected') {
+        const name = String(data.peerUsername || '对方')
+        MessagePlugin.info(`${name} 拒绝了你的好友申请`)
+        void loadContacts()
+        return
+      }
+      if (t === 'friend.removed') {
+        const name = String(data.peerUsername || '对方')
+        MessagePlugin.info(`${name} 已将你从好友中删除`)
+        void loadContacts()
+        void loadConversations()
         return
       }
       if (t === 'group.join_request') {
         const cid = String(data.conversationId || '')
         const conv =
-          conversations.find((c) => c.id === cid) || groups.find((c) => c.id === cid)
-        // 仅群主/管理员应收到；若本地能判定且无权限则忽略
+          conversationsRef.current.find((c) => c.id === cid) ||
+          groupsRef.current.find((c) => c.id === cid)
         if (conv && !(conv.isOwner || conv.isAdmin)) return
-        const req = data.request as { group?: { title?: string } } | undefined
+        const req = data.request as GroupJoinRequest | undefined
         const title = req?.group?.title || conv?.title || '群聊'
         MessagePlugin.info(`「${title}」有新的入群申请`)
         void loadContacts()
+        return
+      }
+      if (t === 'group.join_accepted') {
+        const title = String(data.title || '群聊')
+        MessagePlugin.success(`你已加入「${title}」`)
+        void loadConversations()
+        void loadContacts()
+        return
+      }
+      if (t === 'group.join_rejected') {
+        const title = String(data.title || '群聊')
+        MessagePlugin.info(`「${title}」未通过你的入群申请`)
         return
       }
       if (t === 'group.announcement') {
@@ -213,13 +381,16 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
                   announcement: ann.body,
                   announcementCount: (c.announcementCount || 0) + 1,
                   pendingAnnouncement:
-                    ann.authorId === user.id ? c.pendingAnnouncement ?? null : ann,
+                    ann.authorId === userIdRef.current ? c.pendingAnnouncement ?? null : ann,
                 }
               : c
           setConversations((prev) => prev.map(patch))
           setGroups((prev) => prev.map(patch))
-          if (ann.authorId !== user.id) {
-            MessagePlugin.info('有新的群公告')
+          if (ann.authorId !== userIdRef.current) {
+            const g =
+              conversationsRef.current.find((c) => c.id === cid) ||
+              groupsRef.current.find((c) => c.id === cid)
+            MessagePlugin.info(`「${g?.title || '群聊'}」发布了新公告`)
           }
         }
         return
@@ -230,7 +401,7 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
         MessagePlugin.warning(tip)
         void loadConversations()
         void loadContacts()
-        if (cid && activeId === cid) {
+        if (cid && activeIdRef.current === cid) {
           const msg = data.message as Message | undefined
           if (msg?.id) {
             setMessages((prev) => (prev.some((m) => m.id === msg.id) ? prev : [...prev, msg]))
@@ -243,7 +414,15 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
         }
       }
     })
-  }, [activeId, conversations, groups, loadContacts, loadConversations])
+    return () => {
+      if (offlineTimer != null) window.clearTimeout(offlineTimer)
+      offConn()
+      offMsg()
+      window.removeEventListener('online', onOnline)
+      window.removeEventListener('offline', onOffline)
+      document.removeEventListener('visibilitychange', onVisible)
+    }
+  }, [loadContacts, loadConversations, loadMessages])
 
   const loadOlderMessages = async () => {
     if (!activeId || !messages.length || loadingMore) return
@@ -306,66 +485,6 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
   useEffect(() => {
     if (!activeId || right.kind !== 'chat') return
     void loadMessages(activeId)
-    wsRef.current?.close()
-    const token = getToken()
-    if (!token) return
-    const proto = location.protocol === 'https:' ? 'wss' : 'ws'
-    const ws = new WebSocket(
-      `${proto}://${location.host}/ws?token=${encodeURIComponent(token)}&conversationId=${encodeURIComponent(activeId)}`,
-    )
-    ws.onmessage = (ev) => {
-      try {
-        const data = JSON.parse(ev.data as string) as {
-          type?: string
-          message?: Message
-        }
-        if (data.type === 'message' && data.message) {
-          const msg = data.message
-          setMessages((prev) => {
-            if (prev.some((m) => m.id === msg.id)) return prev
-            return [...prev, msg]
-          })
-          // 正在看该会话：标已读，避免通话摘要等把未读刷出来
-          void api.markRead(activeId).then(() => {
-            setConversations((prev) =>
-              prev.map((c) =>
-                c.id === activeId
-                  ? {
-                      ...c,
-                      unreadCount: 0,
-                      lastMessage:
-                        msg.type === 'call'
-                          ? '[通话]'
-                          : msg.type === 'image'
-                            ? '[图片]'
-                            : msg.type === 'voice'
-                              ? '[语音]'
-                              : msg.type === 'file'
-                                ? '[文件]'
-                                : msg.recalled
-                                  ? '[消息已撤回]'
-                                  : msg.body || c.lastMessage,
-                      lastMessageAt: msg.createdAt || c.lastMessageAt,
-                    }
-                  : c,
-              ),
-            )
-          }).catch(() => {
-            void loadConversations()
-          })
-        }
-        if (data.type === 'message_recalled' && data.message) {
-          setMessages((prev) =>
-            prev.map((m) => (m.id === data.message!.id ? { ...m, ...data.message! } : m)),
-          )
-          void loadConversations()
-        }
-      } catch {
-        /* ignore */
-      }
-    }
-    wsRef.current = ws
-    return () => ws.close()
   }, [activeId, right.kind, loadMessages])
 
   useEffect(() => {
@@ -696,18 +815,14 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
         )}
         {!isMobile && (
           <aside className="im-rail" aria-label="主导航">
-            <button
-              type="button"
-              className="im-avatar im-avatar--rail"
+            <Avatar
+              name={user.username}
+              src={user.avatarUrl}
+              size="rail"
               title={user.username}
+              presence={selfPresence}
               onClick={() => setDrawerOpen(true)}
-            >
-              {user.avatarUrl ? (
-                <img src={user.avatarUrl} alt="" />
-              ) : (
-                initialOf(user.username)
-              )}
-            </button>
+            />
             {navBtn('messages', '消息', 'msg', totalUnread)}
             {navBtn('contacts', '联系人', 'contacts', incoming.length + groupJoins.length)}
             <button
@@ -740,18 +855,15 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
           <section className="im-sidebar">
             <header className="im-sidebar__head">
               {isMobile && (
-                <button
-                  type="button"
-                  className="im-avatar im-avatar--rail im-mobile-only"
+                <Avatar
+                  name={user.username}
+                  src={user.avatarUrl}
+                  size="rail"
+                  className="im-mobile-only"
                   title="我"
+                  presence={selfPresence}
                   onClick={() => setDrawerOpen(true)}
-                >
-                  {user.avatarUrl ? (
-                    <img src={user.avatarUrl} alt="" />
-                  ) : (
-                    initialOf(user.username)
-                  )}
-                </button>
+                />
               )}
               <Input
                 className="im-sidebar__search"
@@ -1016,7 +1128,7 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
                 ) : (
                   <>
                     <div className="im-set-cell im-set-cell--switch">
-                      <span className="im-set-cell__label">离线消息提醒</span>
+                      <span className="im-set-cell__label">离线提醒</span>
                       <Switch
                         value={!!qq.doorbellEnabled}
                         onChange={async (v) => {

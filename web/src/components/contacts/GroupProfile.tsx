@@ -10,24 +10,8 @@ import {
 } from '@/api'
 import { Avatar } from '@/components/Avatar'
 import { useIsMobile } from '@/hooks/useIsMobile'
+import { JOIN_MODE_OPTIONS, joinModeLabel, resolveJoinMode } from '@/lib/joinMode'
 import { GroupAnnouncementDialog } from './GroupAnnouncementDialog'
-
-const JOIN_MODE_OPTIONS = [
-  { value: 'anyone', label: '允许任何人加入', desc: '通过群号即可直接入群' },
-  { value: 'verify', label: '需要验证信息', desc: '申请后需群主/管理员同意' },
-  { value: 'deny', label: '不允许任何人加入', desc: '仅群主/管理员可邀请入群' },
-] as const
-
-function joinModeLabel(mode?: string) {
-  return JOIN_MODE_OPTIONS.find((o) => o.value === mode)?.label || '需要验证信息'
-}
-
-function resolveJoinMode(group: Conversation): 'anyone' | 'verify' | 'deny' {
-  if (group.joinMode === 'anyone' || group.joinMode === 'verify' || group.joinMode === 'deny') {
-    return group.joinMode
-  }
-  return group.inviteRequiresApproval ? 'verify' : 'anyone'
-}
 
 type Props = {
   group: Conversation

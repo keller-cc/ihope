@@ -35,7 +35,7 @@ type Conversation struct {
 	PinnedAt                *string `json:"pinnedAt,omitempty"`
 	AvatarURL               *string `json:"avatarUrl,omitempty"`
 	Joined                  bool    `json:"joined,omitempty"`
-	JoinMode                string  `json:"joinMode,omitempty"` // anyone | verify | deny
+	JoinMode                string  `json:"joinMode"` // anyone | verify | deny
 	InviteRequiresApproval  bool    `json:"inviteRequiresApproval"` // legacy: true when joinMode=verify
 	Announcement            string  `json:"announcement"` // latest body preview for settings
 	AnnouncementCount       int     `json:"announcementCount,omitempty"`
@@ -493,21 +493,39 @@ func (s *Service) ListGroups(ctx context.Context, userID string) ([]Conversation
 	return out, rows.Err()
 }
 
+// compactSearchQuery trims and strips all whitespace so "Alice Bob" / "alicebob" match.
+func compactSearchQuery(q string) string {
+	return strings.Join(strings.Fields(strings.TrimSpace(q)), "")
+}
+
 func (s *Service) resolveUser(ctx context.Context, login string) (*Contact, error) {
 	login = strings.TrimSpace(login)
 	if login == "" {
 		return nil, errors.New("user not found")
 	}
+	compact := compactSearchQuery(login)
 	var c Contact
 	var err error
-	if looksLikeHopeID(login) {
+	if looksLikeHopeID(compact) || looksLikeHopeID(login) {
+		key := compact
+		if looksLikeHopeID(login) {
+			key = login
+		}
 		err = s.pool.QueryRow(ctx, `
-			SELECT id::text, username, email, hope_id, avatar_url FROM users WHERE hope_id = $1
-		`, login).Scan(&c.ID, &c.Username, &c.Email, &c.HopeID, &c.AvatarURL)
+			SELECT id::text, username, email, hope_id, avatar_url
+			FROM users
+			WHERE hope_id = $1 OR lower(hope_id) = lower($2)
+			LIMIT 1
+		`, key, compact).Scan(&c.ID, &c.Username, &c.Email, &c.HopeID, &c.AvatarURL)
 	} else {
 		err = s.pool.QueryRow(ctx, `
-			SELECT id::text, username, email, hope_id, avatar_url FROM users WHERE username = $1
-		`, login).Scan(&c.ID, &c.Username, &c.Email, &c.HopeID, &c.AvatarURL)
+			SELECT id::text, username, email, hope_id, avatar_url
+			FROM users
+			WHERE username = $1
+			   OR lower(username) = lower($1)
+			   OR replace(lower(username), ' ', '') = lower($2)
+			LIMIT 1
+		`, login, compact).Scan(&c.ID, &c.Username, &c.Email, &c.HopeID, &c.AvatarURL)
 	}
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -701,18 +719,19 @@ func (s *Service) AcceptFriendRequest(ctx context.Context, userID, requestID str
 	return &c, nil
 }
 
-func (s *Service) RejectFriendRequest(ctx context.Context, userID, requestID string) error {
-	tag, err := s.pool.Exec(ctx, `
+func (s *Service) RejectFriendRequest(ctx context.Context, userID, requestID string) (fromUserID string, err error) {
+	err = s.pool.QueryRow(ctx, `
 		UPDATE friend_requests SET status = 'rejected', decided_at = now()
 		WHERE id = $1 AND to_user_id = $2 AND status = 'pending'
-	`, requestID, userID)
+		RETURNING from_user_id::text
+	`, requestID, userID).Scan(&fromUserID)
 	if err != nil {
-		return err
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", errors.New("request not found")
+		}
+		return "", err
 	}
-	if tag.RowsAffected() == 0 {
-		return errors.New("request not found")
-	}
-	return nil
+	return fromUserID, nil
 }
 
 // CancelFriendRequest lets the sender withdraw a pending request.
@@ -871,8 +890,8 @@ func (s *Service) CreateGroup(ctx context.Context, userID, title string, memberU
 		return nil, err
 	}
 	err = tx.QueryRow(ctx, `
-		INSERT INTO conversations (type, title, group_no, owner_id)
-		VALUES ('group', $1, $2, $3)
+		INSERT INTO conversations (type, title, group_no, owner_id, join_mode, invite_requires_approval)
+		VALUES ('group', $1, $2, $3, 'verify', TRUE)
 		RETURNING id::text, type, title, created_at::text, group_no, owner_id::text
 	`, title, groupNo, userID).Scan(&c.ID, &c.Type, &c.Title, &c.CreatedAt, &c.GroupNo, &c.OwnerID)
 	if err != nil {
@@ -888,6 +907,7 @@ func (s *Service) CreateGroup(ctx context.Context, userID, title string, memberU
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
+	applyJoinMode(&c, JoinModeVerify)
 	c.MemberCount = len(ids)
 	c.IsOwner = true
 	return &c, nil
@@ -1134,26 +1154,27 @@ func (s *Service) AcceptGroupJoinRequest(ctx context.Context, conversationID, ac
 	return &c, nil
 }
 
-func (s *Service) RejectGroupJoinRequest(ctx context.Context, conversationID, actorID, requestID string) error {
+func (s *Service) RejectGroupJoinRequest(ctx context.Context, conversationID, actorID, requestID string) (fromUserID string, err error) {
 	ok, err := s.canManageGroup(ctx, conversationID, actorID)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if !ok {
-		return errors.New("forbidden")
+		return "", errors.New("forbidden")
 	}
-	tag, err := s.pool.Exec(ctx, `
+	err = s.pool.QueryRow(ctx, `
 		UPDATE group_join_requests
 		SET status = 'rejected', decided_by = $3, decided_at = now()
 		WHERE id = $1 AND conversation_id = $2 AND status = 'pending'
-	`, requestID, conversationID, actorID)
+		RETURNING from_user_id::text
+	`, requestID, conversationID, actorID).Scan(&fromUserID)
 	if err != nil {
-		return err
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", errors.New("request not found")
+		}
+		return "", err
 	}
-	if tag.RowsAffected() == 0 {
-		return errors.New("request not found")
-	}
-	return nil
+	return fromUserID, nil
 }
 
 func (s *Service) CancelGroupJoinRequest(ctx context.Context, userID, requestID string) error {
@@ -2107,9 +2128,16 @@ func (s *Service) ConversationType(ctx context.Context, conversationID string) (
 }
 
 func (s *Service) SearchUser(ctx context.Context, viewerID, q string) (*PublicUser, error) {
+	q = strings.TrimSpace(q)
+	if q == "" {
+		return nil, errors.New("user not found")
+	}
 	peer, err := s.resolveUser(ctx, q)
 	if err != nil {
-		return nil, err
+		peer, err = s.resolveUserFuzzy(ctx, viewerID, compactSearchQuery(q))
+		if err != nil {
+			return nil, err
+		}
 	}
 	if peer.ID != viewerID {
 		same, err := s.sameAutonomousDomain(ctx, viewerID, peer.ID)
@@ -2137,6 +2165,43 @@ func (s *Service) SearchUser(ctx context.Context, viewerID, q string) (*PublicUs
 	return out, nil
 }
 
+// resolveUserFuzzy matches username / hope_id / email ignoring case and spaces (prefix preferred).
+func (s *Service) resolveUserFuzzy(ctx context.Context, viewerID, q string) (*Contact, error) {
+	q = compactSearchQuery(q)
+	if q == "" {
+		return nil, errors.New("user not found")
+	}
+	like := "%" + q + "%"
+	prefix := q + "%"
+	var c Contact
+	err := s.pool.QueryRow(ctx, `
+		SELECT u.id::text, u.username, u.email, u.hope_id, u.avatar_url
+		FROM users u
+		JOIN fellowships fa ON fa.id = (
+			SELECT fellowship_id FROM users WHERE id = $1::uuid
+		)
+		JOIN fellowships fb ON fb.id = u.fellowship_id AND fb.domain_id = fa.domain_id
+		WHERE replace(lower(u.username), ' ', '') LIKE lower($2)
+		   OR lower(u.hope_id) LIKE lower($2)
+		   OR lower(u.email) LIKE lower($2)
+		ORDER BY
+			CASE
+				WHEN replace(lower(u.username), ' ', '') LIKE lower($3) THEN 0
+				WHEN lower(u.hope_id) LIKE lower($3) THEN 1
+				ELSE 2
+			END,
+			u.username
+		LIMIT 1
+	`, viewerID, like, prefix).Scan(&c.ID, &c.Username, &c.Email, &c.HopeID, &c.AvatarURL)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, errors.New("user not found")
+		}
+		return nil, err
+	}
+	return &c, nil
+}
+
 func (s *Service) SearchGroup(ctx context.Context, viewerID, groupNo string) (*PublicGroup, error) {
 	groupNo = strings.TrimSpace(groupNo)
 	if groupNo == "" {
@@ -2154,9 +2219,31 @@ func (s *Service) SearchGroup(ctx context.Context, viewerID, groupNo string) (*P
 	`, groupNo).Scan(&g.ID, &g.Title, &g.GroupNo, &g.AvatarURL, &ownerID, &joinMode, &g.MemberCount)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, errors.New("group not found")
+			err = s.pool.QueryRow(ctx, `
+				SELECT id::text, title, group_no, avatar_url, owner_id::text,
+					COALESCE(NULLIF(join_mode, ''), 'verify'),
+					(SELECT COUNT(*)::int FROM conversation_members cm
+					 WHERE cm.conversation_id = conversations.id AND cm.removed_at IS NULL)
+				FROM conversations
+				WHERE type = 'group' AND (group_no ILIKE $1 OR title ILIKE $2)
+				ORDER BY
+					CASE
+						WHEN group_no = $3 THEN 0
+						WHEN group_no ILIKE $1 THEN 1
+						ELSE 2
+					END,
+					group_no
+				LIMIT 1
+			`, groupNo+"%", "%"+groupNo+"%", groupNo).Scan(
+				&g.ID, &g.Title, &g.GroupNo, &g.AvatarURL, &ownerID, &joinMode, &g.MemberCount,
+			)
 		}
-		return nil, err
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return nil, errors.New("group not found")
+			}
+			return nil, err
+		}
 	}
 	g.JoinMode = normalizeJoinMode(joinMode)
 	ok, err := s.IsMember(ctx, g.ID, viewerID)
@@ -2261,6 +2348,27 @@ func (s *Service) UsernameByID(ctx context.Context, userID string) string {
 	var name string
 	_ = s.pool.QueryRow(ctx, `SELECT username FROM users WHERE id = $1`, userID).Scan(&name)
 	return name
+}
+
+func (s *Service) ConversationTitle(ctx context.Context, conversationID string) string {
+	var title string
+	_ = s.pool.QueryRow(ctx, `SELECT title FROM conversations WHERE id = $1`, conversationID).Scan(&title)
+	return title
+}
+
+// ContactByID returns a minimal contact row for notifications.
+func (s *Service) ContactByID(ctx context.Context, userID string) (*Contact, error) {
+	var c Contact
+	err := s.pool.QueryRow(ctx, `
+		SELECT id::text, username, email, hope_id, avatar_url FROM users WHERE id = $1
+	`, userID).Scan(&c.ID, &c.Username, &c.Email, &c.HopeID, &c.AvatarURL)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, errors.New("user not found")
+		}
+		return nil, err
+	}
+	return &c, nil
 }
 
 // PostSystemMessage writes a centered tip in the chat (type=system).

@@ -24,6 +24,7 @@ import {
   type AdminQQBinding,
   type AdminUser,
 } from '@/api'
+import { JOIN_MODE_OPTIONS } from '@/lib/joinMode'
 
 type AdminTab = 'users' | 'domains' | 'fellowships' | 'qq' | 'conversations' | 'games'
 
@@ -1257,11 +1258,7 @@ export function AdminPage() {
               <Select
                 style={{ width: 220 }}
                 value={groupDetail.conversation.joinMode || 'verify'}
-                options={[
-                  { label: '允许任何人加入', value: 'anyone' },
-                  { label: '需要验证信息', value: 'verify' },
-                  { label: '不允许任何人加入', value: 'deny' },
-                ]}
+                options={JOIN_MODE_OPTIONS.map((o) => ({ label: o.label, value: o.value }))}
                 onChange={async (v) => {
                   const mode = String(v) as 'anyone' | 'verify' | 'deny'
                   try {

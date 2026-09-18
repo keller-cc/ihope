@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"html"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -77,7 +78,20 @@ func New(
 		upg: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool {
 				origin := r.Header.Get("Origin")
-				return origin == "" || origin == corsOrigin
+				if origin == "" || origin == corsOrigin {
+					return true
+				}
+				// Local dev only: Vite may use 5174+ or 127.0.0.1 vs localhost.
+				// Production CORS_ORIGIN (non-loopback) stays an exact match.
+				cfg, err1 := url.Parse(corsOrigin)
+				got, err2 := url.Parse(origin)
+				if err1 != nil || err2 != nil {
+					return false
+				}
+				loopback := func(h string) bool {
+					return h == "localhost" || h == "127.0.0.1" || h == "::1"
+				}
+				return loopback(cfg.Hostname()) && loopback(got.Hostname())
 			},
 		},
 	}
@@ -802,6 +816,18 @@ func (s *Server) handleJoinGroup(w http.ResponseWriter, r *http.Request, userID 
 			"conversationId": res.Request.ConversationID,
 			"request":        res.Request,
 		})
+		fromName := s.chat.UsernameByID(r.Context(), userID)
+		if fromName == "" {
+			fromName = "有人"
+		}
+		title := s.chat.ConversationTitle(r.Context(), res.Request.ConversationID)
+		if title == "" {
+			title = "群聊"
+		}
+		for _, mid := range managers {
+			s.notifyQQSocial(mid, fmt.Sprintf("%s 申请加入「%s」，请打开 IHope 处理。", fromName, title),
+				"group.join_request:"+res.Request.ConversationID+":"+userID)
+		}
 		writeJSON(w, http.StatusCreated, res)
 		return
 	}
@@ -849,16 +875,33 @@ func (s *Server) handleAcceptGroupJoinRequest(w http.ResponseWriter, r *http.Req
 	if name == "" {
 		tip = "有人加入了群聊"
 	}
-	if m, err := s.chat.PostSystemMessage(r.Context(), id, userID, tip); err == nil && m != nil {
-		s.afterMessage(id, userID, m)
+	// Post as the joiner so system line attribution matches free-join tips.
+	sender := c.ID
+	if sender == "" {
+		sender = userID
 	}
+	if m, err := s.chat.PostSystemMessage(r.Context(), id, sender, tip); err == nil && m != nil {
+		s.afterMessage(id, sender, m)
+	}
+	s.hub.PublishToUser(c.ID, map[string]any{
+		"type":           "group.join_accepted",
+		"conversationId": id,
+		"title":          s.chat.ConversationTitle(r.Context(), id),
+	})
+	title := s.chat.ConversationTitle(r.Context(), id)
+	if title == "" {
+		title = "群聊"
+	}
+	s.notifyQQSocial(c.ID, fmt.Sprintf("你已加入「%s」，请打开 IHope 查看。", title),
+		"group.join_accepted:"+id)
 	writeJSON(w, http.StatusOK, c)
 }
 
 func (s *Server) handleRejectGroupJoinRequest(w http.ResponseWriter, r *http.Request, userID string) {
 	id := r.PathValue("id")
 	rid := r.PathValue("rid")
-	if err := s.chat.RejectGroupJoinRequest(r.Context(), id, userID, rid); err != nil {
+	fromID, err := s.chat.RejectGroupJoinRequest(r.Context(), id, userID, rid)
+	if err != nil {
 		if err.Error() == "forbidden" {
 			writeErr(w, http.StatusForbidden, "forbidden")
 			return
@@ -866,6 +909,17 @@ func (s *Server) handleRejectGroupJoinRequest(w http.ResponseWriter, r *http.Req
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	title := s.chat.ConversationTitle(r.Context(), id)
+	if title == "" {
+		title = "群聊"
+	}
+	s.hub.PublishToUser(fromID, map[string]any{
+		"type":           "group.join_rejected",
+		"conversationId": id,
+		"title":          title,
+	})
+	s.notifyQQSocial(fromID, fmt.Sprintf("「%s」未通过你的入群申请。", title),
+		"group.join_rejected:"+id)
 	writeJSON(w, http.StatusOK, map[string]string{"message": "rejected"})
 }
 
@@ -1005,6 +1059,17 @@ func (s *Server) handleCreateAnnouncement(w http.ResponseWriter, r *http.Request
 			"conversationId": id,
 			"announcement":   a,
 		})
+		title := s.chat.ConversationTitle(r.Context(), id)
+		if title == "" {
+			title = "群聊"
+		}
+		for _, mid := range members {
+			if mid == userID {
+				continue
+			}
+			s.notifyQQSocial(mid, fmt.Sprintf("「%s」发布了新公告，请打开 IHope 查看。", title),
+				"group.announcement:"+id+":"+a.ID)
+		}
 	}
 	writeJSON(w, http.StatusCreated, a)
 }
@@ -1100,12 +1165,8 @@ func (s *Server) handleInviteMembers(w http.ResponseWriter, r *http.Request, use
 		return
 	}
 	if res.Added > 0 && len(res.AddedNames) > 0 {
-		inviter := s.chat.UsernameByID(r.Context(), userID)
 		joined := strings.Join(res.AddedNames, "、")
 		tip := joined + " 加入了群聊"
-		if inviter != "" {
-			tip = inviter + " 邀请 " + joined + " 加入了群聊"
-		}
 		if m, err := s.chat.PostSystemMessage(r.Context(), id, userID, tip); err == nil && m != nil {
 			s.afterMessage(id, userID, m)
 		}
@@ -1116,6 +1177,14 @@ func (s *Server) handleInviteMembers(w http.ResponseWriter, r *http.Request, use
 			"type":           "group.join_request",
 			"conversationId": id,
 		})
+		title := s.chat.ConversationTitle(r.Context(), id)
+		if title == "" {
+			title = "群聊"
+		}
+		for _, mid := range managers {
+			s.notifyQQSocial(mid, fmt.Sprintf("「%s」有新的入群邀请待审核，请打开 IHope 处理。", title),
+				"group.join_invite:"+id)
+		}
 	}
 	writeJSON(w, http.StatusOK, res)
 }
@@ -1155,6 +1224,12 @@ func (s *Server) handleKickMember(w http.ResponseWriter, r *http.Request, userID
 		payload["message"] = sysMsg
 	}
 	s.hub.PublishToUser(body.MemberID, payload)
+	title := s.chat.ConversationTitle(r.Context(), id)
+	if title == "" {
+		title = "群聊"
+	}
+	s.notifyQQSocial(body.MemberID, fmt.Sprintf("你已被移出「%s」。", title),
+		"group.kicked:"+id)
 	writeJSON(w, http.StatusOK, map[string]string{"message": "ok"})
 }
 
@@ -1232,6 +1307,18 @@ func (s *Server) handleAddFriend(w http.ResponseWriter, r *http.Request, userID 
 			"type":    "friend.request",
 			"request": fr,
 		})
+		fromName := ""
+		if fr.FromUser != nil {
+			fromName = fr.FromUser.Username
+		}
+		if fromName == "" {
+			fromName = s.chat.UsernameByID(r.Context(), userID)
+		}
+		if fromName == "" {
+			fromName = "有人"
+		}
+		s.notifyQQSocial(fr.ToUserID, fmt.Sprintf("%s 请求添加你为好友，请打开 IHope 查看。", fromName),
+			"friend.request:"+userID)
 	}
 	writeJSON(w, http.StatusCreated, fr)
 }
@@ -1259,14 +1346,31 @@ func (s *Server) handleAcceptFriendRequest(w http.ResponseWriter, r *http.Reques
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if peer, err := s.chat.ContactByID(r.Context(), userID); err == nil && peer != nil {
+		s.hub.PublishToUser(c.ID, map[string]any{
+			"type": "friend.accepted",
+			"peer": peer,
+		})
+		s.notifyQQSocial(c.ID, fmt.Sprintf("%s 已同意你的好友申请，请打开 IHope 查看。", peer.Username),
+			"friend.accepted:"+userID)
+	}
 	writeJSON(w, http.StatusOK, c)
 }
 
 func (s *Server) handleRejectFriendRequest(w http.ResponseWriter, r *http.Request, userID string) {
 	id := r.PathValue("id")
-	if err := s.chat.RejectFriendRequest(r.Context(), userID, id); err != nil {
+	fromID, err := s.chat.RejectFriendRequest(r.Context(), userID, id)
+	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
+	}
+	if name := s.chat.UsernameByID(r.Context(), userID); name != "" {
+		s.hub.PublishToUser(fromID, map[string]any{
+			"type":         "friend.rejected",
+			"peerId":       userID,
+			"peerUsername": name,
+		})
+		// No QQ push on reject — avoid awkward offline spam.
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"message": "rejected"})
 }
@@ -1295,9 +1399,11 @@ func (s *Server) handleRemoveFriend(w http.ResponseWriter, r *http.Request, user
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	name := s.chat.UsernameByID(r.Context(), userID)
 	s.hub.PublishToUser(id, map[string]any{
-		"type":     "friend.removed",
-		"friendId": userID,
+		"type":         "friend.removed",
+		"friendId":     userID,
+		"peerUsername": name,
 	})
 	writeJSON(w, http.StatusOK, map[string]string{"message": "ok"})
 }
@@ -1753,18 +1859,56 @@ func (s *Server) handleRecallMessage(w http.ResponseWriter, r *http.Request, use
 		return
 	}
 	s.hub.Publish(id, map[string]any{"type": "message_recalled", "message": m})
+	if members, err := s.chat.MemberUserIDs(r.Context(), id); err == nil {
+		s.hub.PublishToUsers(members, map[string]any{
+			"type":           "message_recalled",
+			"conversationId": id,
+			"message":        m,
+		})
+	}
 	writeJSON(w, http.StatusOK, m)
 }
 
 func (s *Server) afterMessage(conversationID, userID string, m *chat.Message) {
+	// Conversation room (/ws) kept for compatibility; web clients use /ws/user only.
 	s.hub.Publish(conversationID, map[string]any{"type": "message", "message": m})
+
+	members, err := s.chat.MemberUserIDs(context.Background(), conversationID)
+	if err != nil {
+		members = nil
+	}
+	// Deliver chat payload on the single per-account user socket.
+	s.hub.PublishToUsers(members, map[string]any{
+		"type":           "message",
+		"conversationId": conversationID,
+		"message":        m,
+	})
+
+	preview := messageListPreview(m)
+	at := ""
+	if m != nil {
+		at = m.CreatedAt
+	}
+	for _, mid := range members {
+		payload := map[string]any{
+			"type":           "conversation.updated",
+			"conversationId": conversationID,
+			"lastMessage":    preview,
+			"lastMessageAt":  at,
+			"fromUserId":     userID,
+		}
+		if mid != userID {
+			payload["unreadDelta"] = 1
+		}
+		s.hub.PublishToUser(mid, payload)
+	}
+
 	if m != nil && m.Type == "system" {
 		return
 	}
 	if s.qq == nil || !s.qq.Enabled() {
 		return
 	}
-	members, _ := s.chat.MemberUserIDs(context.Background(), conversationID)
 	senderName := s.chat.UsernameByID(context.Background(), userID)
 	for _, mid := range members {
 		if mid == userID {
@@ -1772,8 +1916,41 @@ func (s *Server) afterMessage(conversationID, userID string, m *chat.Message) {
 		}
 		uid := mid
 		hint := senderName
-		go s.qq.NotifyDoorbell(context.Background(), uid, hint)
+		go s.qq.NotifyDoorbell(context.Background(), uid, hint, conversationID)
 	}
+}
+
+func messageListPreview(m *chat.Message) string {
+	if m == nil {
+		return ""
+	}
+	if m.Recalled {
+		return "[消息已撤回]"
+	}
+	switch m.Type {
+	case "image":
+		return "[图片]"
+	case "file":
+		return "[文件]"
+	case "voice":
+		return "[语音]"
+	case "call":
+		return "[通话]"
+	case "forward":
+		return "[聊天记录]"
+	default:
+		return m.Body
+	}
+}
+
+// notifyQQSocial pushes an offline QQ-bot tip when the user is not online in IHope.
+// dedupeKey should identify the logical event (e.g. friend.request:{fromUserId}).
+func (s *Server) notifyQQSocial(userID, text, dedupeKey string) {
+	if s.qq == nil || !s.qq.Enabled() || userID == "" || strings.TrimSpace(text) == "" {
+		return
+	}
+	uid, msg, key := userID, strings.TrimSpace(text), strings.TrimSpace(dedupeKey)
+	go s.qq.NotifySocial(context.Background(), uid, msg, key)
 }
 
 func (s *Server) withUploadCache(next http.Handler) http.Handler {
@@ -2459,6 +2636,12 @@ func (s *Server) handleAdminKickMember(w http.ResponseWriter, r *http.Request) {
 		"conversationId": id,
 		"body":           "你已被管理员移出群聊",
 	})
+	title := s.chat.ConversationTitle(r.Context(), id)
+	if title == "" {
+		title = "群聊"
+	}
+	s.notifyQQSocial(body.MemberID, fmt.Sprintf("你已被移出「%s」。", title),
+		"group.kicked:"+id)
 	writeJSON(w, http.StatusOK, map[string]string{"message": "ok"})
 }
 

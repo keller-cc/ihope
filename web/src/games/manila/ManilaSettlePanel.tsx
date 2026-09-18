@@ -23,24 +23,28 @@ const KIND_LABEL: Record<string, string> = {
 }
 
 type Props = {
-  match: ManilaMatch
+  match: ManilaMatch | null
   occupiedMap: Map<string, string>
   ready: boolean
   onFly: (flight: FlyPay) => void
+  onClose: () => void
 }
 
 /**
  * Full-screen settle: one ledger line at a time + everyone sees all players' running totals.
+ * Stays open until the user taps 关闭 (survives phase change into the next voyage).
  */
-export function ManilaSettlePanel({ match, occupiedMap, ready, onFly }: Props) {
-  const lines = match.settlement || []
+export function ManilaSettlePanel({ match, occupiedMap, ready, onFly, onClose }: Props) {
+  const lines = match?.settlement || []
   const [step, setStep] = useState(-1) // -1 intro, 0..n-1 lines, n outro
-  const key = `${match.voyage}:${lines.map((l) => `${l.userId}:${l.amount}:${l.slotId}`).join('|')}`
+  const key = match
+    ? `${match.voyage}:${lines.map((l) => `${l.userId}:${l.amount}:${l.slotId}`).join('|')}`
+    : ''
   const startedKey = useRef('')
   const flown = useRef(new Set<number>())
 
   useEffect(() => {
-    if (!ready || match.phase !== 'settle') return
+    if (!match || !ready) return
     if (!lines.length) {
       setStep(0)
       return
@@ -61,10 +65,11 @@ export function ManilaSettlePanel({ match, occupiedMap, ready, onFly }: Props) {
     return () => {
       timers.forEach((t) => window.clearTimeout(t))
     }
-  }, [ready, match.phase, key, lines.length])
+  }, [ready, match, key, lines.length])
 
   // Fly money for the active line
   useEffect(() => {
+    if (!match) return
     if (step < 0 || step >= lines.length) return
     if (flown.current.has(step)) return
     flown.current.add(step)
@@ -82,7 +87,7 @@ export function ManilaSettlePanel({ match, occupiedMap, ready, onFly }: Props) {
       durationMs: Math.min(FX_PAY_MS, STEP_MS - 400),
       label: line.label,
     })
-  }, [step, lines, occupiedMap, onFly, match.voyage])
+  }, [step, lines, occupiedMap, onFly, match])
 
   const totals = useMemo(() => {
     const map = new Map<string, number>()
@@ -92,7 +97,6 @@ export function ManilaSettlePanel({ match, occupiedMap, ready, onFly }: Props) {
       if (!line) continue
       map.set(line.userId, (map.get(line.userId) || 0) + line.amount)
     }
-    // During outro, show full totals
     if (step >= lines.length) {
       map.clear()
       for (const line of lines) {
@@ -102,16 +106,17 @@ export function ManilaSettlePanel({ match, occupiedMap, ready, onFly }: Props) {
     return map
   }, [lines, step])
 
+  if (!match || !ready) return null
+
   const current = step >= 0 && step < lines.length ? lines[step] : null
   const playerName = (uid: string) =>
     match.players.find((p) => p.userId === uid)?.username || '—'
-
-  if (match.phase !== 'settle' || !ready) return null
+  const done = step >= lines.length || lines.length === 0
 
   const phaseLabel =
     step < 0
       ? '航次结算'
-      : step >= lines.length
+      : done
         ? '结算完成'
         : `结算 ${step + 1}/${lines.length}`
 
@@ -134,9 +139,9 @@ export function ManilaSettlePanel({ match, occupiedMap, ready, onFly }: Props) {
                   '收益'}
               </span>
             </p>
-          ) : step >= lines.length ? (
+          ) : done ? (
             <p className="manila-settle__current manila-settle__current--done">
-              各人净收益如下，即将进入下一航次
+              各人净收益如下，点关闭后继续
             </p>
           ) : (
             <p className="manila-settle__current">正在汇总港口、船坞与保险…</p>
@@ -149,12 +154,12 @@ export function ManilaSettlePanel({ match, occupiedMap, ready, onFly }: Props) {
             .map((p) => {
               const delta = totals.get(p.userId) || 0
               const isActive = current?.userId === p.userId
-                  const shownLines =
-                    step < 0
-                      ? []
-                      : lines
-                          .slice(0, step >= lines.length ? lines.length : step + 1)
-                          .filter((l) => l.userId === p.userId)
+              const shownLines =
+                step < 0
+                  ? []
+                  : lines
+                      .slice(0, done ? lines.length : step + 1)
+                      .filter((l) => l.userId === p.userId)
               return (
                 <li
                   key={p.userId}
@@ -201,6 +206,17 @@ export function ManilaSettlePanel({ match, occupiedMap, ready, onFly }: Props) {
               )
             })}
         </ul>
+
+        <div className="manila-settle__foot">
+          <button
+            type="button"
+            className="manila-btn"
+            disabled={!done}
+            onClick={onClose}
+          >
+            {done ? '关闭' : '结算播放中…'}
+          </button>
+        </div>
       </div>
     </div>
   )
@@ -208,7 +224,6 @@ export function ManilaSettlePanel({ match, occupiedMap, ready, onFly }: Props) {
 
 function prettyLabel(line: SettleLine): string {
   if (line.label) {
-    // Server may log ware english id — map if present
     let s = line.label
     for (const [k, v] of Object.entries(WARE_LABEL)) {
       s = s.replaceAll(k, v)

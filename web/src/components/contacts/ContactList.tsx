@@ -1,5 +1,6 @@
 ﻿import type { Contact, Conversation } from '@/api'
 import { conversationTitle } from '@/lib/chatFormat'
+import { fuzzyIncludes } from '@/lib/fuzzyIncludes'
 import { Avatar } from '@/components/Avatar'
 
 type Section = 'friends' | 'groups'
@@ -43,14 +44,16 @@ export function ContactList({
   onOpenFriendRequests,
   onOpenGroupJoins,
 }: Props) {
-  const q = filter.trim().toLowerCase()
+  const q = filter.trim()
   const filteredFriends = friends.filter(
     (f) =>
-      f.username.toLowerCase().includes(q) ||
-      (f.remark || '').toLowerCase().includes(q) ||
-      (f.hopeId || '').includes(q),
+      fuzzyIncludes(f.username, q) ||
+      fuzzyIncludes(f.remark || '', q) ||
+      fuzzyIncludes(f.hopeId || '', q),
   )
-  const filteredGroups = groups.filter((g) => conversationTitle(g).toLowerCase().includes(q))
+  const filteredGroups = groups.filter(
+    (g) => fuzzyIncludes(conversationTitle(g), q) || fuzzyIncludes(g.groupNo || '', q),
+  )
 
   return (
     <>

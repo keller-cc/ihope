@@ -3,6 +3,7 @@ import { BrowserRouter, Navigate, Route, Routes, useNavigate, useSearchParams } 
 import { ConfigProvider, Loading, MessagePlugin } from 'tdesign-react'
 import zhConfig from 'tdesign-react/es/locale/zh_CN'
 import { api, AUTH_UNAUTHORIZED_EVENT, getSessionSlot, getToken, setToken, type User } from '@/api'
+import { userSocket } from '@/lib/call/userSocket'
 import { AuthPage } from './pages/AuthPage'
 import { ChatPage } from './pages/ChatPage'
 import { VerifyPage } from './pages/VerifyPage'
@@ -96,7 +97,10 @@ function Home() {
   }, [])
 
   useEffect(() => {
-    const onUnauth = () => setUser(null)
+    const onUnauth = () => {
+      userSocket.disconnect()
+      setUser(null)
+    }
     window.addEventListener(AUTH_UNAUTHORIZED_EVENT, onUnauth)
     return () => window.removeEventListener(AUTH_UNAUTHORIZED_EVENT, onUnauth)
   }, [])
@@ -118,7 +122,10 @@ function Home() {
         <ChatPage
           user={user}
           onUserChange={setUser}
-          onLogout={() => setUser(null)}
+          onLogout={() => {
+            userSocket.disconnect()
+            setUser(null)
+          }}
         />
       ) : (
         <AuthPage

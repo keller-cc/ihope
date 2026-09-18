@@ -247,6 +247,27 @@ export function DinoGamePage() {
                 </div>
               </div>
             </div>
+            <button
+              type="button"
+              className="dino-touch-pad"
+              aria-label="点击跳跃"
+              onPointerDown={(e) => {
+                e.preventDefault()
+                const runner = window.Runner?.instance_ as
+                  | { triggerJump?: () => void }
+                  | null
+                  | undefined
+                if (runner?.triggerJump) {
+                  runner.triggerJump()
+                  return
+                }
+                window.dispatchEvent(
+                  new KeyboardEvent('keydown', { keyCode: 32, which: 32, bubbles: true }),
+                )
+              }}
+            >
+              <span>点此处跳跃</span>
+            </button>
           </div>
 
           {onMainUi && (
