@@ -165,6 +165,8 @@ export type Message = {
   recalled?: boolean
   recalledAt?: string | null
   recalledBy?: string | null
+  /** Local-only: optimistic bubble while upload is in flight. */
+  pending?: boolean
 }
 
 export type MessageDay = {

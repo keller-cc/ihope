@@ -367,6 +367,28 @@
   flex-direction: row-reverse;
 }
 
+.im-msg--pending {
+  opacity: 0.72;
+}
+
+.im-msg--pending .im-msg__image,
+.im-msg--pending .im-msg__file {
+  position: relative;
+}
+
+.im-msg--pending .im-msg__image::after,
+.im-msg--pending .im-msg__file::after {
+  content: '发送中…';
+  position: absolute;
+  inset: auto 8px 8px auto;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.55);
+  pointer-events: none;
+}
+
 .im-msg__main {
   display: flex;
   flex-direction: column;

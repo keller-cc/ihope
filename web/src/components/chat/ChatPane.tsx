@@ -785,7 +785,8 @@ export function ChatPane({
                   className={
                     (mine ? 'im-msg im-msg--mine' : 'im-msg') +
                     (selectable ? ' im-msg--selectable' : '') +
-                    (selectMode ? ' im-msg--in-select' : '')
+                    (selectMode ? ' im-msg--in-select' : '') +
+                    (m.pending ? ' im-msg--pending' : '')
                   }
                   onClick={() => {
                     if (selectable) onToggleSelect?.(m.id)
@@ -831,7 +832,7 @@ export function ChatPane({
                       className="im-msg__image"
                       {...press}
                       onClick={(e) => {
-                        if (selectMode) return
+                        if (selectMode || m.pending) return
                         press?.onClick(e)
                         if (Date.now() < ignoreClickUntil.current) return
                         setViewer({ thumb: img.thumbUrl, url: img.url })

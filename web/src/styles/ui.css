@@ -248,9 +248,16 @@
 }
 
 .im-list-item__time {
+  flex: 0 0 4.75rem;
+  width: 4.75rem;
+  max-width: 4.75rem;
   font-size: 0.72rem;
   color: var(--im-color-muted);
-  flex-shrink: 0;
+  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
 }
 
 .im-list-item__preview {

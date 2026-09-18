@@ -82,8 +82,15 @@ export default defineConfig({
       workbox: {
         navigateFallback: '/index.html',
         navigateFallbackDenylist: [/^\/api/, /^\/ws/, /^\/uploads/],
-        // App shell only — game art is large and fetched on demand.
-        globPatterns: ['**/*.{js,css,html,ico,woff2,webmanifest}'],
+        // App shell only — do not precache lazy game/admin route chunks.
+        globPatterns: [
+          'index.html',
+          'assets/index-*.{js,css}',
+          'assets/react-*.js',
+          'assets/tdesign-*.{js,css}',
+          'assets/rolldown-runtime-*.js',
+          '**/*.{ico,png,woff2,webmanifest}',
+        ],
         globIgnores: ['**/games/**'],
       },
     }),

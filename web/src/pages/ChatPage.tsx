@@ -1,4 +1,4 @@
-﻿import { useCallback, useEffect, useRef, useState } from 'react'
+﻿import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
 import { ChevronRightIcon } from 'tdesign-icons-react'
 import { Button, Checkbox, Dialog, Input, MessagePlugin, Switch } from 'tdesign-react'
 import {
@@ -66,6 +66,39 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
   const isMobile = useIsMobile()
   useVisualViewportLock(isMobile)
   const [listNav, setListNav] = useState<ListNav>('messages')
+  const [sidebarW, setSidebarW] = useState(() => {
+    if (typeof window === 'undefined') return 268
+    const n = Number(window.localStorage.getItem('im-sidebar-w'))
+    return Number.isFinite(n) && n >= 200 && n <= 420 ? n : 268
+  })
+  const sidebarDragRef = useRef<{ startX: number; startW: number } | null>(null)
+
+  useEffect(() => {
+    const onMove = (ev: PointerEvent) => {
+      const drag = sidebarDragRef.current
+      if (!drag) return
+      const next = Math.min(420, Math.max(200, drag.startW + (ev.clientX - drag.startX)))
+      setSidebarW(next)
+    }
+    const onUp = () => {
+      if (!sidebarDragRef.current) return
+      sidebarDragRef.current = null
+      document.body.classList.remove('im-sidebar-resizing')
+      setSidebarW((w) => {
+        window.localStorage.setItem('im-sidebar-w', String(Math.round(w)))
+        return w
+      })
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onUp)
+    return () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onUp)
+      document.body.classList.remove('im-sidebar-resizing')
+    }
+  }, [])
 
   useEffect(() => {
     callController.setUserId(user.id)
@@ -266,7 +299,20 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
         const cid = String(data.conversationId || msg?.conversationId || '')
         if (!msg?.id || !cid) return
         if (rightKindRef.current === 'chat' && activeIdRef.current === cid) {
-          setMessages((prev) => (prev.some((m) => m.id === msg.id) ? prev : [...prev, msg]))
+          setMessages((prev) => {
+            if (prev.some((m) => m.id === msg.id)) return prev
+            let next = prev
+            if (
+              msg.senderId === userIdRef.current &&
+              (msg.type === 'image' || msg.type === 'file')
+            ) {
+              const idx = prev.findIndex(
+                (m) => m.pending && m.type === msg.type && m.senderId === msg.senderId,
+              )
+              if (idx >= 0) next = [...prev.slice(0, idx), ...prev.slice(idx + 1)]
+            }
+            return [...next, msg]
+          })
           void api.markRead(cid).then(() => {
             setConversations((prev) =>
               prev.map((c) =>
@@ -588,14 +634,33 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
       MessagePlugin.warning('图片过大（最大 10MB）')
       return
     }
+    const localId = `pending-${crypto.randomUUID()}`
+    const blobUrl = URL.createObjectURL(file)
+    const pending: Message = {
+      id: localId,
+      conversationId: activeId,
+      senderId: user.id,
+      senderUsername: user.username,
+      senderAvatarUrl: user.avatarUrl,
+      type: 'image',
+      body: JSON.stringify({ thumbUrl: blobUrl, url: blobUrl, w: 0, h: 0 }),
+      createdAt: new Date().toISOString(),
+      pending: true,
+    }
+    setMessages((prev) => [...prev, pending])
     setSendingMedia(true)
     try {
       const m = await api.sendImage(activeId, file)
-      setMessages((prev) => (prev.some((x) => x.id === m.id) ? prev : [...prev, m]))
+      setMessages((prev) => {
+        const next = prev.filter((x) => x.id !== localId)
+        return next.some((x) => x.id === m.id) ? next : [...next, m]
+      })
       void loadConversations()
     } catch (e) {
+      setMessages((prev) => prev.filter((x) => x.id !== localId))
       MessagePlugin.error(apiErrorMessage(e, '发送图片失败'))
     } finally {
+      URL.revokeObjectURL(blobUrl)
       setSendingMedia(false)
     }
   }
@@ -606,12 +671,34 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
       MessagePlugin.warning('文件过大（最大 20MB）')
       return
     }
+    const localId = `pending-${crypto.randomUUID()}`
+    const pending: Message = {
+      id: localId,
+      conversationId: activeId,
+      senderId: user.id,
+      senderUsername: user.username,
+      senderAvatarUrl: user.avatarUrl,
+      type: 'file',
+      body: JSON.stringify({
+        name: file.name,
+        size: file.size,
+        url: '',
+        mime: file.type || 'application/octet-stream',
+      }),
+      createdAt: new Date().toISOString(),
+      pending: true,
+    }
+    setMessages((prev) => [...prev, pending])
     setSendingMedia(true)
     try {
       const m = await api.sendFile(activeId, file)
-      setMessages((prev) => (prev.some((x) => x.id === m.id) ? prev : [...prev, m]))
+      setMessages((prev) => {
+        const next = prev.filter((x) => x.id !== localId)
+        return next.some((x) => x.id === m.id) ? next : [...next, m]
+      })
       void loadConversations()
     } catch (e) {
+      setMessages((prev) => prev.filter((x) => x.id !== localId))
       MessagePlugin.error(apiErrorMessage(e, '发送文件失败'))
     } finally {
       setSendingMedia(false)
@@ -794,7 +881,10 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
         .join(' ')}
       style={chatThemeVars(theme, { frameWallpaper })}
     >
-      <div className={frameClass}>
+      <div
+        className={frameClass}
+        style={!isMobile ? ({ ['--im-sidebar-w']: `${sidebarW}px` } as CSSProperties) : undefined}
+      >
         {frameWallpaper && theme?.background && (
           <div
             className={[
@@ -853,6 +943,20 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
 
         {right.kind !== 'settings' && (
           <section className="im-sidebar">
+            {!isMobile ? (
+              <div
+                className="im-sidebar__resizer"
+                role="separator"
+                aria-orientation="vertical"
+                aria-label="调整会话列表宽度"
+                onPointerDown={(ev) => {
+                  ev.preventDefault()
+                  sidebarDragRef.current = { startX: ev.clientX, startW: sidebarW }
+                  document.body.classList.add('im-sidebar-resizing')
+                  ;(ev.currentTarget as HTMLElement).setPointerCapture?.(ev.pointerId)
+                }}
+              />
+            ) : null}
             <header className="im-sidebar__head">
               {isMobile && (
                 <Avatar
