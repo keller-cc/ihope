@@ -13,6 +13,7 @@ import {
   type GroupJoinRequest,
   type Message,
   type QQStatus,
+  type UpdateNotice,
   type User,
 } from '@/api'
 import { Avatar } from '@/components/Avatar'
@@ -35,6 +36,9 @@ import {
 } from '@/components/history/ChatHistoryPanel'
 import { PlusMenu } from '@/components/PlusMenu'
 import { UserDrawer } from '@/components/UserDrawer'
+import { EmailNotifySettings } from '@/components/EmailNotifySettings'
+import { UpdateNoticeGate } from '@/components/UpdateNoticeGate'
+import { UpdateNoticeDialog, UpdateNoticeList } from '@/components/UpdateNoticeUI'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { useVisualViewportLock } from '@/hooks/useVisualViewportLock'
 import { callController } from '@/lib/call/CallController'
@@ -61,6 +65,7 @@ type RightSurface =
   | { kind: 'friendRequests' }
   | { kind: 'groupJoinRequests' }
   | { kind: 'settings' }
+  | { kind: 'updateNotices' }
 
 export function ChatPage({ user, onUserChange, onLogout }: Props) {
   const isMobile = useIsMobile()
@@ -138,6 +143,9 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
   const [qq, setQq] = useState<QQStatus | null>(null)
   const [bindCode, setBindCode] = useState('')
   const [bindHint, setBindHint] = useState('')
+  const [updateNotices, setUpdateNotices] = useState<UpdateNotice[]>([])
+  const [updateNoticesBusy, setUpdateNoticesBusy] = useState(false)
+  const [viewNotice, setViewNotice] = useState<UpdateNotice | null>(null)
   const [bgOpen, setBgOpen] = useState(false)
   const [renameUserOpen, setRenameUserOpen] = useState(false)
   const [renameUserDraft, setRenameUserDraft] = useState('')
@@ -809,11 +817,12 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
     0,
   )
 
-  const showingList = isMobile && !mobileDetail && right.kind !== 'settings'
+  const inSettingsSurface = right.kind === 'settings' || right.kind === 'updateNotices'
+  const showingList = isMobile && !mobileDetail && !inSettingsSurface
   const frameClass = [
     'im-frame',
     isMobile ? 'im-frame--mobile' : '',
-    right.kind === 'settings' ? 'im-frame--settings' : '',
+    inSettingsSurface ? 'im-frame--settings' : '',
     showingList ? 'im-frame--list' : 'im-frame--chat',
   ]
     .filter(Boolean)
@@ -834,12 +843,12 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
     setListNav('contacts')
     if (isMobile) {
       setMobileDetail(false)
-    } else if (right.kind === 'settings') {
+    } else if (inSettingsSurface) {
       setRight({ kind: 'empty' })
     }
   }
 
-  const navActive = (id: ListNav) => right.kind !== 'settings' && listNav === id
+  const navActive = (id: ListNav) => !inSettingsSurface && listNav === id
 
   const navBtn = (id: ListNav, label: string, ico: string, badge?: number) => (
     <button
@@ -917,8 +926,8 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
             {navBtn('contacts', '联系人', 'contacts', incoming.length + groupJoins.length)}
             <button
               type="button"
-              className={right.kind === 'settings' ? 'im-nav-btn is-active' : 'im-nav-btn'}
-              aria-current={right.kind === 'settings' ? 'page' : undefined}
+              className={inSettingsSurface ? 'im-nav-btn is-active' : 'im-nav-btn'}
+              aria-current={inSettingsSurface ? 'page' : undefined}
               onClick={() => {
                 setRight({ kind: 'settings' })
                 setMobileDetail(true)
@@ -941,7 +950,7 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
           </aside>
         )}
 
-        {right.kind !== 'settings' && (
+        {!inSettingsSurface && (
           <section className="im-sidebar">
             {!isMobile ? (
               <div
@@ -1089,6 +1098,28 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
           </section>
         )}
 
+        {right.kind === 'updateNotices' && (
+          <section className="im-settings">
+            <header className="im-chat-head">
+              <button
+                type="button"
+                className="im-back"
+                onClick={() => setRight({ kind: 'settings' })}
+              >
+                ‹
+              </button>
+              <h2 className="im-chat-head__title">更新公告</h2>
+            </header>
+            <div className="im-settings-scroll">
+              <UpdateNoticeList
+                notices={updateNotices}
+                loading={updateNoticesBusy}
+                onSelect={(n) => setViewNotice(n as UpdateNotice)}
+              />
+            </div>
+          </section>
+        )}
+
         {right.kind === 'settings' && (
           <section className="im-settings">
             <header className="im-chat-head">
@@ -1198,6 +1229,27 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
               </div>
 
               <div className="im-set-group">
+                <div className="im-set-section-title">关于</div>
+                <button
+                  type="button"
+                  className="im-set-cell"
+                  onClick={() => {
+                    setRight({ kind: 'updateNotices' })
+                    setMobileDetail(true)
+                    setUpdateNoticesBusy(true)
+                    void api
+                      .listUpdateNotices()
+                      .then((r) => setUpdateNotices(r.notices || []))
+                      .catch((e) => MessagePlugin.error(apiErrorMessage(e, '加载失败')))
+                      .finally(() => setUpdateNoticesBusy(false))
+                  }}
+                >
+                  <span className="im-set-cell__label">更新公告</span>
+                  <ChevronRightIcon size="16px" className="im-set-cell__arrow" />
+                </button>
+              </div>
+
+              <div className="im-set-group">
                 <div className="im-set-section-title">QQ 消息提醒</div>
                 {!qq?.botEnabled ? (
                   <div className="im-set-cell im-set-cell--static">
@@ -1207,6 +1259,9 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
                   </div>
                 ) : !qq.bound ? (
                   <div style={{ padding: '12px 14px' }}>
+                    <p className="im-muted" style={{ marginBottom: 12 }}>
+                      绑定后，离线时可收到 QQ 消息提醒。
+                    </p>
                     <Button
                       theme="primary"
                       block
@@ -1262,6 +1317,13 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
                     </button>
                   </>
                 )}
+              </div>
+
+              <div className="im-set-group">
+                <div className="im-set-section-title">邮件提醒</div>
+                <div style={{ padding: '12px 14px' }}>
+                  <EmailNotifySettings conversations={conversations} />
+                </div>
               </div>
             </div>
           </section>
@@ -1898,6 +1960,15 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
           setRight({ kind: 'settings' })
           setMobileDetail(true)
         }}
+      />
+
+      <UpdateNoticeGate />
+
+      <UpdateNoticeDialog
+        notice={viewNotice}
+        confirmText="关闭"
+        onClose={() => setViewNotice(null)}
+        onConfirm={() => setViewNotice(null)}
       />
 
       <AddContactDialog

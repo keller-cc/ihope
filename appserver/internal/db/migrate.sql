@@ -420,3 +420,70 @@ CREATE INDEX IF NOT EXISTS manila_match_results_finished_idx
 
 INSERT INTO schema_migrations (version) VALUES ('020_manila')
 ON CONFLICT DO NOTHING;
+
+-- Daily first-message email for users without QQ doorbell binding (Asia/Shanghai calendar day).
+ALTER TABLE users ADD COLUMN IF NOT EXISTS last_message_email_on DATE;
+
+INSERT INTO schema_migrations (version) VALUES ('023_message_email_notify')
+ON CONFLICT DO NOTHING;
+
+-- Email offline notify preferences (modes / scope); QQ doorbell takes priority when active.
+CREATE TABLE IF NOT EXISTS user_email_notify_prefs (
+  user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  enabled BOOLEAN NOT NULL DEFAULT TRUE,
+  mode TEXT NOT NULL DEFAULT 'first_daily'
+    CHECK (mode IN ('off', 'first_daily', 'every', 'batch')),
+  batch_size INT NOT NULL DEFAULT 5 CHECK (batch_size BETWEEN 2 AND 50),
+  min_interval_sec INT NOT NULL DEFAULT 300 CHECK (min_interval_sec BETWEEN 60 AND 3600),
+  scope TEXT NOT NULL DEFAULT 'all'
+    CHECK (scope IN ('all', 'include', 'exclude', 'dm_only', 'group_only')),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS user_email_notify_conversations (
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  conversation_id UUID NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  PRIMARY KEY (user_id, conversation_id)
+);
+
+CREATE TABLE IF NOT EXISTS user_email_notify_state (
+  user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  last_sent_at TIMESTAMPTZ,
+  last_sent_on DATE,
+  pending_count INT NOT NULL DEFAULT 0,
+  pending_hints TEXT[] NOT NULL DEFAULT '{}',
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+INSERT INTO user_email_notify_state (user_id, last_sent_on, updated_at)
+SELECT id, last_message_email_on, now()
+FROM users
+WHERE last_message_email_on IS NOT NULL
+ON CONFLICT (user_id) DO NOTHING;
+
+INSERT INTO schema_migrations (version) VALUES ('024_email_notify_prefs')
+ON CONFLICT DO NOTHING;
+
+-- Web update notices (admin-managed; QQ/WeChat-style first-entry popup + settings list).
+CREATE TABLE IF NOT EXISTS update_notices (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  title TEXT NOT NULL,
+  body TEXT NOT NULL,
+  published BOOLEAN NOT NULL DEFAULT FALSE,
+  published_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS update_notices_published_idx
+  ON update_notices (published, published_at DESC NULLS LAST);
+
+CREATE TABLE IF NOT EXISTS update_notice_acks (
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  notice_id UUID NOT NULL REFERENCES update_notices(id) ON DELETE CASCADE,
+  acked_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (user_id, notice_id)
+);
+
+INSERT INTO schema_migrations (version) VALUES ('025_update_notices')
+ON CONFLICT DO NOTHING;

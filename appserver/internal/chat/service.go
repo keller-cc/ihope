@@ -2127,6 +2127,16 @@ func (s *Service) ConversationType(ctx context.Context, conversationID string) (
 	return typ, nil
 }
 
+// IsMemberMuted reports conversation mute for the user (false if not a member).
+func (s *Service) IsMemberMuted(ctx context.Context, conversationID, userID string) bool {
+	var muted bool
+	err := s.pool.QueryRow(ctx, `
+		SELECT muted FROM conversation_members
+		WHERE conversation_id = $1 AND user_id = $2
+	`, conversationID, userID).Scan(&muted)
+	return err == nil && muted
+}
+
 func (s *Service) SearchUser(ctx context.Context, viewerID, q string) (*PublicUser, error) {
 	q = strings.TrimSpace(q)
 	if q == "" {

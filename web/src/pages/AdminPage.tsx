@@ -7,7 +7,9 @@ import {
   Input,
   MessagePlugin,
   Select,
+  Switch,
   Table,
+  Textarea,
 } from 'tdesign-react'
 import {
   adminApi,
@@ -22,11 +24,12 @@ import {
   type AdminManilaResult,
   type AdminManilaRoom,
   type AdminQQBinding,
+  type AdminUpdateNotice,
   type AdminUser,
 } from '@/api'
 import { JOIN_MODE_OPTIONS } from '@/lib/joinMode'
 
-type AdminTab = 'users' | 'domains' | 'fellowships' | 'qq' | 'conversations' | 'games'
+type AdminTab = 'users' | 'domains' | 'fellowships' | 'qq' | 'conversations' | 'games' | 'notices'
 
 const TAB_ITEMS: { id: AdminTab; label: (n: number) => string }[] = [
   { id: 'users', label: (n) => `用户 (${n})` },
@@ -35,6 +38,7 @@ const TAB_ITEMS: { id: AdminTab; label: (n: number) => string }[] = [
   { id: 'qq', label: (n) => `QQ 绑定 (${n})` },
   { id: 'conversations', label: (n) => `会话 (${n})` },
   { id: 'games', label: (n) => `游戏 (${n})` },
+  { id: 'notices', label: (n) => `更新公告 (${n})` },
 ]
 
 export function AdminPage() {
@@ -79,6 +83,14 @@ export function AdminPage() {
     username: string
     score: string
   } | null>(null)
+  const [updateNotices, setUpdateNotices] = useState<AdminUpdateNotice[]>([])
+  const [noticeEdit, setNoticeEdit] = useState<{
+    id?: string
+    title: string
+    body: string
+    published: boolean
+  } | null>(null)
+  const [noticeBusy, setNoticeBusy] = useState(false)
 
   const fellowshipOptions = fellowships.map((f) => ({
     label: `${f.name || f.code}（${f.domainName}）`,
@@ -94,12 +106,13 @@ export function AdminPage() {
     qq: qqBindings.length,
     conversations: conversations.length,
     games: manilaRooms.length + dinoScores.length,
+    notices: updateNotices.length,
   }
 
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const [u, c, qq, d, f, manilaLive, manilaHist, dinoBoard] = await Promise.all([
+      const [u, c, qq, d, f, manilaLive, manilaHist, dinoBoard, notices] = await Promise.all([
         adminApi.listUsers(),
         adminApi.listConversations(),
         adminApi.listQQBindings(),
@@ -108,6 +121,7 @@ export function AdminPage() {
         adminApi.listManilaRooms(),
         adminApi.listManilaResults(50),
         adminApi.listDinoLeaderboard(200),
+        adminApi.listUpdateNotices(),
       ])
       setUsers(u.users)
       setConversations(c.conversations)
@@ -120,6 +134,7 @@ export function AdminPage() {
       setManilaMaxAge(manilaLive.maxAge || '1h0m0s')
       setManilaResults(manilaHist.results || [])
       setDinoScores(dinoBoard.scores || [])
+      setUpdateNotices(notices.notices || [])
       setFellowshipDraft((prev) => ({
         ...prev,
         domainId: prev.domainId || d.domains?.[0]?.id || '',
@@ -411,20 +426,20 @@ export function AdminPage() {
           resizable
           tableLayout="fixed"
           columns={[
-            { colKey: 'username', title: '用户名', width: 96, ellipsis: true },
+            { colKey: 'username', title: '用户名', width: 110, ellipsis: true },
             {
               colKey: 'hopeId',
               title: 'IHope 号',
-              width: 124,
+              width: 130,
               cell: ({ row }) => (
                 <span className="im-admin-mono">{row.hopeId || '—'}</span>
               ),
             },
-            { colKey: 'email', title: '邮箱', ellipsis: true, width: 168 },
+            { colKey: 'email', title: '邮箱', ellipsis: true, width: 200 },
             {
               colKey: 'fellowshipId',
               title: '团契',
-              width: 168,
+              width: 180,
               cell: ({ row }) => (
                 <Select
                   size="small"
@@ -483,7 +498,7 @@ export function AdminPage() {
               resizable: false,
               width: 220,
               cell: ({ row }) => (
-                <div className="im-admin__ops">
+                <div className="im-admin__ops im-admin__ops--users">
                   <Button
                     size="small"
                     variant="text"
@@ -514,6 +529,7 @@ export function AdminPage() {
                   <Button
                     size="small"
                     variant="text"
+                    theme="primary"
                     disabled={!qqBotEnabled || !row.qqBound}
                     onClick={() => unbindQQ(row.id, row.username)}
                   >
@@ -569,17 +585,17 @@ export function AdminPage() {
           resizable
           tableLayout="fixed"
           columns={[
-            { colKey: 'name', title: '名称', ellipsis: true },
+            { colKey: 'name', title: '名称', width: 280, ellipsis: true },
             {
               colKey: 'fellowshipCount',
               title: '团契数',
-              width: 90,
+              width: 100,
               align: 'center',
             },
             {
               colKey: 'createdAt',
               title: '创建',
-              width: 136,
+              width: 160,
               cell: ({ row }) => (
                 <span className="im-admin-mono">{formatTime(row.createdAt)}</span>
               ),
@@ -589,8 +605,7 @@ export function AdminPage() {
               title: '操作',
               align: 'center',
               fixed: 'right',
-              resizable: false,
-              width: 120,
+              width: 140,
               cell: ({ row }) => (
                 <div className="im-admin__ops">
                   <Button
@@ -681,14 +696,14 @@ export function AdminPage() {
           resizable
           tableLayout="fixed"
           columns={[
-            { colKey: 'code', title: '团契码', width: 140 },
-            { colKey: 'name', title: '名称', width: 140, ellipsis: true },
-            { colKey: 'domainName', title: '自治域', width: 140, ellipsis: true },
-            { colKey: 'userCount', title: '人数', width: 70, align: 'center' },
+            { colKey: 'code', title: '团契码', width: 160 },
+            { colKey: 'name', title: '名称', width: 180, ellipsis: true },
+            { colKey: 'domainName', title: '自治域', width: 180, ellipsis: true },
+            { colKey: 'userCount', title: '人数', width: 80, align: 'center' },
             {
               colKey: 'createdAt',
               title: '创建',
-              width: 136,
+              width: 160,
               cell: ({ row }) => (
                 <span className="im-admin-mono">{formatTime(row.createdAt)}</span>
               ),
@@ -698,8 +713,7 @@ export function AdminPage() {
               title: '操作',
               align: 'center',
               fixed: 'right',
-              resizable: false,
-              width: 108,
+              width: 140,
               cell: ({ row }) => (
                 <div className="im-admin__ops">
                   <Button
@@ -748,8 +762,8 @@ export function AdminPage() {
         loading={loading}
         empty="暂无 QQ 绑定"
         maxHeight={520}
-        resizable
-        tableLayout="fixed"
+          resizable
+          tableLayout="fixed"
         columns={[
           { colKey: 'username', title: '用户名', width: 120, ellipsis: true },
           {
@@ -763,6 +777,7 @@ export function AdminPage() {
           {
             colKey: 'qqOpenId',
             title: 'QQ OpenID',
+            width: 220,
             ellipsis: true,
             cell: ({ row }) => (
               <span className="im-admin-mono">{maskOpenId(row.qqOpenId)}</span>
@@ -771,14 +786,14 @@ export function AdminPage() {
           {
             colKey: 'doorbellEnabled',
             title: '消息提醒',
-            width: 90,
+            width: 100,
             align: 'center',
             cell: ({ row }) => (row.doorbellEnabled ? '开' : '关'),
           },
           {
             colKey: 'boundAt',
             title: '绑定时间',
-            width: 136,
+            width: 160,
             cell: ({ row }) => (
               <span className="im-admin-mono">{formatTime(row.boundAt)}</span>
             ),
@@ -788,17 +803,18 @@ export function AdminPage() {
             title: '操作',
             align: 'center',
             fixed: 'right',
-            resizable: false,
-            width: 72,
+            width: 80,
             cell: ({ row }) => (
-              <Button
-                size="small"
-                theme="danger"
-                variant="text"
-                onClick={() => unbindQQ(row.userId, row.username)}
-              >
-                解绑
-              </Button>
+              <div className="im-admin__ops">
+                <Button
+                  size="small"
+                  theme="danger"
+                  variant="text"
+                  onClick={() => unbindQQ(row.userId, row.username)}
+                >
+                  解绑
+                </Button>
+              </div>
             ),
           },
         ]}
@@ -835,7 +851,7 @@ export function AdminPage() {
               align: 'center',
               cell: ({ row }) => (row.type === 'group' ? '群聊' : '私聊'),
             },
-            { colKey: 'title', title: '标题', width: 160, ellipsis: true },
+            { colKey: 'title', title: '标题', width: 180, ellipsis: true },
             {
               colKey: 'groupNo',
               title: '群号',
@@ -851,17 +867,17 @@ export function AdminPage() {
               ellipsis: true,
               cell: ({ row }) => row.ownerUsername || '—',
             },
-            { colKey: 'members', title: '成员', ellipsis: true, width: 200 },
+            { colKey: 'members', title: '成员', ellipsis: true, width: 240 },
             {
               colKey: 'memberCount',
               title: '人数',
-              width: 64,
+              width: 72,
               align: 'center',
             },
             {
               colKey: 'createdAt',
               title: '创建',
-              width: 136,
+              width: 160,
               cell: ({ row }) => (
                 <span className="im-admin-mono">{formatTime(row.createdAt)}</span>
               ),
@@ -871,8 +887,7 @@ export function AdminPage() {
               title: '操作',
               align: 'center',
               fixed: 'right',
-              resizable: false,
-              width: 108,
+              width: 140,
               cell: ({ row }) => (
                 <div className="im-admin__ops">
                   {row.type === 'group' && (
@@ -958,6 +973,7 @@ export function AdminPage() {
             {
               colKey: 'members',
               title: '玩家',
+              width: 260,
               ellipsis: true,
               cell: ({ row }) =>
                 `${row.memberCount}/${row.maxPlayers} · ${(row.members || []).join('、') || '—'}`,
@@ -997,7 +1013,6 @@ export function AdminPage() {
               title: '操作',
               align: 'center',
               fixed: 'right',
-              resizable: false,
               width: 100,
               cell: ({ row }) => (
                 <div className="im-admin__ops">
@@ -1055,6 +1070,7 @@ export function AdminPage() {
             {
               colKey: 'players',
               title: '排名 / 财富',
+              width: 480,
               ellipsis: true,
               cell: ({ row }) =>
                 (row.players || [])
@@ -1108,6 +1124,7 @@ export function AdminPage() {
             {
               colKey: 'userId',
               title: '用户 ID',
+              width: 280,
               ellipsis: true,
               cell: ({ row }) => <span className="im-admin-mono">{row.userId}</span>,
             },
@@ -1116,13 +1133,13 @@ export function AdminPage() {
               title: '操作',
               align: 'center',
               fixed: 'right',
-              resizable: false,
               width: 140,
               cell: ({ row }) => (
                 <div className="im-admin__ops">
                   <Button
                     size="small"
                     variant="text"
+                    theme="primary"
                     onClick={() =>
                       setDinoScoreEdit({
                         userId: row.userId,
@@ -1151,6 +1168,132 @@ export function AdminPage() {
                     }
                   >
                     清除
+                  </Button>
+                </div>
+              ),
+            },
+          ]}
+        />
+      </>
+    )
+  } else if (tab === 'notices') {
+    panel = (
+      <>
+        <div className="im-admin__toolbar">
+          <p className="im-muted im-admin__hint" style={{ margin: 0, flex: 1 }}>
+            已发布的公告会在用户进入时提示一次。
+          </p>
+          <Button
+            theme="primary"
+            onClick={() => setNoticeEdit({ title: '', body: '', published: true })}
+          >
+            新建公告
+          </Button>
+        </div>
+        <Table
+          rowKey="id"
+          className="im-admin-table"
+          data={updateNotices}
+          loading={loading}
+          empty="暂无更新公告"
+          maxHeight={520}
+          resizable
+          tableLayout="fixed"
+          columns={[
+            {
+              colKey: 'title',
+              title: '标题',
+              width: 220,
+              ellipsis: true,
+            },
+            {
+              colKey: 'body',
+              title: '正文摘要',
+              width: 420,
+              ellipsis: true,
+              cell: ({ row }) => {
+                const lines = String(row.body || '')
+                  .split(/\r?\n/)
+                  .map((l: string) => l.trim())
+                  .filter(Boolean)
+                  .slice(0, 2)
+                return lines.join(' ') || '—'
+              },
+            },
+            {
+              colKey: 'published',
+              title: '状态',
+              width: 96,
+              align: 'center',
+              cell: ({ row }) => (row.published ? '已发布' : '草稿'),
+            },
+            {
+              colKey: 'publishedAt',
+              title: '发布时间',
+              width: 140,
+              cell: ({ row }) => (row.publishedAt || row.createdAt || '').slice(0, 10) || '—',
+            },
+            {
+              colKey: 'op',
+              title: '操作',
+              align: 'center',
+              fixed: 'right',
+              width: 180,
+              cell: ({ row }) => (
+                <div className="im-admin__ops">
+                  <Button
+                    size="small"
+                    variant="text"
+                    theme="primary"
+                    onClick={() =>
+                      setNoticeEdit({
+                        id: row.id,
+                        title: row.title,
+                        body: row.body,
+                        published: row.published,
+                      })
+                    }
+                  >
+                    编辑
+                  </Button>
+                  <Button
+                    size="small"
+                    variant="text"
+                    theme="primary"
+                    onClick={() =>
+                      void (async () => {
+                        try {
+                          await adminApi.updateUpdateNotice(row.id, {
+                            published: !row.published,
+                          })
+                          MessagePlugin.success(row.published ? '已撤回' : '已发布')
+                          void load()
+                        } catch (e) {
+                          MessagePlugin.error(apiErrorMessage(e, '操作失败'))
+                        }
+                      })()
+                    }
+                  >
+                    {row.published ? '撤回' : '发布'}
+                  </Button>
+                  <Button
+                    size="small"
+                    theme="danger"
+                    variant="text"
+                    onClick={() =>
+                      confirmAction({
+                        header: '删除公告',
+                        body: `确定删除「${row.title}」？`,
+                        confirm: '删除',
+                        danger: true,
+                        success: '已删除',
+                        onOk: async () => {
+                          await adminApi.deleteUpdateNotice(row.id)
+                        },
+                      })
+                    }
+                  >
+                    删除
                   </Button>
                 </div>
               ),
@@ -1563,6 +1706,84 @@ export function AdminPage() {
                 }
               />
             </label>
+          </div>
+        )}
+      </Dialog>
+
+      <Dialog
+        visible={!!noticeEdit}
+        header={noticeEdit?.id ? '编辑更新公告' : '新建更新公告'}
+        width={520}
+        confirmBtn={{ content: '保存', loading: noticeBusy }}
+        cancelBtn="取消"
+        onClose={() => setNoticeEdit(null)}
+        onConfirm={() => {
+          if (!noticeEdit) return
+          void (async () => {
+            const title = noticeEdit.title.trim()
+            const body = noticeEdit.body.trim()
+            if (!title || !body) {
+              MessagePlugin.warning('请填写标题和正文')
+              return
+            }
+            setNoticeBusy(true)
+            try {
+              if (noticeEdit.id) {
+                await adminApi.updateUpdateNotice(noticeEdit.id, {
+                  title,
+                  body,
+                  published: noticeEdit.published,
+                })
+              } else {
+                await adminApi.createUpdateNotice({
+                  title,
+                  body,
+                  published: noticeEdit.published,
+                })
+              }
+              MessagePlugin.success('已保存')
+              setNoticeEdit(null)
+              void load()
+            } catch (e) {
+              MessagePlugin.error(apiErrorMessage(e, '保存失败'))
+            } finally {
+              setNoticeBusy(false)
+            }
+          })()
+        }}
+      >
+        {noticeEdit && (
+          <div className="im-admin__form">
+            <label>
+              标题
+              <Input
+                value={noticeEdit.title}
+                placeholder="简要说明本次更新"
+                onChange={(v) =>
+                  setNoticeEdit((p) => (p ? { ...p, title: String(v) } : p))
+                }
+              />
+            </label>
+            <label>
+              正文
+              <Textarea
+                value={noticeEdit.body}
+                placeholder={'可分行列出更新内容'}
+                autosize={{ minRows: 8, maxRows: 16 }}
+                onChange={(v) =>
+                  setNoticeEdit((p) => (p ? { ...p, body: String(v) } : p))
+                }
+              />
+            </label>
+            <div className="im-switch-row" style={{ marginTop: 8 }}>
+              <span>发布</span>
+              <Switch
+                value={noticeEdit.published}
+                onChange={(v) =>
+                  setNoticeEdit((p) => (p ? { ...p, published: Boolean(v) } : p))
+                }
+              />
+            </div>
           </div>
         )}
       </Dialog>

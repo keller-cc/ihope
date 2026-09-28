@@ -17,12 +17,14 @@ import (
 	"github.com/keller-cc/ihope/appserver/internal/chat"
 	"github.com/keller-cc/ihope/appserver/internal/config"
 	"github.com/keller-cc/ihope/appserver/internal/db"
+	"github.com/keller-cc/ihope/appserver/internal/emailnotify"
 	"github.com/keller-cc/ihope/appserver/internal/games"
 	"github.com/keller-cc/ihope/appserver/internal/hub"
 	"github.com/keller-cc/ihope/appserver/internal/httpserver"
 	"github.com/keller-cc/ihope/appserver/internal/mail"
 	"github.com/keller-cc/ihope/appserver/internal/manila"
 	"github.com/keller-cc/ihope/appserver/internal/qqbot"
+	"github.com/keller-cc/ihope/appserver/internal/updatenotice"
 )
 
 func main() {
@@ -100,21 +102,33 @@ func main() {
 
 	var qqSvc *qqbot.Service
 	var qqSched *qqbot.Scheduler
+	var qqStore *qqbot.Store
 	uploadDir := cfg.UploadDir
 	if uploadDir == "" {
 		uploadDir = "data/uploads"
 	}
+	qqStore = qqbot.NewStore(pool)
 	if cfg.QQBotEnabled {
 		client := qqbot.NewClient(cfg.QQBotAppID, cfg.QQBotAppSecret)
 		media := qqbot.NewMediaHost(uploadDir, cfg.AppPublicURL)
-		qqSvc = qqbot.NewService(cfg, qqbot.NewStore(pool), client, media, h)
+		qqSvc = qqbot.NewService(cfg, qqStore, client, media, h)
 		qqSched = qqbot.NewScheduler(qqSvc, cfg.QQDailyPoetryHHMM, cfg.QQDailyQuotesHHMM, cfg.QQDailyNewsHHMM)
 		qqSched.Start()
 		callSvc.SetDoorbell(qqSvc)
 		log.Println("qq bot enabled")
 	}
 
-	srv := httpserver.New(authSvc, chatSvc, adminSvc, gameSvc, manilaStore, manilaMgr, h, callSvc, qqSvc, cfg.CORSOrigin, cfg.QQWebhookPath, cfg.AdminToken, uploadDir, cfg.QQQuotesFilePath, cfg.WebDist)
+	qqSuppress := emailnotify.FuncQQSuppressor(func(ctx context.Context, userID string) (bool, error) {
+		// Only suppress when QQ bot can deliver and doorbell is on.
+		if qqSvc == nil || !qqSvc.Enabled() {
+			return false, nil
+		}
+		return qqStore.QQDoorbellActive(ctx, userID)
+	})
+	emailNotify := emailnotify.New(mailer, emailnotify.NewStore(pool), h, qqSuppress, chatSvc, cfg.AppPublicURL)
+	noticeStore := updatenotice.NewStore(pool)
+
+	srv := httpserver.New(authSvc, chatSvc, adminSvc, gameSvc, manilaStore, manilaMgr, h, callSvc, qqSvc, emailNotify, noticeStore, cfg.CORSOrigin, cfg.QQWebhookPath, cfg.AdminToken, uploadDir, cfg.QQQuotesFilePath, cfg.WebDist)
 	_ = os.MkdirAll(filepath.Join(uploadDir, "avatars"), 0o755)
 	_ = os.MkdirAll(filepath.Join(uploadDir, "groups"), 0o755)
 	_ = os.MkdirAll(filepath.Join(uploadDir, "chat"), 0o755)

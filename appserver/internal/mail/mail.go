@@ -57,6 +57,57 @@ func (s *Sender) SendPasswordReset(to, resetURL string) error {
 	return s.deliver(to, subject, body)
 }
 
+// SendMessageReminder notifies an offline user of a new chat message.
+func (s *Sender) SendMessageReminder(to, senderHint, appURL string) error {
+	subject := "你有新的 IHope 消息"
+	senderHint = strings.TrimSpace(senderHint)
+	if senderHint == "" {
+		senderHint = "有人"
+	}
+	body := fmt.Sprintf(
+		"您有新的聊天消息（来自 %s），请打开 IHope 查看。\n",
+		senderHint,
+	)
+	return s.deliverReminder(to, subject, body, appURL)
+}
+
+// SendBatchMessageReminder summarizes several offline chat messages in one email.
+func (s *Sender) SendBatchMessageReminder(to string, count int, hints []string, appURL string) error {
+	if count < 1 {
+		count = 1
+	}
+	subject := "你有新的 IHope 消息"
+	fromPart := ""
+	if len(hints) > 0 {
+		fromPart = fmt.Sprintf("（来自 %s）", strings.Join(hints, "、"))
+	}
+	body := fmt.Sprintf(
+		"您有 %d 条离线聊天消息提醒%s，请打开 IHope 查看。\n",
+		count, fromPart,
+	)
+	return s.deliverReminder(to, subject, body, appURL)
+}
+
+// SendSocialReminder notifies offline social events (friend request, group join, etc.).
+func (s *Sender) SendSocialReminder(to, text, appURL string) error {
+	subject := "你有新的 IHope 提醒"
+	text = strings.TrimSpace(text)
+	if text == "" {
+		text = "您有新的社交提醒，请打开 IHope 查看。"
+	}
+	body := text + "\n"
+	return s.deliverReminder(to, subject, body, appURL)
+}
+
+func (s *Sender) deliverReminder(to, subject, body, appURL string) error {
+	appURL = strings.TrimSpace(appURL)
+	if appURL != "" {
+		body += fmt.Sprintf("\n打开应用：%s\n", appURL)
+	}
+	body += "\n提示：可在「消息提醒」中调整邮件规则，或绑定 QQ 获得实时离线提醒。\n"
+	return s.deliver(to, subject, body)
+}
+
 func (s *Sender) deliver(to, subject, body string) error {
 	switch strings.ToLower(strings.TrimSpace(s.cfg.Driver)) {
 	case "log", "":

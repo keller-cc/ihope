@@ -126,9 +126,12 @@
   width: 100%;
 }
 
-/* 可拉伸列宽交给 TDesign；勿强制覆盖 table 宽度，以免固定列盖住左列 */
+/* 列宽可拖；表格仍铺满面板，避免无 width 列随内容伸缩导致切换 tab 时抖动 */
 .im-admin-table.t-table,
-.im-admin-table .t-table {
+.im-admin-table .t-table,
+.im-admin-table table {
+  width: 100% !important;
+  table-layout: fixed;
   background: transparent;
 }
 
@@ -189,11 +192,31 @@
   min-height: 28px;
 }
 
+/* 用户表：五个操作按钮排成两行，避免操作列过宽 */
+.im-admin__ops--users {
+  max-width: 210px;
+  margin: 0 auto;
+  row-gap: 2px;
+}
+
+.im-admin-table .t-table__td:has(.im-admin__ops--users) {
+  white-space: normal;
+}
+
 .im-admin__ops .t-button {
   flex-shrink: 0;
   margin: 0;
   padding-left: 4px;
   padding-right: 4px;
+}
+
+/* Primary text actions stay brand-colored even when disabled styling differs */
+.im-admin__ops .t-button--variant-text.t-button--theme-primary {
+  color: var(--im-color-primary);
+}
+
+.im-admin__ops .t-button--variant-text.t-button--theme-danger {
+  color: var(--im-color-danger, #d54941);
 }
 
 .im-admin-group {

@@ -112,6 +112,30 @@ func (s *Store) GetByUserID(ctx context.Context, userID string) (*Binding, error
 		FROM user_qq_bindings WHERE user_id = $1`, userID)
 }
 
+// HasQQBinding reports whether the user has a QQ binding (regardless of doorbell_enabled).
+func (s *Store) HasQQBinding(ctx context.Context, userID string) (bool, error) {
+	_, err := s.GetByUserID(ctx, userID)
+	if errors.Is(err, ErrNotBound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// QQDoorbellActive is true when the user is bound and doorbell is enabled.
+func (s *Store) QQDoorbellActive(ctx context.Context, userID string) (bool, error) {
+	b, err := s.GetByUserID(ctx, userID)
+	if errors.Is(err, ErrNotBound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return b.DoorbellEnabled, nil
+}
+
 func (s *Store) GetByOpenID(ctx context.Context, openID string) (*Binding, error) {
 	return s.scan(ctx, `SELECT user_id::text, qq_openid, doorbell_enabled, poetry_enabled, quotes_enabled, news_enabled, last_doorbell_at, bound_at
 		FROM user_qq_bindings WHERE qq_openid = $1`, openID)

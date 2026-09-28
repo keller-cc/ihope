@@ -290,6 +290,25 @@ export const adminApi = {
       `/api/admin/games/dino/scores/${encodeURIComponent(userId)}`,
       { method: 'DELETE' },
     ),
+  listUpdateNotices: () =>
+    adminRequest<{ notices: AdminUpdateNotice[] }>('/api/admin/update-notices'),
+  createUpdateNotice: (payload: { title: string; body: string; published?: boolean }) =>
+    adminRequest<AdminUpdateNotice>('/api/admin/update-notices', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  updateUpdateNotice: (
+    id: string,
+    payload: { title?: string; body?: string; published?: boolean },
+  ) =>
+    adminRequest<AdminUpdateNotice>(`/api/admin/update-notices/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    }),
+  deleteUpdateNotice: (id: string) =>
+    adminRequest<{ message: string }>(`/api/admin/update-notices/${id}`, {
+      method: 'DELETE',
+    }),
 }
 
 export type AdminManilaRoom = {
@@ -323,4 +342,14 @@ export type AdminDinoScore = {
   username: string
   score: number
   createdAt: string
+}
+
+export type AdminUpdateNotice = {
+  id: string
+  title: string
+  body: string
+  published: boolean
+  publishedAt?: string | null
+  createdAt: string
+  updatedAt: string
 }

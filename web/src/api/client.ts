@@ -7,6 +7,9 @@
   ChatTheme,
   Contact,
   Conversation,
+  EmailNotifyMode,
+  EmailNotifyPrefs,
+  EmailNotifyScope,
   FriendRequest,
   GroupAnnouncement,
   GroupJoinRequest,
@@ -17,6 +20,7 @@
   PublicGroup,
   PublicUser,
   QQStatus,
+  UpdateNotice,
   User,
 } from './types'
 const DEFAULT_TOKEN_KEY = 'ihope_web_token'
@@ -684,6 +688,32 @@ export const api = {
     }),
   qqUnbind: () =>
     request<{ message: string }>('/api/me/qq-bot', { method: 'DELETE' }),
+  emailNotifyGet: () => request<EmailNotifyPrefs>('/api/me/email-notify'),
+  emailNotifyPatch: (body: Partial<{
+    enabled: boolean
+    mode: EmailNotifyMode
+    batchSize: number
+    minIntervalSec: number
+    scope: EmailNotifyScope
+    conversationIds: string[]
+  }>) =>
+    request<EmailNotifyPrefs>('/api/me/email-notify', {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    }),
+  emailNotifySetConversations: (conversationIds: string[]) =>
+    request<EmailNotifyPrefs>('/api/me/email-notify/conversations', {
+      method: 'PUT',
+      body: JSON.stringify({ conversationIds }),
+    }),
+  updateNoticePending: () =>
+    request<{ notice: UpdateNotice | null }>('/api/me/update-notices/pending'),
+  listUpdateNotices: () =>
+    request<{ notices: UpdateNotice[] }>('/api/me/update-notices'),
+  getUpdateNotice: (id: string) =>
+    request<UpdateNotice>(`/api/me/update-notices/${id}`),
+  ackUpdateNotice: (id: string) =>
+    request<{ ok: boolean }>(`/api/me/update-notices/${id}/ack`, { method: 'POST' }),
   dinoLeaderboard: () =>
     request<{ scores: DinoScoreRow[] }>('/api/games/dino/leaderboard'),
   dinoSubmitScore: (score: number) =>

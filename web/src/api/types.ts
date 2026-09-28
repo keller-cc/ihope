@@ -226,3 +226,29 @@ export type QQStatus = {
   doorbellEnabled?: boolean
   boundAt?: string
 }
+
+export type EmailNotifyMode = 'off' | 'first_daily' | 'every' | 'batch'
+export type EmailNotifyScope = 'all' | 'include' | 'exclude' | 'dm_only' | 'group_only'
+export type EmailNotifyEffective = 'active' | 'paused_by_qq' | 'disabled'
+
+export type EmailNotifyPrefs = {
+  enabled: boolean
+  mode: EmailNotifyMode
+  batchSize: number
+  minIntervalSec: number
+  scope: EmailNotifyScope
+  conversationIds: string[]
+  effective: EmailNotifyEffective
+  emailVerified: boolean
+}
+
+/** Admin-managed product update notice (QQ/WeChat style). */
+export type UpdateNotice = {
+  id: string
+  title: string
+  body: string
+  published: boolean
+  publishedAt?: string | null
+  createdAt: string
+  updatedAt: string
+}

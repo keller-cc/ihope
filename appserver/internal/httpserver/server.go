@@ -20,31 +20,35 @@ import (
 	"github.com/keller-cc/ihope/appserver/internal/auth"
 	"github.com/keller-cc/ihope/appserver/internal/call"
 	"github.com/keller-cc/ihope/appserver/internal/chat"
+	"github.com/keller-cc/ihope/appserver/internal/emailnotify"
 	"github.com/keller-cc/ihope/appserver/internal/games"
 	"github.com/keller-cc/ihope/appserver/internal/hub"
 	"github.com/keller-cc/ihope/appserver/internal/manila"
 	"github.com/keller-cc/ihope/appserver/internal/qqbot"
 	"github.com/keller-cc/ihope/appserver/internal/quotes"
+	"github.com/keller-cc/ihope/appserver/internal/updatenotice"
 	"github.com/keller-cc/ihope/appserver/internal/upload"
 )
 
 type Server struct {
-	auth       *auth.Service
-	chat       *chat.Service
-	admin      *admin.Service
+	auth        *auth.Service
+	chat        *chat.Service
+	admin       *admin.Service
 	gameSvc     *games.Service
 	manilaStore *manila.Store
 	manilaMgr   *manila.Manager
 	hub         *hub.Hub
-	calls      *call.Service
-	qq         *qqbot.Service
-	cors       string
-	qqPath     string
-	adminToken string
-	uploadDir  string
-	quotesPath string
-	webDist    string
-	upg        websocket.Upgrader
+	calls       *call.Service
+	qq          *qqbot.Service
+	emailNotify *emailnotify.Service
+	notices     *updatenotice.Store
+	cors        string
+	qqPath      string
+	adminToken  string
+	uploadDir   string
+	quotesPath  string
+	webDist     string
+	upg         websocket.Upgrader
 }
 
 func New(
@@ -57,24 +61,28 @@ func New(
 	h *hub.Hub,
 	callSvc *call.Service,
 	qq *qqbot.Service,
+	emailNotify *emailnotify.Service,
+	notices *updatenotice.Store,
 	corsOrigin, qqWebhookPath, adminToken, uploadDir, quotesPath, webDist string,
 ) *Server {
 	return &Server{
-		auth:       authSvc,
-		chat:       chatSvc,
-		admin:      adminSvc,
+		auth:        authSvc,
+		chat:        chatSvc,
+		admin:       adminSvc,
 		gameSvc:     gameSvc,
 		manilaStore: manilaStore,
 		manilaMgr:   manilaMgr,
 		hub:         h,
-		calls:      callSvc,
-		qq:         qq,
-		cors:       corsOrigin,
-		qqPath:     qqWebhookPath,
-		adminToken: strings.TrimSpace(adminToken),
-		uploadDir:  uploadDir,
-		quotesPath: strings.TrimSpace(quotesPath),
-		webDist:    strings.TrimSpace(webDist),
+		calls:       callSvc,
+		qq:          qq,
+		emailNotify: emailNotify,
+		notices:     notices,
+		cors:        corsOrigin,
+		qqPath:      qqWebhookPath,
+		adminToken:  strings.TrimSpace(adminToken),
+		uploadDir:   uploadDir,
+		quotesPath:  strings.TrimSpace(quotesPath),
+		webDist:     strings.TrimSpace(webDist),
 		upg: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool {
 				origin := r.Header.Get("Origin")
@@ -181,6 +189,13 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/me/qq-bot/bind-code", s.withAuth(s.handleQQBindCode))
 	mux.HandleFunc("PATCH /api/me/qq-bot", s.withAuth(s.handleQQPatch))
 	mux.HandleFunc("DELETE /api/me/qq-bot", s.withAuth(s.handleQQUnbind))
+	mux.HandleFunc("GET /api/me/email-notify", s.withAuth(s.handleEmailNotifyGet))
+	mux.HandleFunc("PATCH /api/me/email-notify", s.withAuth(s.handleEmailNotifyPatch))
+	mux.HandleFunc("PUT /api/me/email-notify/conversations", s.withAuth(s.handleEmailNotifyConversations))
+	mux.HandleFunc("GET /api/me/update-notices/pending", s.withAuth(s.handleUpdateNoticePending))
+	mux.HandleFunc("GET /api/me/update-notices", s.withAuth(s.handleUpdateNoticeList))
+	mux.HandleFunc("GET /api/me/update-notices/{id}", s.withAuth(s.handleUpdateNoticeGet))
+	mux.HandleFunc("POST /api/me/update-notices/{id}/ack", s.withAuth(s.handleUpdateNoticeAck))
 	mux.HandleFunc("GET /api/games/dino/leaderboard", s.handleDinoLeaderboard)
 	mux.HandleFunc("POST /api/games/dino/score", s.withAuth(s.handleDinoSubmitScore))
 	mux.HandleFunc("GET /api/games/dino/me", s.withAuth(s.handleDinoMyBest))
@@ -222,6 +237,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/admin/games/dino/leaderboard", s.withAdmin(s.handleAdminDinoLeaderboard))
 	mux.HandleFunc("PUT /api/admin/games/dino/scores/{userId}", s.withAdmin(s.handleAdminDinoSetScore))
 	mux.HandleFunc("DELETE /api/admin/games/dino/scores/{userId}", s.withAdmin(s.handleAdminDinoDeleteScores))
+	mux.HandleFunc("GET /api/admin/update-notices", s.withAdmin(s.handleAdminListUpdateNotices))
+	mux.HandleFunc("POST /api/admin/update-notices", s.withAdmin(s.handleAdminCreateUpdateNotice))
+	mux.HandleFunc("PATCH /api/admin/update-notices/{id}", s.withAdmin(s.handleAdminPatchUpdateNotice))
+	mux.HandleFunc("DELETE /api/admin/update-notices/{id}", s.withAdmin(s.handleAdminDeleteUpdateNotice))
 	if s.qqPath != "" {
 		mux.HandleFunc("POST "+s.qqPath, s.handleQQWebhook)
 	}
@@ -1906,9 +1925,6 @@ func (s *Server) afterMessage(conversationID, userID string, m *chat.Message) {
 	if m != nil && m.Type == "system" {
 		return
 	}
-	if s.qq == nil || !s.qq.Enabled() {
-		return
-	}
 	senderName := s.chat.UsernameByID(context.Background(), userID)
 	for _, mid := range members {
 		if mid == userID {
@@ -1916,7 +1932,12 @@ func (s *Server) afterMessage(conversationID, userID string, m *chat.Message) {
 		}
 		uid := mid
 		hint := senderName
-		go s.qq.NotifyDoorbell(context.Background(), uid, hint, conversationID)
+		if s.qq != nil && s.qq.Enabled() {
+			go s.qq.NotifyDoorbell(context.Background(), uid, hint, conversationID)
+		}
+		if s.emailNotify != nil {
+			go s.emailNotify.NotifyChat(context.Background(), uid, conversationID, hint)
+		}
 	}
 }
 
@@ -1943,14 +1964,23 @@ func messageListPreview(m *chat.Message) string {
 	}
 }
 
-// notifyQQSocial pushes an offline QQ-bot tip when the user is not online in IHope.
-// dedupeKey should identify the logical event (e.g. friend.request:{fromUserId}).
-func (s *Server) notifyQQSocial(userID, text, dedupeKey string) {
-	if s.qq == nil || !s.qq.Enabled() || userID == "" || strings.TrimSpace(text) == "" {
+// notifyOfflineSocial pushes offline QQ and/or email tips for social events.
+func (s *Server) notifyOfflineSocial(userID, text, dedupeKey string) {
+	if userID == "" || strings.TrimSpace(text) == "" {
 		return
 	}
 	uid, msg, key := userID, strings.TrimSpace(text), strings.TrimSpace(dedupeKey)
-	go s.qq.NotifySocial(context.Background(), uid, msg, key)
+	if s.qq != nil && s.qq.Enabled() {
+		go s.qq.NotifySocial(context.Background(), uid, msg, key)
+	}
+	if s.emailNotify != nil {
+		go s.emailNotify.NotifySocial(context.Background(), uid, msg, key)
+	}
+}
+
+// notifyQQSocial is retained as a thin alias for call sites.
+func (s *Server) notifyQQSocial(userID, text, dedupeKey string) {
+	s.notifyOfflineSocial(userID, text, dedupeKey)
 }
 
 func (s *Server) withUploadCache(next http.Handler) http.Handler {
@@ -1958,6 +1988,95 @@ func (s *Server) withUploadCache(next http.Handler) http.Handler {
 		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 		next.ServeHTTP(w, r)
 	})
+}
+
+func (s *Server) handleEmailNotifyGet(w http.ResponseWriter, r *http.Request, userID string) {
+	if s.emailNotify == nil {
+		writeJSON(w, http.StatusOK, emailnotify.Status{Prefs: emailnotify.DefaultPrefs(), Effective: emailnotify.EffectiveDisabled})
+		return
+	}
+	st, err := s.emailNotify.Status(r.Context(), userID)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "load failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, st)
+}
+
+func (s *Server) handleEmailNotifyPatch(w http.ResponseWriter, r *http.Request, userID string) {
+	if s.emailNotify == nil {
+		writeErr(w, http.StatusServiceUnavailable, "email_notify_disabled")
+		return
+	}
+	var body struct {
+		Enabled        *bool   `json:"enabled"`
+		Mode           *string `json:"mode"`
+		BatchSize      *int    `json:"batchSize"`
+		MinIntervalSec *int    `json:"minIntervalSec"`
+		Scope          *string `json:"scope"`
+		ConversationIDs *[]string `json:"conversationIds"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	cur, err := s.emailNotify.Status(r.Context(), userID)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "load failed")
+		return
+	}
+	p := cur.Prefs
+	if body.Enabled != nil {
+		p.Enabled = *body.Enabled
+	}
+	if body.Mode != nil {
+		p.Mode = *body.Mode
+	}
+	if body.BatchSize != nil {
+		p.BatchSize = *body.BatchSize
+	}
+	if body.MinIntervalSec != nil {
+		p.MinIntervalSec = *body.MinIntervalSec
+	}
+	if body.Scope != nil {
+		p.Scope = *body.Scope
+	}
+	if body.ConversationIDs != nil {
+		p.ConversationIDs = *body.ConversationIDs
+	}
+	st, err := s.emailNotify.UpdatePrefs(r.Context(), userID, p)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "save failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, st)
+}
+
+func (s *Server) handleEmailNotifyConversations(w http.ResponseWriter, r *http.Request, userID string) {
+	if s.emailNotify == nil {
+		writeErr(w, http.StatusServiceUnavailable, "email_notify_disabled")
+		return
+	}
+	var body struct {
+		ConversationIDs []string `json:"conversationIds"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	cur, err := s.emailNotify.Status(r.Context(), userID)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "load failed")
+		return
+	}
+	p := cur.Prefs
+	p.ConversationIDs = body.ConversationIDs
+	st, err := s.emailNotify.UpdatePrefs(r.Context(), userID, p)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "save failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, st)
 }
 
 func (s *Server) handleQQStatus(w http.ResponseWriter, r *http.Request, userID string) {

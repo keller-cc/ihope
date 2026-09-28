@@ -3,6 +3,7 @@ import { Button, Dialog, Drawer, Input, MessagePlugin, Switch } from 'tdesign-re
 import { api, apiErrorMessage, setToken, type QQStatus, type User } from '@/api'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { Avatar } from './Avatar'
+import { EmailNotifySettings } from './EmailNotifySettings'
 
 export type DrawerView = 'home' | 'hope' | 'notify' | 'quote'
 
@@ -137,7 +138,7 @@ export function UserDrawer({
                 <span className="im-menu-item__icon im-menu-item__icon--bell" />
                 <span className="im-menu-item__text">消息提醒</span>
                 <span className="im-menu-item__hint">
-                  {qq?.bound ? (qq.doorbellEnabled ? '开' : '关') : '未绑'}
+                  {qq?.bound && qq.doorbellEnabled ? 'QQ' : '邮件/QQ'}
                 </span>
                 <span className="im-menu-item__chevron" />
               </button>
@@ -274,12 +275,14 @@ export function UserDrawer({
               ‹ 返回
             </button>
             <h3 className="im-drawer__title">消息提醒</h3>
+
+            <div className="im-set-section-title" style={{ marginTop: 4 }}>QQ 提醒</div>
             {!qq?.botEnabled ? (
               <p className="im-muted">服务器未启用 QQ 机器人。</p>
             ) : !qq.bound ? (
               <>
                 <p className="im-muted">
-                  绑定官方机器人后，离线可收到：聊天消息、好友申请、入群审核、通话邀请等提醒。
+                  绑定后，离线时可收到聊天、好友申请、入群与通话等提醒。
                 </p>
                 <Button
                   theme="primary"
@@ -338,6 +341,9 @@ export function UserDrawer({
                 </Button>
               </>
             )}
+
+            <div className="im-set-section-title" style={{ marginTop: 20 }}>邮件提醒</div>
+            <EmailNotifySettings compact />
           </div>
         )}
       </div>
