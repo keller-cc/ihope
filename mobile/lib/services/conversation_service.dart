@@ -136,7 +136,7 @@ class ConversationService {
   }
 
   Future<void> dissolveGroup(String conversationId) async {
-    await api.deleteJson('/api/conversations/$conversationId');
+    await api.postJson('/api/conversations/$conversationId/dissolve');
   }
 
   Future<ConversationItem> updateGroupName(

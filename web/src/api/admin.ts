@@ -96,6 +96,7 @@ export type AdminConversation = {
   inviteRequiresApproval?: boolean
   announcement?: string
   pendingJoins?: number
+  dissolved?: boolean
 }
 
 export type AdminStats = {

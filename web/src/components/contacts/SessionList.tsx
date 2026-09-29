@@ -89,13 +89,15 @@ export function SessionList({
               <span className="im-list-item__row">
                 <span className="im-list-item__preview">
                   {c.removed
-                    ? c.removeReason === 'kicked'
-                      ? '你已被移出群聊'
-                      : c.removeReason === 'unfriended'
-                        ? '已删除好友'
-                        : c.type === 'dm'
+                    ? c.removeReason === 'dissolved' || c.dissolved
+                      ? '该群聊已解散'
+                      : c.removeReason === 'kicked'
+                        ? '你已被移出群聊'
+                        : c.removeReason === 'unfriended'
                           ? '已删除好友'
-                          : '已退出群聊'
+                          : c.type === 'dm'
+                            ? '已删除好友'
+                            : '已退出群聊'
                     : c.lastMessage ||
                       (c.type === 'group' ? `群聊 · ${c.memberCount || 0} 人` : '暂无消息')}
                 </span>

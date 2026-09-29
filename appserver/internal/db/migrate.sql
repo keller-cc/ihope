@@ -487,3 +487,10 @@ CREATE TABLE IF NOT EXISTS update_notice_acks (
 
 INSERT INTO schema_migrations (version) VALUES ('025_update_notices')
 ON CONFLICT DO NOTHING;
+
+-- Soft-dissolve groups (QQ-style): keep conversation + messages for history.
+ALTER TABLE conversations
+  ADD COLUMN IF NOT EXISTS dissolved_at TIMESTAMPTZ;
+
+INSERT INTO schema_migrations (version) VALUES ('026_group_dissolved')
+ON CONFLICT DO NOTHING;

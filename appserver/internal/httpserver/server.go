@@ -148,6 +148,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/conversations/{id}/invite", s.withAuth(s.handleInviteMembers))
 	mux.HandleFunc("POST /api/conversations/{id}/kick", s.withAuth(s.handleKickMember))
 	mux.HandleFunc("POST /api/conversations/{id}/dissolve", s.withAuth(s.handleDissolveGroup))
+	mux.HandleFunc("DELETE /api/conversations/{id}", s.withAuth(s.handleDissolveGroup))
 	mux.HandleFunc("PATCH /api/conversations/{id}/members/role", s.withAuth(s.handleSetMemberRole))
 	mux.HandleFunc("PATCH /api/conversations/{id}/members/title", s.withAuth(s.handleSetMemberTitle))
 	mux.HandleFunc("GET /api/conversations/{id}/announcements", s.withAuth(s.handleListAnnouncements))
@@ -1254,11 +1255,62 @@ func (s *Server) handleKickMember(w http.ResponseWriter, r *http.Request, userID
 
 func (s *Server) handleDissolveGroup(w http.ResponseWriter, r *http.Request, userID string) {
 	id := r.PathValue("id")
-	if err := s.chat.DissolveGroup(r.Context(), id, userID); err != nil {
+	res, err := s.chat.DissolveGroup(r.Context(), id, userID)
+	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if res != nil && res.Message != nil {
+		s.broadcastToMembers(id, userID, res.Message, res.MemberIDs)
+	}
+	body := "群聊已解散，仍可查看历史消息"
+	title := ""
+	if res != nil {
+		title = res.Title
+	}
+	for _, mid := range res.MemberIDs {
+		payload := map[string]any{
+			"type":           "group.dissolved",
+			"conversationId": id,
+			"body":           body,
+			"dissolvedBy":    userID,
+			// Mobile (legacy frame shape) also listens on event=group_dissolved.
+			"event":           "group_dissolved",
+			"conversation_id": id,
+			"group_name":      title,
+			"dissolved_by":    userID,
+		}
+		if res != nil && res.Message != nil {
+			payload["message"] = res.Message
+		}
+		s.hub.PublishToUser(mid, payload)
+	}
 	writeJSON(w, http.StatusOK, map[string]string{"message": "ok"})
+}
+
+// broadcastToMembers pushes a message + conversation.updated to explicit member IDs
+// (used after soft-dissolve when active membership is already cleared).
+func (s *Server) broadcastToMembers(conversationID, fromUserID string, m *chat.Message, memberIDs []string) {
+	if m == nil {
+		return
+	}
+	s.hub.Publish(conversationID, map[string]any{"type": "message", "message": m})
+	s.hub.PublishToUsers(memberIDs, map[string]any{
+		"type":           "message",
+		"conversationId": conversationID,
+		"message":        m,
+	})
+	preview := messageListPreview(m)
+	at := m.CreatedAt
+	for _, mid := range memberIDs {
+		s.hub.PublishToUser(mid, map[string]any{
+			"type":           "conversation.updated",
+			"conversationId": conversationID,
+			"lastMessage":    preview,
+			"lastMessageAt":  at,
+			"fromUserId":     fromUserID,
+		})
+	}
 }
 
 func (s *Server) handleSetMemberRole(w http.ResponseWriter, r *http.Request, userID string) {
@@ -1370,7 +1422,14 @@ func (s *Server) handleAcceptFriendRequest(w http.ResponseWriter, r *http.Reques
 			"type": "friend.accepted",
 			"peer": peer,
 		})
-		s.notifyQQSocial(c.ID, fmt.Sprintf("%s 已同意你的好友申请，请打开 IHope 查看。", peer.Username),
+		name := s.chat.DisplayNameForViewer(r.Context(), c.ID, userID, "")
+		if name == "" {
+			name = peer.Username
+		}
+		if name == "" {
+			name = "有人"
+		}
+		s.notifyQQSocial(c.ID, fmt.Sprintf("%s 已同意你的好友申请，请打开 IHope 查看。", name),
 			"friend.accepted:"+userID)
 	}
 	writeJSON(w, http.StatusOK, c)
@@ -1925,18 +1984,18 @@ func (s *Server) afterMessage(conversationID, userID string, m *chat.Message) {
 	if m != nil && m.Type == "system" {
 		return
 	}
-	senderName := s.chat.UsernameByID(context.Background(), userID)
+	bg := context.Background()
 	for _, mid := range members {
 		if mid == userID {
 			continue
 		}
 		uid := mid
-		hint := senderName
+		hint := s.chat.NotifyChatHint(bg, uid, userID, conversationID)
 		if s.qq != nil && s.qq.Enabled() {
-			go s.qq.NotifyDoorbell(context.Background(), uid, hint, conversationID)
+			go s.qq.NotifyDoorbell(bg, uid, hint, conversationID)
 		}
 		if s.emailNotify != nil {
-			go s.emailNotify.NotifyChat(context.Background(), uid, conversationID, hint)
+			go s.emailNotify.NotifyChat(bg, uid, conversationID, hint)
 		}
 	}
 }

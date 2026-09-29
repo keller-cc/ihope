@@ -467,6 +467,25 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
           )
         }
       }
+      if (t === 'group.dissolved') {
+        const cid = String(data.conversationId || '')
+        const tip = String(data.body || '群聊已解散，仍可查看历史消息')
+        MessagePlugin.info(tip)
+        void loadConversations()
+        if (cid) {
+          const msg = data.message as Message | undefined
+          if (msg?.id && activeIdRef.current === cid) {
+            setMessages((prev) => (prev.some((m) => m.id === msg.id) ? prev : [...prev, msg]))
+          }
+          setConversations((prev) =>
+            prev.map((c) =>
+              c.id === cid
+                ? { ...c, removed: true, removeReason: 'dissolved', dissolved: true, memberCount: 0 }
+                : c,
+            ),
+          )
+        }
+      }
     })
     return () => {
       if (offlineTimer != null) window.clearTimeout(offlineTimer)
@@ -1445,11 +1464,19 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
               }
             }}
             onDissolved={async () => {
-              if (activeId === right.group.id) setActiveId(null)
-              setRight({ kind: 'empty' })
-              setMobileDetail(false)
+              const gid = right.group.id
               await loadContacts()
               await loadConversations()
+              setConversations((prev) =>
+                prev.map((c) =>
+                  c.id === gid
+                    ? { ...c, removed: true, removeReason: 'dissolved', dissolved: true, memberCount: 0 }
+                    : c,
+                ),
+              )
+              setActiveId(gid)
+              setRight({ kind: 'chat' })
+              setMobileDetail(true)
             }}
             onBack={() => {
               setRight(activeId ? { kind: 'chat' } : { kind: 'empty' })

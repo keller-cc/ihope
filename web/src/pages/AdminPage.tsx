@@ -47,7 +47,7 @@ export function AdminPage() {
   const [users, setUsers] = useState<AdminUser[]>([])
   const [conversations, setConversations] = useState<AdminConversation[]>([])
   const [userFilter, setUserFilter] = useState('')
-  const [convFilter, setConvFilter] = useState<'all' | 'group' | 'dm'>('all')
+  const [convFilter, setConvFilter] = useState<'all' | 'group' | 'dm' | 'dissolved'>('all')
   const [groupDetail, setGroupDetail] = useState<AdminGroupDetail | null>(null)
   const [qqBindings, setQqBindings] = useState<AdminQQBinding[]>([])
   const [domains, setDomains] = useState<AdminDomain[]>([])
@@ -298,8 +298,9 @@ export function AdminPage() {
   })
 
   const filteredConversations = conversations.filter((c) => {
-    if (convFilter === 'group') return c.type === 'group'
+    if (convFilter === 'group') return c.type === 'group' && !c.dissolved
     if (convFilter === 'dm') return c.type === 'dm'
+    if (convFilter === 'dissolved') return !!c.dissolved
     return true
   })
 
@@ -830,8 +831,9 @@ export function AdminPage() {
               { label: '全部', value: 'all' },
               { label: '仅群聊', value: 'group' },
               { label: '仅私聊', value: 'dm' },
+              { label: '已解散', value: 'dissolved' },
             ]}
-            onChange={(v) => setConvFilter(v as 'all' | 'group' | 'dm')}
+            onChange={(v) => setConvFilter(v as 'all' | 'group' | 'dm' | 'dissolved')}
             style={{ width: 140 }}
           />
         </div>
@@ -847,11 +849,27 @@ export function AdminPage() {
             {
               colKey: 'type',
               title: '类型',
-              width: 72,
+              width: 88,
               align: 'center',
-              cell: ({ row }) => (row.type === 'group' ? '群聊' : '私聊'),
+              cell: ({ row }) =>
+                row.dissolved ? '已解散' : row.type === 'group' ? '群聊' : '私聊',
             },
-            { colKey: 'title', title: '标题', width: 180, ellipsis: true },
+            {
+              colKey: 'title',
+              title: '标题',
+              width: 200,
+              ellipsis: true,
+              cell: ({ row }) => (
+                <span>
+                  {row.title || '—'}
+                  {row.dissolved ? (
+                    <span className="im-muted" style={{ marginLeft: 6, fontSize: 12 }}>
+                      （已解散）
+                    </span>
+                  ) : null}
+                </span>
+              ),
+            },
             {
               colKey: 'groupNo',
               title: '群号',
@@ -867,12 +885,29 @@ export function AdminPage() {
               ellipsis: true,
               cell: ({ row }) => row.ownerUsername || '—',
             },
-            { colKey: 'members', title: '成员', ellipsis: true, width: 240 },
+            {
+              colKey: 'members',
+              title: '成员',
+              ellipsis: true,
+              width: 240,
+              cell: ({ row }) =>
+                row.dissolved
+                  ? row.members
+                    ? `原成员：${row.members}`
+                    : '—'
+                  : row.members || '—',
+            },
             {
               colKey: 'memberCount',
               title: '人数',
               width: 72,
               align: 'center',
+              cell: ({ row }) =>
+                row.dissolved ? (
+                  <span title="解散前成员数">{row.memberCount}</span>
+                ) : (
+                  row.memberCount
+                ),
             },
             {
               colKey: 'createdAt',
@@ -907,7 +942,9 @@ export function AdminPage() {
                     onClick={() =>
                       confirmAction({
                         header: '确认删除',
-                        body: `确定删除${row.type === 'group' ? '群' : '私聊'}「${row.title || row.id}」？消息将一并删除。`,
+                        body: row.dissolved
+                          ? `确定彻底删除已解散群「${row.title || row.id}」？历史消息将一并删除，不可恢复。`
+                          : `确定删除${row.type === 'group' ? '群' : '私聊'}「${row.title || row.id}」？消息将一并删除。`,
                         confirm: '删除',
                         danger: true,
                         success: '已删除',
@@ -1379,7 +1416,7 @@ export function AdminPage() {
                 groupDetail.conversation.groupNo
                   ? `（${groupDetail.conversation.groupNo}）`
                   : ''
-              }`
+              }${groupDetail.conversation.dissolved ? ' · 已解散' : ''}`
             : '群详情'
         }
         width={640}
@@ -1392,33 +1429,42 @@ export function AdminPage() {
       >
         {groupDetail && (
           <div className="im-admin-group">
+            {groupDetail.conversation.dissolved && (
+              <p className="im-muted" style={{ margin: '0 0 8px' }}>
+                该群已解散，成员仅可查看历史；下方为解散前成员。彻底清理请在会话列表中删除。
+              </p>
+            )}
             <div className="im-admin-group__row">
               <span>群主</span>
               <strong>{groupDetail.conversation.ownerUsername || '—'}</strong>
             </div>
             <div className="im-admin-group__row">
               <span>加群方式</span>
-              <Select
-                style={{ width: 220 }}
-                value={groupDetail.conversation.joinMode || 'verify'}
-                options={JOIN_MODE_OPTIONS.map((o) => ({ label: o.label, value: o.value }))}
-                onChange={async (v) => {
-                  const mode = String(v) as 'anyone' | 'verify' | 'deny'
-                  try {
-                    const c = await adminApi.patchGroup(groupDetail.conversation.id, {
-                      joinMode: mode,
-                    })
-                    setGroupDetail({
-                      ...groupDetail,
-                      conversation: { ...groupDetail.conversation, ...c },
-                    })
-                    MessagePlugin.success('已更新')
-                    await load()
-                  } catch (e) {
-                    MessagePlugin.error(apiErrorMessage(e, '设置失败'))
-                  }
-                }}
-              />
+              {groupDetail.conversation.dissolved ? (
+                <span className="im-muted">已解散，不可修改</span>
+              ) : (
+                <Select
+                  style={{ width: 220 }}
+                  value={groupDetail.conversation.joinMode || 'verify'}
+                  options={JOIN_MODE_OPTIONS.map((o) => ({ label: o.label, value: o.value }))}
+                  onChange={async (v) => {
+                    const mode = String(v) as 'anyone' | 'verify' | 'deny'
+                    try {
+                      const c = await adminApi.patchGroup(groupDetail.conversation.id, {
+                        joinMode: mode,
+                      })
+                      setGroupDetail({
+                        ...groupDetail,
+                        conversation: { ...groupDetail.conversation, ...c },
+                      })
+                      MessagePlugin.success('已更新')
+                      await load()
+                    } catch (e) {
+                      MessagePlugin.error(apiErrorMessage(e, '设置失败'))
+                    }
+                  }}
+                />
+              )}
             </div>
 
             {groupDetail.joinRequests.length > 0 && (
@@ -1475,12 +1521,14 @@ export function AdminPage() {
 
             <div className="im-admin-group__block">
               <div className="im-admin-group__label">
-                成员（
-                {groupDetail.members.filter((m) => !m.removed).length}）
+                {groupDetail.conversation.dissolved
+                  ? `原成员（${groupDetail.members.length}）`
+                  : `成员（${groupDetail.members.filter((m) => !m.removed).length}）`}
               </div>
-              {groupDetail.members
-                .filter((m) => !m.removed)
-                .map((m) => (
+              {(groupDetail.conversation.dissolved
+                ? groupDetail.members
+                : groupDetail.members.filter((m) => !m.removed)
+              ).map((m) => (
                   <div key={m.id} className="im-admin-group__join">
                     <div>
                       <strong>
@@ -1495,7 +1543,7 @@ export function AdminPage() {
                         <div className="im-muted">IHope 号：{m.hopeId}</div>
                       )}
                     </div>
-                    {!m.isOwner && (
+                    {!groupDetail.conversation.dissolved && !m.isOwner && (
                       <div className="im-admin__ops">
                         <Button
                           size="small"

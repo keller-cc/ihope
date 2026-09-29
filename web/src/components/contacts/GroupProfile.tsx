@@ -236,7 +236,7 @@ export function GroupProfile({
   const dissolve = () => {
     setConfirm({
       title: '解散群聊',
-      body: '解散后群聊与消息不可恢复，确定解散？',
+      body: '解散后成员仍可查看历史消息，但无法再发言或加入。确定解散？',
       danger: true,
       onOk: async () => {
         try {

@@ -223,6 +223,8 @@ export function apiErrorMessage(e: unknown, fallback: string): string {
     'no new members': '没有可邀请的新成员',
     'only owner can kick': '仅群主可移除成员',
     'only owner can dissolve': '仅群主可解散群聊',
+    'group already dissolved': '群聊已解散',
+    'group dissolved': '该群聊已解散',
     'only owner can set admin': '仅群主可设置管理员',
     'cannot kick yourself': '不能移除自己',
     'cannot kick owner': '不能移除群主',

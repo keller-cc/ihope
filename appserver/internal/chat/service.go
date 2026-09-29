@@ -45,6 +45,7 @@ type Conversation struct {
 	AnnouncementAuthorName  string  `json:"announcementAuthorName,omitempty"` // legacy
 	Removed                 bool    `json:"removed,omitempty"`
 	RemoveReason            string  `json:"removeReason,omitempty"`
+	Dissolved               bool    `json:"dissolved,omitempty"`
 }
 
 const (
@@ -222,6 +223,7 @@ func (s *Service) ListConversations(ctx context.Context, userID string) ([]Conve
 			COALESCE(NULLIF(c.join_mode, ''), 'verify'),
 			mem.removed_at IS NOT NULL,
 			COALESCE(mem.remove_reason, ''),
+			c.dissolved_at IS NOT NULL,
 			COALESCE((
 				SELECT m.created_at FROM messages m
 				WHERE m.conversation_id = c.id
@@ -250,12 +252,13 @@ func (s *Service) ListConversations(ctx context.Context, userID string) ([]Conve
 		var peerRemark string
 		var removed bool
 		var removeReason string
+		var dissolved bool
 		var joinMode string
 		if err := rows.Scan(
 			&c.ID, &c.Type, &c.Title, &c.CreatedAt, &c.PeerUsername, &peerRemark, &peerAvatar, &c.MemberCount,
 			&lastType, &sealed, &lastRecalled, &c.LastMessageAt, &c.UnreadCount, &c.GroupNo, &ownerID,
 			&c.Muted, &pinnedAt, &c.AvatarURL, &myRole,
-			&joinMode, &removed, &removeReason, &sortAt,
+			&joinMode, &removed, &removeReason, &dissolved, &sortAt,
 		); err != nil {
 			return nil, err
 		}
@@ -266,6 +269,7 @@ func (s *Service) ListConversations(ctx context.Context, userID string) ([]Conve
 		c.PeerAvatarURL = peerAvatar
 		c.Removed = removed
 		c.RemoveReason = removeReason
+		c.Dissolved = dissolved
 		if c.Type == "dm" {
 			c.AvatarURL = peerAvatar
 		}
@@ -924,11 +928,12 @@ func (s *Service) getConversation(ctx context.Context, id string) (*Conversation
 		SELECT id::text, type, title, created_at::text, group_no, owner_id::text, avatar_url,
 			(SELECT COUNT(*)::int FROM conversation_members cm
 			 WHERE cm.conversation_id = conversations.id AND cm.removed_at IS NULL),
-			COALESCE(NULLIF(join_mode, ''), 'verify')
+			COALESCE(NULLIF(join_mode, ''), 'verify'),
+			dissolved_at IS NOT NULL
 		FROM conversations WHERE id = $1
 	`, id).Scan(
 		&c.ID, &c.Type, &c.Title, &c.CreatedAt, &c.GroupNo, &c.OwnerID, &c.AvatarURL, &c.MemberCount,
-		&joinMode,
+		&joinMode, &c.Dissolved,
 	)
 	if err != nil {
 		return nil, err
@@ -969,9 +974,10 @@ func (s *Service) JoinGroupByNo(ctx context.Context, userID, groupNo, message st
 	var joinMode string
 	err := s.pool.QueryRow(ctx, `
 		SELECT id::text, type, title, created_at::text, group_no, owner_id::text, avatar_url,
-			COALESCE(NULLIF(join_mode, ''), 'verify')
+			COALESCE(NULLIF(join_mode, ''), 'verify'),
+			dissolved_at IS NOT NULL
 		FROM conversations WHERE type = 'group' AND group_no = $1
-	`, groupNo).Scan(&c.ID, &c.Type, &c.Title, &c.CreatedAt, &c.GroupNo, &c.OwnerID, &c.AvatarURL, &joinMode)
+	`, groupNo).Scan(&c.ID, &c.Type, &c.Title, &c.CreatedAt, &c.GroupNo, &c.OwnerID, &c.AvatarURL, &joinMode, &c.Dissolved)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, errors.New("group not found")
@@ -979,6 +985,9 @@ func (s *Service) JoinGroupByNo(ctx context.Context, userID, groupNo, message st
 		return nil, err
 	}
 	applyJoinMode(&c, joinMode)
+	if c.Dissolved {
+		return nil, errors.New("group dissolved")
+	}
 	ok, err := s.IsMember(ctx, c.ID, userID)
 	if err != nil {
 		return nil, err
@@ -1222,8 +1231,29 @@ func (s *Service) LeaveGroup(ctx context.Context, conversationID, userID string)
 			ORDER BY joined_at ASC LIMIT 1
 		`, conversationID, userID).Scan(&nextOwner)
 		if nextOwner == nil {
-			_, err = s.pool.Exec(ctx, `DELETE FROM conversations WHERE id = $1`, conversationID)
-			return err
+			// 群主为最后活跃成员：软解散，保留历史（与主动解散一致）
+			_, err = s.pool.Exec(ctx, `
+				UPDATE conversations SET dissolved_at = COALESCE(dissolved_at, now()) WHERE id = $1
+			`, conversationID)
+			if err != nil {
+				return err
+			}
+			_, err = s.pool.Exec(ctx, `
+				UPDATE conversation_members
+				SET removed_at = COALESCE(removed_at, now()),
+				    remove_reason = 'dissolved',
+				    pinned_at = NULL
+				WHERE conversation_id = $1
+			`, conversationID)
+			if err != nil {
+				return err
+			}
+			_, _ = s.pool.Exec(ctx, `
+				UPDATE group_join_requests
+				SET status = 'rejected', decided_by = $2, decided_at = now()
+				WHERE conversation_id = $1 AND status = 'pending'
+			`, conversationID, userID)
+			return nil
 		}
 		_, err = s.pool.Exec(ctx, `UPDATE conversations SET owner_id = $1 WHERE id = $2`, *nextOwner, conversationID)
 		if err != nil {
@@ -1242,6 +1272,9 @@ func (s *Service) LeaveGroup(ctx context.Context, conversationID, userID string)
 // InviteToGroup: 任意群成员可邀请好友（不允许加入时仅群主/管理员可邀请）。
 // anyone → 直接入群；verify → 普通成员邀请需管理员同意；deny → 仅管理员可直接邀请。
 func (s *Service) InviteToGroup(ctx context.Context, conversationID, userID string, memberIDs []string) (*InviteResult, error) {
+	if err := s.errIfDissolved(ctx, conversationID); err != nil {
+		return nil, err
+	}
 	ok, err := s.IsMember(ctx, conversationID, userID)
 	if err != nil {
 		return nil, err
@@ -1446,23 +1479,74 @@ func (s *Service) SetMemberRole(ctx context.Context, conversationID, actorID, me
 	return nil
 }
 
-// DissolveGroup deletes the group (owner only).
-func (s *Service) DissolveGroup(ctx context.Context, conversationID, userID string) error {
+// DissolveResult is returned after soft-dissolving a group (history kept).
+type DissolveResult struct {
+	Message   *Message
+	MemberIDs []string
+	Title     string
+}
+
+// DissolveGroup soft-dissolves the group (owner only). Messages and the conversation
+// row remain so members can still read history (QQ-style).
+func (s *Service) DissolveGroup(ctx context.Context, conversationID, userID string) (*DissolveResult, error) {
 	var typ string
 	var oid *string
-	err := s.pool.QueryRow(ctx, `SELECT type, owner_id::text FROM conversations WHERE id = $1`, conversationID).
-		Scan(&typ, &oid)
+	var title string
+	var dissolved bool
+	err := s.pool.QueryRow(ctx, `
+		SELECT type, owner_id::text, title, dissolved_at IS NOT NULL
+		FROM conversations WHERE id = $1
+	`, conversationID).Scan(&typ, &oid, &title, &dissolved)
 	if err != nil {
-		return errors.New("group not found")
+		return nil, errors.New("group not found")
 	}
 	if typ != "group" {
-		return errors.New("not a group")
+		return nil, errors.New("not a group")
 	}
 	if oid == nil || *oid != userID {
-		return errors.New("only owner can dissolve")
+		return nil, errors.New("only owner can dissolve")
 	}
-	_, err = s.pool.Exec(ctx, `DELETE FROM conversations WHERE id = $1`, conversationID)
-	return err
+	if dissolved {
+		return nil, errors.New("group already dissolved")
+	}
+	title = strings.TrimSpace(title)
+	if title == "" {
+		title = "群聊"
+	}
+
+	memberIDs, err := s.AllMemberUserIDs(ctx, conversationID)
+	if err != nil {
+		return nil, err
+	}
+
+	tip, err := s.PostSystemMessage(ctx, conversationID, userID, "群主已解散该群聊")
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = s.pool.Exec(ctx, `
+		UPDATE conversations SET dissolved_at = now() WHERE id = $1 AND dissolved_at IS NULL
+	`, conversationID)
+	if err != nil {
+		return nil, err
+	}
+	_, err = s.pool.Exec(ctx, `
+		UPDATE conversation_members
+		SET removed_at = COALESCE(removed_at, now()),
+		    remove_reason = 'dissolved',
+		    pinned_at = NULL
+		WHERE conversation_id = $1
+	`, conversationID)
+	if err != nil {
+		return nil, err
+	}
+	_, _ = s.pool.Exec(ctx, `
+		UPDATE group_join_requests
+		SET status = 'rejected', decided_by = $2, decided_at = now()
+		WHERE conversation_id = $1 AND status = 'pending'
+	`, conversationID, userID)
+
+	return &DissolveResult{Message: tip, MemberIDs: memberIDs, Title: title}, nil
 }
 
 func (s *Service) RenameGroup(ctx context.Context, conversationID, userID, title string) (*Conversation, error) {
@@ -2225,7 +2309,7 @@ func (s *Service) SearchGroup(ctx context.Context, viewerID, groupNo string) (*P
 			COALESCE(NULLIF(join_mode, ''), 'verify'),
 			(SELECT COUNT(*)::int FROM conversation_members cm
 			 WHERE cm.conversation_id = conversations.id AND cm.removed_at IS NULL)
-		FROM conversations WHERE type = 'group' AND group_no = $1
+		FROM conversations WHERE type = 'group' AND group_no = $1 AND dissolved_at IS NULL
 	`, groupNo).Scan(&g.ID, &g.Title, &g.GroupNo, &g.AvatarURL, &ownerID, &joinMode, &g.MemberCount)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -2235,7 +2319,8 @@ func (s *Service) SearchGroup(ctx context.Context, viewerID, groupNo string) (*P
 					(SELECT COUNT(*)::int FROM conversation_members cm
 					 WHERE cm.conversation_id = conversations.id AND cm.removed_at IS NULL)
 				FROM conversations
-				WHERE type = 'group' AND (group_no ILIKE $1 OR title ILIKE $2)
+				WHERE type = 'group' AND dissolved_at IS NULL
+				  AND (group_no ILIKE $1 OR title ILIKE $2)
 				ORDER BY
 					CASE
 						WHEN group_no = $3 THEN 0
@@ -2354,10 +2439,106 @@ func (s *Service) MemberUserIDs(ctx context.Context, conversationID string) ([]s
 	return out, rows.Err()
 }
 
+// AllMemberUserIDs includes soft-removed members (still have a membership row).
+func (s *Service) AllMemberUserIDs(ctx context.Context, conversationID string) ([]string, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT user_id::text FROM conversation_members WHERE conversation_id = $1
+	`, conversationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+func (s *Service) errIfDissolved(ctx context.Context, conversationID string) error {
+	var dissolved bool
+	err := s.pool.QueryRow(ctx, `
+		SELECT COALESCE(dissolved_at IS NOT NULL, FALSE) FROM conversations WHERE id = $1
+	`, conversationID).Scan(&dissolved)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return errors.New("group not found")
+		}
+		return err
+	}
+	if dissolved {
+		return errors.New("group dissolved")
+	}
+	return nil
+}
+
 func (s *Service) UsernameByID(ctx context.Context, userID string) string {
 	var name string
 	_ = s.pool.QueryRow(ctx, `SELECT username FROM users WHERE id = $1`, userID).Scan(&name)
 	return name
+}
+
+// DisplayNameForViewer: friend remark → group member title → username.
+func (s *Service) DisplayNameForViewer(ctx context.Context, viewerID, targetID, conversationID string) string {
+	viewerID = strings.TrimSpace(viewerID)
+	targetID = strings.TrimSpace(targetID)
+	if targetID == "" {
+		return ""
+	}
+	if viewerID != "" {
+		var remark string
+		_ = s.pool.QueryRow(ctx, `
+			SELECT COALESCE(remark, '') FROM friendships
+			WHERE user_id = $1 AND friend_id = $2
+		`, viewerID, targetID).Scan(&remark)
+		remark = strings.TrimSpace(remark)
+		if remark != "" {
+			return remark
+		}
+	}
+	if conversationID != "" {
+		var memberTitle string
+		_ = s.pool.QueryRow(ctx, `
+			SELECT COALESCE(member_title, '') FROM conversation_members
+			WHERE conversation_id = $1 AND user_id = $2
+		`, conversationID, targetID).Scan(&memberTitle)
+		memberTitle = strings.TrimSpace(memberTitle)
+		if memberTitle != "" {
+			return memberTitle
+		}
+	}
+	return s.UsernameByID(ctx, targetID)
+}
+
+// NotifyChatHint builds offline-notify / doorbell hint for a recipient.
+// DM: display name; group: "群 · 显示名" (no group title).
+func (s *Service) NotifyChatHint(ctx context.Context, viewerID, senderID, conversationID string) string {
+	name := s.DisplayNameForViewer(ctx, viewerID, senderID, conversationID)
+	if name == "" {
+		name = "有人"
+	}
+	typ, _ := s.ConversationType(ctx, conversationID)
+	if typ == "group" {
+		return FormatNotifyHint("group", "", name)
+	}
+	return FormatNotifyHint("dm", "", name)
+}
+
+// FormatNotifyHint is the pure formatter for chat offline notify hints.
+// Group hints mark source as 群 without embedding the group title.
+func FormatNotifyHint(convType, _groupTitle, displayName string) string {
+	displayName = strings.TrimSpace(displayName)
+	if displayName == "" {
+		displayName = "有人"
+	}
+	if convType == "group" {
+		return "群 · " + displayName
+	}
+	return displayName
 }
 
 func (s *Service) ConversationTitle(ctx context.Context, conversationID string) string {
@@ -2408,6 +2589,9 @@ func (s *Service) PostSystemMessage(ctx context.Context, conversationID, actorID
 }
 
 func (s *Service) restoreOrAddMember(ctx context.Context, conversationID, userID string) (bool, error) {
+	if err := s.errIfDissolved(ctx, conversationID); err != nil {
+		return false, err
+	}
 	var wasActive bool
 	_ = s.pool.QueryRow(ctx, `
 		SELECT EXISTS(

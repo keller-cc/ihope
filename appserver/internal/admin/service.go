@@ -39,6 +39,7 @@ type ConversationRow struct {
 	InviteRequiresApproval bool    `json:"inviteRequiresApproval"` // legacy mirror of joinMode=verify
 	Announcement           string  `json:"announcement,omitempty"`
 	PendingJoins           int     `json:"pendingJoins"`
+	Dissolved              bool    `json:"dissolved,omitempty"`
 }
 
 type Stats struct {
@@ -202,13 +203,22 @@ func (s *Service) DeleteUser(ctx context.Context, userID string) error {
 func (s *Service) ListConversations(ctx context.Context) ([]ConversationRow, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT c.id::text, c.type, c.title, c.created_at::text,
-			(SELECT COUNT(*)::int FROM conversation_members cm
-			 WHERE cm.conversation_id = c.id AND cm.removed_at IS NULL),
+			CASE
+				WHEN c.dissolved_at IS NOT NULL THEN (
+					SELECT COUNT(*)::int FROM conversation_members cm
+					WHERE cm.conversation_id = c.id
+				)
+				ELSE (
+					SELECT COUNT(*)::int FROM conversation_members cm
+					WHERE cm.conversation_id = c.id AND cm.removed_at IS NULL
+				)
+			END,
 			COALESCE((
 				SELECT string_agg(u.username, ', ' ORDER BY u.username)
 				FROM conversation_members cm2
 				JOIN users u ON u.id = cm2.user_id
-				WHERE cm2.conversation_id = c.id AND cm2.removed_at IS NULL
+				WHERE cm2.conversation_id = c.id
+				  AND (c.dissolved_at IS NOT NULL OR cm2.removed_at IS NULL)
 			), ''),
 			c.group_no,
 			COALESCE((SELECT u.username FROM users u WHERE u.id = c.owner_id), ''),
@@ -221,9 +231,10 @@ func (s *Service) ListConversations(ctx context.Context) ([]ConversationRow, err
 			COALESCE((
 				SELECT COUNT(*)::int FROM group_join_requests r
 				WHERE r.conversation_id = c.id AND r.status = 'pending'
-			), 0)
+			), 0),
+			c.dissolved_at IS NOT NULL
 		FROM conversations c
-		ORDER BY c.created_at DESC
+		ORDER BY c.dissolved_at NULLS FIRST, c.created_at DESC
 	`)
 	if err != nil {
 		return nil, err
@@ -235,6 +246,7 @@ func (s *Service) ListConversations(ctx context.Context) ([]ConversationRow, err
 		if err := rows.Scan(
 			&c.ID, &c.Type, &c.Title, &c.CreatedAt, &c.MemberCount, &c.Members,
 			&c.GroupNo, &c.OwnerUsername, &c.JoinMode, &c.Announcement, &c.PendingJoins,
+			&c.Dissolved,
 		); err != nil {
 			return nil, err
 		}
@@ -297,13 +309,22 @@ func (s *Service) GetGroupDetail(ctx context.Context, id string) (*GroupDetail, 
 	var c ConversationRow
 	err := s.pool.QueryRow(ctx, `
 		SELECT c.id::text, c.type, c.title, c.created_at::text,
-			(SELECT COUNT(*)::int FROM conversation_members cm
-			 WHERE cm.conversation_id = c.id AND cm.removed_at IS NULL),
+			CASE
+				WHEN c.dissolved_at IS NOT NULL THEN (
+					SELECT COUNT(*)::int FROM conversation_members cm
+					WHERE cm.conversation_id = c.id
+				)
+				ELSE (
+					SELECT COUNT(*)::int FROM conversation_members cm
+					WHERE cm.conversation_id = c.id AND cm.removed_at IS NULL
+				)
+			END,
 			COALESCE((
 				SELECT string_agg(u.username, ', ' ORDER BY u.username)
 				FROM conversation_members cm2
 				JOIN users u ON u.id = cm2.user_id
-				WHERE cm2.conversation_id = c.id AND cm2.removed_at IS NULL
+				WHERE cm2.conversation_id = c.id
+				  AND (c.dissolved_at IS NOT NULL OR cm2.removed_at IS NULL)
 			), ''),
 			c.group_no,
 			COALESCE((SELECT u.username FROM users u WHERE u.id = c.owner_id), ''),
@@ -316,11 +337,13 @@ func (s *Service) GetGroupDetail(ctx context.Context, id string) (*GroupDetail, 
 			COALESCE((
 				SELECT COUNT(*)::int FROM group_join_requests r
 				WHERE r.conversation_id = c.id AND r.status = 'pending'
-			), 0)
+			), 0),
+			c.dissolved_at IS NOT NULL
 		FROM conversations c WHERE c.id = $1 AND c.type = 'group'
 	`, id).Scan(
 		&c.ID, &c.Type, &c.Title, &c.CreatedAt, &c.MemberCount, &c.Members,
 		&c.GroupNo, &c.OwnerUsername, &c.JoinMode, &c.Announcement, &c.PendingJoins,
+		&c.Dissolved,
 	)
 	if err != nil {
 		return nil, errors.New("group not found")
@@ -417,12 +440,18 @@ func (s *Service) ListPendingGroupJoins(ctx context.Context) ([]GroupJoinRequest
 
 func (s *Service) PatchGroup(ctx context.Context, id string, joinMode *string, title *string) (*ConversationRow, error) {
 	var typ string
-	err := s.pool.QueryRow(ctx, `SELECT type FROM conversations WHERE id = $1`, id).Scan(&typ)
+	var dissolved bool
+	err := s.pool.QueryRow(ctx, `
+		SELECT type, dissolved_at IS NOT NULL FROM conversations WHERE id = $1
+	`, id).Scan(&typ, &dissolved)
 	if err != nil {
 		return nil, errors.New("group not found")
 	}
 	if typ != "group" {
 		return nil, errors.New("not a group")
+	}
+	if dissolved {
+		return nil, errors.New("group dissolved")
 	}
 	if title != nil {
 		t := strings.TrimSpace(*title)

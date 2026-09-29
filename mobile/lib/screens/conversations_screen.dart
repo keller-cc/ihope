@@ -353,7 +353,7 @@ class _ConversationsScreenState extends State<ConversationsScreen>
         context: context,
         builder: (ctx) => AlertDialog(
           title: const Text('群聊已解散'),
-          content: Text('群聊「$name」已被解散，可在本地查看历史消息'),
+          content: Text('群聊「$name」已被解散，仍可查看历史消息'),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(ctx),

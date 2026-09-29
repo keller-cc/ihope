@@ -933,11 +933,13 @@ export function ChatPane({
 
       {conversation?.removed && !selectMode && (
         <p className="im-group-removed-banner">
-          {conversation.removeReason === 'kicked'
-            ? '你已被移出群聊，仍可查看历史消息。删除会话后将不再显示。'
-            : conversation.removeReason === 'unfriended' || conversation.type === 'dm'
-              ? '你们已不是好友，仍可查看历史消息。重新加好友后可继续聊天。'
-              : '你已退出该群聊，仍可查看历史消息。删除会话后将不再显示。'}
+          {conversation.removeReason === 'dissolved' || conversation.dissolved
+            ? '该群聊已解散，仍可查看历史消息。删除会话后将不再显示。'
+            : conversation.removeReason === 'kicked'
+              ? '你已被移出群聊，仍可查看历史消息。删除会话后将不再显示。'
+              : conversation.removeReason === 'unfriended' || conversation.type === 'dm'
+                ? '你们已不是好友，仍可查看历史消息。重新加好友后可继续聊天。'
+                : '你已退出该群聊，仍可查看历史消息。删除会话后将不再显示。'}
         </p>
       )}
 

@@ -82,6 +82,8 @@ export type Conversation = {
   announcementAuthorName?: string
   removed?: boolean
   removeReason?: string
+  /** Group soft-dissolved; history remains read-only. */
+  dissolved?: boolean
 }
 
 export type Contact = {

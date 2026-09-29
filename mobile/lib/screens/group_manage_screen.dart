@@ -368,7 +368,7 @@ class _GroupManageScreenState extends State<GroupManageScreen> {
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('解散群聊'),
-        content: Text('确定解散「${_conversation.name}」？此操作不可恢复。'),
+        content: Text('确定解散「${_conversation.name}」？解散后仍可查看历史消息，但无法再发言。'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
