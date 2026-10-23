@@ -180,6 +180,9 @@ export function apiErrorMessage(e: unknown, fallback: string): string {
     'invalid score': '分数无效',
     'score too high': '分数过高',
     unauthorized: '请重新登录',
+    rate_limited: '尝试过于频繁，请稍后再试',
+    'turnstile required': '请完成人机验证',
+    'turnstile failed': '人机验证失败，请重试',
     forbidden: '没有权限',
     'user not found': '用户不存在',
     'cannot add yourself': '不能添加自己',
@@ -244,15 +247,26 @@ export function apiErrorMessage(e: unknown, fallback: string): string {
   return fallback
 }
 
+export type PublicConfig = {
+  turnstile: { enabled: boolean; siteKey: string }
+}
+
 export const api = {
-  register: (email: string, username: string, password: string, fellowshipCode: string) =>
+  publicConfig: () => request<PublicConfig>('/api/public/config'),
+  register: (
+    email: string,
+    username: string,
+    password: string,
+    fellowshipCode: string,
+    turnstileToken = '',
+  ) =>
     request<{
       user: User
       message: string
       devVerifyToken?: string
     }>('/api/auth/register', {
       method: 'POST',
-      body: JSON.stringify({ email, username, password, fellowshipCode }),
+      body: JSON.stringify({ email, username, password, fellowshipCode, turnstileToken }),
     }),
   login: (login: string, password: string) =>
     request<{ user: User; token: string }>('/api/auth/login', {

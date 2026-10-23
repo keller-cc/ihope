@@ -27,6 +27,7 @@ import {
   type AdminUpdateNotice,
   type AdminUser,
 } from '@/api'
+import { TurnstileBox, loadTurnstileConfig } from '@/components/TurnstileBox'
 import { JOIN_MODE_OPTIONS } from '@/lib/joinMode'
 
 type AdminTab = 'users' | 'domains' | 'fellowships' | 'qq' | 'conversations' | 'games' | 'notices'
@@ -44,6 +45,9 @@ const TAB_ITEMS: { id: AdminTab; label: (n: number) => string }[] = [
 export function AdminPage() {
   const [tokenInput, setTokenInput] = useState(getAdminToken() || '')
   const [authed, setAuthed] = useState(!!getAdminToken())
+  const [turnstileToken, setTurnstileToken] = useState('')
+  const [turnstileReset, setTurnstileReset] = useState(0)
+  const [turnstileRequired, setTurnstileRequired] = useState(false)
   const [users, setUsers] = useState<AdminUser[]>([])
   const [conversations, setConversations] = useState<AdminConversation[]>([])
   const [userFilter, setUserFilter] = useState('')
@@ -149,6 +153,10 @@ export function AdminPage() {
   }, [])
 
   useEffect(() => {
+    void loadTurnstileConfig().then((c) => setTurnstileRequired(c.enabled && !!c.siteKey))
+  }, [])
+
+  useEffect(() => {
     if (getAdminToken()) void load()
   }, [load])
 
@@ -158,8 +166,23 @@ export function AdminPage() {
       MessagePlugin.warning('请输入 ADMIN_TOKEN')
       return
     }
-    setAdminToken(t)
-    await load()
+    if (turnstileRequired && !turnstileToken) {
+      MessagePlugin.warning('请完成人机验证')
+      return
+    }
+    setLoading(true)
+    try {
+      await adminApi.createSession(t, turnstileToken)
+      setAdminToken(t)
+      await load()
+    } catch (e) {
+      setAuthed(false)
+      setTurnstileToken('')
+      setTurnstileReset((n) => n + 1)
+      MessagePlugin.error(apiErrorMessage(e, '鉴权失败'))
+    } finally {
+      setLoading(false)
+    }
   }
 
   const confirmAction = (opts: {
@@ -390,7 +413,14 @@ export function AdminPage() {
                 onChange={(v) => setTokenInput(String(v))}
                 onEnter={() => void unlock()}
               />
-              <Button theme="primary" size="large" block onClick={() => void unlock()}>
+              <TurnstileBox onToken={setTurnstileToken} resetKey={turnstileReset} />
+              <Button
+                theme="primary"
+                size="large"
+                block
+                loading={loading}
+                onClick={() => void unlock()}
+              >
                 进入管理
               </Button>
               <Link className="im-auth__link-btn" to="/">

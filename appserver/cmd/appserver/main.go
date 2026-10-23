@@ -128,7 +128,12 @@ func main() {
 	emailNotify := emailnotify.New(mailer, emailnotify.NewStore(pool), h, qqSuppress, chatSvc, cfg.AppPublicURL)
 	noticeStore := updatenotice.NewStore(pool)
 
-	srv := httpserver.New(authSvc, chatSvc, adminSvc, gameSvc, manilaStore, manilaMgr, h, callSvc, qqSvc, emailNotify, noticeStore, cfg.CORSOrigin, cfg.QQWebhookPath, cfg.AdminToken, uploadDir, cfg.QQQuotesFilePath, cfg.WebDist)
+	srv := httpserver.New(authSvc, chatSvc, adminSvc, gameSvc, manilaStore, manilaMgr, h, callSvc, qqSvc, emailNotify, noticeStore, cfg.CORSOrigin, cfg.QQWebhookPath, cfg.AdminToken, uploadDir, cfg.QQQuotesFilePath, cfg.WebDist, httpserver.RateLimits{
+		AuthLimit:   cfg.AuthRateLimit,
+		AuthWindow:  cfg.AuthRateWindow,
+		AdminLimit:  cfg.AdminRateLimit,
+		AdminWindow: cfg.AdminRateWindow,
+	}, cfg.TurnstileSiteKey, cfg.TurnstileSecretKey)
 	_ = os.MkdirAll(filepath.Join(uploadDir, "avatars"), 0o755)
 	_ = os.MkdirAll(filepath.Join(uploadDir, "groups"), 0o755)
 	_ = os.MkdirAll(filepath.Join(uploadDir, "chat"), 0o755)

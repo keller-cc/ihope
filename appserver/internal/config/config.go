@@ -45,6 +45,15 @@ type Config struct {
 	QQDailyNewsHHMM       string
 	FellowshipCode        string
 	AdminToken            string
+	// AuthRateLimit / AuthRateWindow: login, register, forgot/reset, resend, verify.
+	AuthRateLimit         int
+	AuthRateWindow        time.Duration
+	// AdminRateLimit / AdminRateWindow: failed admin token attempts per IP.
+	AdminRateLimit        int
+	AdminRateWindow       time.Duration
+	// Turnstile: empty secret disables checks (local/dev). Site key is public.
+	TurnstileSiteKey      string
+	TurnstileSecretKey    string
 	CallTurnURLs          string
 	CallTurnUsername      string
 	CallTurnCredential    string
@@ -102,6 +111,12 @@ func Load() Config {
 		QQDailyNewsHHMM:       env("QQ_DAILY_NEWS_HHMM", "08:05"),
 		FellowshipCode:        env("FELLOWSHIP_CODE", "盼望之地"),
 		AdminToken:            env("ADMIN_TOKEN", "dev-admin-token-change-me"),
+		AuthRateLimit:         envInt("AUTH_RATE_LIMIT", 5),
+		AuthRateWindow:        time.Duration(envInt("AUTH_RATE_WINDOW_SEC", 60)) * time.Second,
+		AdminRateLimit:        envInt("ADMIN_RATE_LIMIT", 5),
+		AdminRateWindow:       time.Duration(envInt("ADMIN_RATE_WINDOW_SEC", 60)) * time.Second,
+		TurnstileSiteKey:      strings.TrimSpace(env("TURNSTILE_SITE_KEY", "")),
+		TurnstileSecretKey:    strings.TrimSpace(env("TURNSTILE_SECRET_KEY", "")),
 		CallTurnURLs:          env("CALL_TURN_URLS", ""),
 		CallTurnUsername:      env("CALL_TURN_USERNAME", ""),
 		CallTurnCredential:    env("CALL_TURN_CREDENTIAL", ""),

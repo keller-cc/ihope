@@ -2,6 +2,7 @@
 import { Button, Input, MessagePlugin } from 'tdesign-react'
 import { Link } from 'react-router-dom'
 import { api, apiErrorMessage, setToken, type User } from '@/api'
+import { TurnstileBox, loadTurnstileConfig } from '@/components/TurnstileBox'
 
 type Props = {
   onAuthed: (user: User) => void
@@ -29,12 +30,19 @@ export function AuthPage({ onAuthed }: Props) {
   const [devToken, setDevToken] = useState('')
   const [devResetToken, setDevResetToken] = useState('')
   const [resendWait, setResendWait] = useState(0)
+  const [turnstileToken, setTurnstileToken] = useState('')
+  const [turnstileReset, setTurnstileReset] = useState(0)
+  const [turnstileRequired, setTurnstileRequired] = useState(false)
 
   useEffect(() => {
     if (resendWait <= 0) return
     const id = window.setTimeout(() => setResendWait((s) => s - 1), 1000)
     return () => window.clearTimeout(id)
   }, [resendWait])
+
+  useEffect(() => {
+    void loadTurnstileConfig().then((c) => setTurnstileRequired(c.enabled && !!c.siteKey))
+  }, [])
 
   const goLogin = () => {
     setLogin(pendingUsername || pendingEmail)
@@ -133,15 +141,29 @@ export function AuthPage({ onAuthed }: Props) {
       MessagePlugin.warning('两次密码不一致')
       return
     }
+    if (turnstileRequired && !turnstileToken) {
+      MessagePlugin.warning('请完成人机验证')
+      return
+    }
     setBusy(true)
     try {
-      const res = await api.register(emailVal, usernameVal, regPassword, fellowshipCode.trim())
+      const res = await api.register(
+        emailVal,
+        usernameVal,
+        regPassword,
+        fellowshipCode.trim(),
+        turnstileToken,
+      )
       enterPending(emailVal, usernameVal, regPassword)
       setDevToken(res.devVerifyToken || '')
       setResendWait(RESEND_COOLDOWN_SEC)
+      setTurnstileToken('')
+      setTurnstileReset((n) => n + 1)
       MessagePlugin.success('验证邮件已发送，请查收邮箱')
     } catch (e) {
       const err = e as ApiErr
+      setTurnstileToken('')
+      setTurnstileReset((n) => n + 1)
       if (err.code === 'email taken') {
         enterPending(emailVal, usernameVal, regPassword)
         try {
@@ -356,6 +378,7 @@ export function AuthPage({ onAuthed }: Props) {
                 value={fellowshipCode}
                 onChange={(v) => setFellowshipCode(String(v))}
               />
+              <TurnstileBox onToken={setTurnstileToken} resetKey={turnstileReset} />
               <Button
                 size="large"
                 theme="primary"

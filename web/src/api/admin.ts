@@ -151,6 +151,27 @@ export type AdminQQBinding = {
 }
 
 export const adminApi = {
+  /** Unlock admin UI: verifies ADMIN_TOKEN (+ Turnstile when enabled). */
+  createSession: async (adminToken: string, turnstileToken = '') => {
+    const headers = new Headers({
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${adminToken}`,
+    })
+    const res = await fetch('/api/admin/session', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ turnstileToken }),
+    })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) {
+      const err = new Error((data as { error?: string }).error || res.statusText) as Error & {
+        code?: string
+      }
+      err.code = (data as { error?: string }).error
+      throw err
+    }
+    return data as { message: string }
+  },
   listUsers: () => adminRequest<{ users: AdminUser[] }>('/api/admin/users'),
   deleteUser: (id: string) =>
     adminRequest<{ message: string }>(`/api/admin/users/${id}`, { method: 'DELETE' }),

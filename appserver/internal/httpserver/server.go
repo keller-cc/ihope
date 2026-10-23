@@ -2,6 +2,7 @@ package httpserver
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -26,6 +27,8 @@ import (
 	"github.com/keller-cc/ihope/appserver/internal/manila"
 	"github.com/keller-cc/ihope/appserver/internal/qqbot"
 	"github.com/keller-cc/ihope/appserver/internal/quotes"
+	"github.com/keller-cc/ihope/appserver/internal/ratelimit"
+	"github.com/keller-cc/ihope/appserver/internal/turnstile"
 	"github.com/keller-cc/ihope/appserver/internal/updatenotice"
 	"github.com/keller-cc/ihope/appserver/internal/upload"
 )
@@ -44,11 +47,23 @@ type Server struct {
 	notices     *updatenotice.Store
 	cors        string
 	qqPath      string
-	adminToken  string
-	uploadDir   string
-	quotesPath  string
-	webDist     string
-	upg         websocket.Upgrader
+	adminToken         string
+	uploadDir          string
+	quotesPath         string
+	webDist            string
+	turnstileSiteKey   string
+	turnstileSecretKey string
+	authLimit          *ratelimit.Limiter
+	adminLimit         *ratelimit.Limiter
+	upg                websocket.Upgrader
+}
+
+// RateLimits configures in-memory IP sliding windows for auth and admin.
+type RateLimits struct {
+	AuthLimit   int
+	AuthWindow  time.Duration
+	AdminLimit  int
+	AdminWindow time.Duration
 }
 
 func New(
@@ -64,25 +79,31 @@ func New(
 	emailNotify *emailnotify.Service,
 	notices *updatenotice.Store,
 	corsOrigin, qqWebhookPath, adminToken, uploadDir, quotesPath, webDist string,
+	limits RateLimits,
+	turnstileSiteKey, turnstileSecretKey string,
 ) *Server {
 	return &Server{
-		auth:        authSvc,
-		chat:        chatSvc,
-		admin:       adminSvc,
-		gameSvc:     gameSvc,
-		manilaStore: manilaStore,
-		manilaMgr:   manilaMgr,
-		hub:         h,
-		calls:       callSvc,
-		qq:          qq,
-		emailNotify: emailNotify,
-		notices:     notices,
-		cors:        corsOrigin,
-		qqPath:      qqWebhookPath,
-		adminToken:  strings.TrimSpace(adminToken),
-		uploadDir:   uploadDir,
-		quotesPath:  strings.TrimSpace(quotesPath),
-		webDist:     strings.TrimSpace(webDist),
+		auth:               authSvc,
+		chat:               chatSvc,
+		admin:              adminSvc,
+		gameSvc:            gameSvc,
+		manilaStore:        manilaStore,
+		manilaMgr:          manilaMgr,
+		hub:                h,
+		calls:              callSvc,
+		qq:                 qq,
+		emailNotify:        emailNotify,
+		notices:            notices,
+		cors:               corsOrigin,
+		qqPath:             qqWebhookPath,
+		adminToken:         strings.TrimSpace(adminToken),
+		uploadDir:          uploadDir,
+		quotesPath:         strings.TrimSpace(quotesPath),
+		webDist:            strings.TrimSpace(webDist),
+		turnstileSiteKey:   strings.TrimSpace(turnstileSiteKey),
+		turnstileSecretKey: strings.TrimSpace(turnstileSecretKey),
+		authLimit:          ratelimit.New(limits.AuthLimit, limits.AuthWindow),
+		adminLimit:         ratelimit.New(limits.AdminLimit, limits.AdminWindow),
 		upg: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool {
 				origin := r.Header.Get("Origin")
@@ -109,14 +130,16 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", s.handleHealth)
 	mux.HandleFunc("GET /api/health", s.handleHealth) // 兼容旧 App / 探活 URL
-	mux.HandleFunc("POST /api/auth/register", s.handleRegister)
-	mux.HandleFunc("POST /api/auth/login", s.handleLogin)
-	mux.HandleFunc("POST /api/auth/resend-verification", s.handleResendVerification)
-	mux.HandleFunc("POST /api/auth/change-unverified-email", s.handleChangeUnverifiedEmail)
-	mux.HandleFunc("POST /api/auth/forgot-password", s.handleForgotPassword)
-	mux.HandleFunc("POST /api/auth/reset-password", s.handleResetPassword)
-	mux.HandleFunc("GET /api/auth/verify-email", s.handleVerifyEmailGET)
-	mux.HandleFunc("POST /api/auth/verify-email", s.handleVerifyEmailPOST)
+	mux.HandleFunc("GET /api/public/config", s.handlePublicConfig)
+	mux.HandleFunc("POST /api/admin/session", s.withAuthRateLimit(s.handleAdminSession))
+	mux.HandleFunc("POST /api/auth/register", s.withAuthRateLimit(s.handleRegister))
+	mux.HandleFunc("POST /api/auth/login", s.withAuthRateLimit(s.handleLogin))
+	mux.HandleFunc("POST /api/auth/resend-verification", s.withAuthRateLimit(s.handleResendVerification))
+	mux.HandleFunc("POST /api/auth/change-unverified-email", s.withAuthRateLimit(s.handleChangeUnverifiedEmail))
+	mux.HandleFunc("POST /api/auth/forgot-password", s.withAuthRateLimit(s.handleForgotPassword))
+	mux.HandleFunc("POST /api/auth/reset-password", s.withAuthRateLimit(s.handleResetPassword))
+	mux.HandleFunc("GET /api/auth/verify-email", s.withAuthRateLimit(s.handleVerifyEmailGET))
+	mux.HandleFunc("POST /api/auth/verify-email", s.withAuthRateLimit(s.handleVerifyEmailPOST))
 	mux.HandleFunc("GET /api/me", s.withAuth(s.handleMe))
 	mux.HandleFunc("PATCH /api/me", s.withAuth(s.handlePatchMe))
 	mux.HandleFunc("POST /api/me/password", s.withAuth(s.handleChangePassword))
@@ -344,15 +367,78 @@ func (s *Server) handleDinoMyBest(w http.ResponseWriter, r *http.Request, userID
 	writeJSON(w, http.StatusOK, map[string]any{"best": best})
 }
 
+func (s *Server) handlePublicConfig(w http.ResponseWriter, r *http.Request) {
+	// Both keys required to enable the widget; secret alone would lock users out.
+	enabled := s.turnstileSecretKey != "" && s.turnstileSiteKey != ""
+	writeJSON(w, http.StatusOK, map[string]any{
+		"turnstile": map[string]any{
+			"enabled": enabled,
+			"siteKey": s.turnstileSiteKey,
+		},
+	})
+}
+
+func (s *Server) requireTurnstile(r *http.Request, token string) error {
+	if s.turnstileSecretKey == "" || s.turnstileSiteKey == "" {
+		return nil
+	}
+	return turnstile.Verify(s.turnstileSecretKey, token, ratelimit.ClientIP(r))
+}
+
+// handleAdminSession unlocks the admin UI: ADMIN_TOKEN + optional Turnstile.
+func (s *Server) handleAdminSession(w http.ResponseWriter, r *http.Request) {
+	if s.adminToken == "" {
+		writeErr(w, http.StatusServiceUnavailable, "admin disabled")
+		return
+	}
+	var body struct {
+		TurnstileToken string `json:"turnstileToken"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	authz := r.Header.Get("Authorization")
+	token := strings.TrimPrefix(authz, "Bearer ")
+	ok := strings.HasPrefix(authz, "Bearer ") &&
+		subtle.ConstantTimeCompare([]byte(token), []byte(s.adminToken)) == 1
+	if !ok {
+		if s.adminLimit != nil {
+			key := ratelimit.ClientIP(r) + ":admin"
+			if !s.adminLimit.Allow(key) {
+				writeErr(w, http.StatusTooManyRequests, "rate_limited")
+				return
+			}
+		}
+		writeErr(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if err := s.requireTurnstile(r, body.TurnstileToken); err != nil {
+		if errors.Is(err, turnstile.ErrMissingToken) {
+			writeErr(w, http.StatusBadRequest, "turnstile required")
+			return
+		}
+		writeErr(w, http.StatusBadRequest, "turnstile failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"message": "ok"})
+}
+
 func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Email          string `json:"email"`
 		Username       string `json:"username"`
 		Password       string `json:"password"`
 		FellowshipCode string `json:"fellowshipCode"`
+		TurnstileToken string `json:"turnstileToken"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	if err := s.requireTurnstile(r, body.TurnstileToken); err != nil {
+		if errors.Is(err, turnstile.ErrMissingToken) {
+			writeErr(w, http.StatusBadRequest, "turnstile required")
+			return
+		}
+		writeErr(w, http.StatusBadRequest, "turnstile failed")
 		return
 	}
 	res, err := s.auth.Register(r.Context(), body.Email, body.Username, body.Password, body.FellowshipCode)
@@ -2314,6 +2400,19 @@ func (s *Server) withAuth(h authedHandler) http.HandlerFunc {
 	}
 }
 
+func (s *Server) withAuthRateLimit(h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if s.authLimit != nil {
+			key := ratelimit.ClientIP(r) + ":auth"
+			if !s.authLimit.Allow(key) {
+				writeErr(w, http.StatusTooManyRequests, "rate_limited")
+				return
+			}
+		}
+		h(w, r)
+	}
+}
+
 type adminHandler func(http.ResponseWriter, *http.Request)
 
 func (s *Server) withAdmin(h adminHandler) http.HandlerFunc {
@@ -2324,7 +2423,17 @@ func (s *Server) withAdmin(h adminHandler) http.HandlerFunc {
 		}
 		authz := r.Header.Get("Authorization")
 		token := strings.TrimPrefix(authz, "Bearer ")
-		if !strings.HasPrefix(authz, "Bearer ") || token != s.adminToken {
+		ok := strings.HasPrefix(authz, "Bearer ") &&
+			subtle.ConstantTimeCompare([]byte(token), []byte(s.adminToken)) == 1
+		if !ok {
+			// Only failed guesses consume the admin budget so normal UI use is unaffected.
+			if s.adminLimit != nil {
+				key := ratelimit.ClientIP(r) + ":admin"
+				if !s.adminLimit.Allow(key) {
+					writeErr(w, http.StatusTooManyRequests, "rate_limited")
+					return
+				}
+			}
 			writeErr(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}

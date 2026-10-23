@@ -36,6 +36,10 @@ docker compose -f docker-compose.prod.yml up -d --build
 
 `.env` 生产必改：`WEB_DB_PASSWORD`、`CORS_ORIGIN`、`APP_PUBLIC_URL`、`JWT_SECRET`、`ADMIN_TOKEN`、`MESSAGE_ENCRYPTION_KEY`；邮件/QQ 从旧 `deploy/.env` 搬过来即可。`nginx.conf` 的 `server_name` 与域名一致。
 
+鉴权与管理失败口令均按 IP 限流，默认一致：`*_RATE_LIMIT=5` / `*_RATE_WINDOW_SEC=60`（`AUTH_*`、`ADMIN_*`）。
+
+可选 Cloudflare Turnstile（`TURNSTILE_SITE_KEY` + `TURNSTILE_SECRET_KEY`）：启用后注册与管理入口需过人机验证；留空则跳过。
+
 QQ 生产示例：
 
 ```env

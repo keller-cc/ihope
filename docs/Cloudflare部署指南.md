@@ -127,9 +127,24 @@ IHope IM 附件上限 **300MB**，但 Cloudflare **橙云代理**对单次上传
 
 ## 登录限流与真实 IP
 
-后端 `httpx.ClientIP` 优先读 **`CF-Connecting-IP`**（经 Nginx 转发后），登录限流按真实用户 IP 计数。
+appserver 鉴权/管理限流优先读 **`CF-Connecting-IP`**（经 Nginx 转发后），按真实用户 IP 计数。
 
 **前提**：源站仅 Cloudflare 可访问，或 Nginx 用 `real_ip` 从 CF 段还原 IP，避免伪造头。
+
+---
+
+## Turnstile（注册 / 管理入口人机验证）
+
+1. Cloudflare 控制台 → **Turnstile** → 创建站点小部件，拿到 **Site Key** / **Secret Key**
+2. 写入 `appserver/.env`：
+
+```env
+TURNSTILE_SITE_KEY=0x...
+TURNSTILE_SECRET_KEY=0x...
+```
+
+3. 重启 appserver。未配置时自动跳过（本地开发照常）。
+4. 生效位置：Web **注册**、**管理入口解锁**；后端向 `siteverify` 校验 token。
 
 ---
 
