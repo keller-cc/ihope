@@ -212,6 +212,8 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
   const loadMessages = useCallback(async (id: string) => {
     try {
       const res = await api.listMessages(id)
+      // 快速连点切换时丢弃过期响应，避免把上一会话内容写回来
+      if (activeIdRef.current !== id) return
       setMessages(res.messages)
       setHasMoreMessages(!!res.hasMore)
       // listMessages 服务端已 MarkRead；本地清未读即可，避免再打 /conversations
@@ -219,6 +221,7 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
         prev.map((c) => (c.id === id && c.unreadCount ? { ...c, unreadCount: 0 } : c)),
       )
     } catch (e) {
+      if (activeIdRef.current !== id) return
       MessagePlugin.error(apiErrorMessage(e, '加载消息失败'))
     }
   }, [])
@@ -306,6 +309,20 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
         const msg = data.message as Message | undefined
         const cid = String(data.conversationId || msg?.conversationId || '')
         if (!msg?.id || !cid) return
+        const mentionedMe =
+          !!userIdRef.current &&
+          msg.senderId !== userIdRef.current &&
+          Array.isArray(msg.mentions) &&
+          msg.mentions.includes(userIdRef.current)
+        if (mentionedMe) {
+          setConversations((prev) =>
+            prev.map((c) =>
+              c.id === cid
+                ? { ...c, mentionHomeTip: true, hasUnvisitedMention: true }
+                : c,
+            ),
+          )
+        }
         if (rightKindRef.current === 'chat' && activeIdRef.current === cid) {
           setMessages((prev) => {
             if (prev.some((m) => m.id === msg.id)) return prev
@@ -341,6 +358,9 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
                                   ? '[消息已撤回]'
                                   : msg.body || c.lastMessage,
                       lastMessageAt: msg.createdAt || c.lastMessageAt,
+                      ...(mentionedMe
+                        ? { mentionHomeTip: true, hasUnvisitedMention: true }
+                        : {}),
                     }
                   : c,
               ),
@@ -499,12 +519,14 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
 
   const loadOlderMessages = async () => {
     if (!activeId || !messages.length || loadingMore) return
+    const cid = activeId
     setLoadingMore(true)
     const el = listRef.current
     const prevHeight = el?.scrollHeight || 0
     try {
       const oldest = messages[0]
-      const res = await api.listMessages(activeId, { before: oldest.createdAt })
+      const res = await api.listMessages(cid, { before: oldest.createdAt })
+      if (activeIdRef.current !== cid) return
       setMessages((prev) => {
         const ids = new Set(prev.map((m) => m.id))
         const merged = [...res.messages.filter((m) => !ids.has(m.id)), ...prev]
@@ -512,9 +534,10 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
       })
       setHasMoreMessages(!!res.hasMore)
       requestAnimationFrame(() => {
-        if (el) el.scrollTop = el.scrollHeight - prevHeight
+        if (el && activeIdRef.current === cid) el.scrollTop = el.scrollHeight - prevHeight
       })
     } catch (e) {
+      if (activeIdRef.current !== cid) return
       MessagePlugin.error(apiErrorMessage(e, '加载失败'))
     } finally {
       setLoadingMore(false)
@@ -557,6 +580,12 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
 
   useEffect(() => {
     if (!activeId || right.kind !== 'chat') return
+    // 切换会话先清空，避免短暂仍显示上一会话消息
+    setMessages([])
+    setHasMoreMessages(false)
+    setSelectMode(false)
+    setSelectedMessageIds([])
+    setFocusMessageId(null)
     void loadMessages(activeId)
   }, [activeId, right.kind, loadMessages])
 
@@ -587,6 +616,10 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
       }
     }
     setListNav('messages')
+    if (id !== activeId) {
+      setMessages([])
+      setHasMoreMessages(false)
+    }
     setActiveId(id)
     setRight({ kind: 'chat' })
     setMobileDetail(true)
@@ -622,14 +655,18 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
     setReturnToHistory(false)
   }
 
-  const jumpToMessage = async (messageId: string) => {
+  const jumpToMessage = async (
+    messageId: string,
+    opts?: { showReturnToHistory?: boolean },
+  ) => {
     if (!activeId) return
     setRight({ kind: 'chat' })
-    setReturnToHistory(true)
+    setReturnToHistory(!!opts?.showReturnToHistory)
     setFocusMessageId(messageId)
     try {
       if (!messages.some((m) => m.id === messageId)) {
         const res = await api.messageContext(activeId, messageId)
+        if (activeIdRef.current !== activeId) return
         setMessages(res.messages)
         setHasMoreMessages(true)
       }
@@ -641,17 +678,42 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
     }
   }
 
-  const send = async () => {
+  const send = async (opts?: { mentionUserIds?: string[]; mentionAll?: boolean }) => {
     if (!activeId || !draft.trim()) return
     const body = draft.trim()
     setDraft('')
     try {
-      const m = await api.sendMessage(activeId, body)
+      const m = await api.sendMessage(activeId, body, opts)
       setMessages((prev) => (prev.some((x) => x.id === m.id) ? prev : [...prev, m]))
       void loadConversations()
     } catch (e) {
       setDraft(body)
       MessagePlugin.error(apiErrorMessage(e, '发送失败'))
+    }
+  }
+
+  const jumpMention = async () => {
+    if (!activeId) return
+    try {
+      const res = await api.jumpMention(activeId)
+      setConversations((prev) =>
+        prev.map((c) =>
+          c.id === activeId
+            ? {
+                ...c,
+                mentionHomeTip: false,
+                hasUnvisitedMention: !!res.hasMore,
+              }
+            : c,
+        ),
+      )
+      if (!res.messageId) {
+        MessagePlugin.info('没有未读的@了')
+        return
+      }
+      await jumpToMessage(res.messageId, { showReturnToHistory: false })
+    } catch (e) {
+      MessagePlugin.error(apiErrorMessage(e, '跳转失败'))
     }
   }
 
@@ -1041,6 +1103,13 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
                     setReturnToHistory(false)
                     return
                   }
+                  if (id !== activeId) {
+                    setMessages([])
+                    setHasMoreMessages(false)
+                    setSelectMode(false)
+                    setSelectedMessageIds([])
+                    setFocusMessageId(null)
+                  }
                   setActiveId(id)
                   setRight({ kind: 'chat' })
                   setMobileDetail(true)
@@ -1059,6 +1128,31 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
                     await loadConversations()
                   } catch (e) {
                     MessagePlugin.error(apiErrorMessage(e, '操作失败'))
+                  }
+                }}
+                onMarkRead={async (c) => {
+                  try {
+                    await api.markRead(c.id)
+                    setConversations((prev) =>
+                      prev.map((x) =>
+                        x.id === c.id
+                          ? {
+                              ...x,
+                              unreadCount: 0,
+                              mentionHomeTip: false,
+                              hasUnvisitedMention: false,
+                              pendingAnnouncement: null,
+                            }
+                          : x,
+                      ),
+                    )
+                    setGroups((prev) =>
+                      prev.map((x) =>
+                        x.id === c.id ? { ...x, pendingAnnouncement: null } : x,
+                      ),
+                    )
+                  } catch (e) {
+                    MessagePlugin.error(apiErrorMessage(e, '标记已读失败'))
                   }
                 }}
                 onHide={async (c) => {
@@ -1776,7 +1870,7 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
             onCacheChange={(c) =>
               setHistoryCaches((prev) => ({ ...prev, [activeId]: c }))
             }
-            onJump={(mid) => void jumpToMessage(mid)}
+            onJump={(mid) => void jumpToMessage(mid, { showReturnToHistory: true })}
             onClose={() => {
               setRight(activeId ? { kind: 'chat' } : { kind: 'empty' })
               setReturnToHistory(false)
@@ -1805,7 +1899,7 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
             messages={messages}
             draft={draft}
             onDraft={setDraft}
-            onSend={() => void send()}
+            onSend={(opts) => void send(opts)}
             onSendImage={(file) => void sendImage(file)}
             onSendFile={(file) => void sendFile(file)}
             onSendVoice={(blob, duration, mime) => void sendVoice(blob, duration, mime)}
@@ -1815,6 +1909,7 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
               setForwardOpen(true)
             }}
             onOpenHistory={() => openHistory()}
+            onJumpMention={() => void jumpMention()}
             sendingMedia={sendingMedia}
             hasMore={hasMoreMessages}
             loadingMore={loadingMore}

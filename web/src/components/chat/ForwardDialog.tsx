@@ -106,6 +106,7 @@ export function ForwardDialog({
               <Avatar
                 name={conversationTitle(c)}
                 src={c.type === 'dm' ? c.peerAvatarUrl : c.avatarUrl}
+                faces={c.type === 'group' ? c.memberFaces : undefined}
                 size="sm"
               />
               <span>{conversationTitle(c)}</span>

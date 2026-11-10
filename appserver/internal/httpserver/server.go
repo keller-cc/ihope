@@ -185,6 +185,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/conversations/{id}/messages/days", s.withAuth(s.handleListMessageDays))
 	mux.HandleFunc("GET /api/conversations/{id}/messages/{mid}/context", s.withAuth(s.handleMessageContext))
 	mux.HandleFunc("POST /api/conversations/{id}/messages", s.withAuth(s.handleSendMessage))
+	mux.HandleFunc("POST /api/conversations/{id}/mentions/jump", s.withAuth(s.handleJumpMention))
 	mux.HandleFunc("POST /api/conversations/{id}/messages/image", s.withAuth(s.handleSendImage))
 	mux.HandleFunc("POST /api/conversations/{id}/messages/file", s.withAuth(s.handleSendFile))
 	mux.HandleFunc("POST /api/conversations/{id}/messages/voice", s.withAuth(s.handleSendVoice))
@@ -1856,13 +1857,19 @@ func (s *Server) handleForwardMessages(w http.ResponseWriter, r *http.Request, u
 func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request, userID string) {
 	id := r.PathValue("id")
 	var body struct {
-		Body string `json:"body"`
+		Body           string   `json:"body"`
+		MentionUserIDs []string `json:"mentionUserIds"`
+		MentionAll     bool     `json:"mentionAll"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid json")
 		return
 	}
-	m, err := s.chat.SendText(r.Context(), id, userID, body.Body)
+	opts := &chat.SendTextOpts{
+		MentionUserIDs: body.MentionUserIDs,
+		MentionAll:     body.MentionAll,
+	}
+	m, err := s.chat.SendText(r.Context(), id, userID, body.Body, opts)
 	if err != nil {
 		if err.Error() == "forbidden" {
 			writeErr(w, http.StatusForbidden, "forbidden")
@@ -1873,6 +1880,20 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request, userI
 	}
 	s.afterMessage(id, userID, m)
 	writeJSON(w, http.StatusCreated, m)
+}
+
+func (s *Server) handleJumpMention(w http.ResponseWriter, r *http.Request, userID string) {
+	id := r.PathValue("id")
+	res, err := s.chat.JumpNextMention(r.Context(), id, userID)
+	if err != nil {
+		if err.Error() == "forbidden" {
+			writeErr(w, http.StatusForbidden, "forbidden")
+			return
+		}
+		writeErr(w, http.StatusInternalServerError, "jump failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
 }
 
 func (s *Server) handleSendImage(w http.ResponseWriter, r *http.Request, userID string) {

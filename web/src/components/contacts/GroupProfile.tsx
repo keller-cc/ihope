@@ -318,7 +318,13 @@ export function GroupProfile({
               onClick={() => fileRef.current?.click()}
             >
               <span className="im-set-cell__label">群头像</span>
-              <Avatar name={group.title || '群'} src={group.avatarUrl} size="sm" group />
+              <Avatar
+                name={group.title || '群'}
+                src={group.avatarUrl}
+                faces={group.memberFaces}
+                size="sm"
+                group
+              />
               <ChevronRightIcon size="16px" className="im-set-cell__arrow" />
             </button>
           )}

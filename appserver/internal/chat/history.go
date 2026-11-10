@@ -95,7 +95,8 @@ func (s *Service) ListMessagesFiltered(ctx context.Context, conversationID, user
 	q := `
 		SELECT m.id::text, m.conversation_id::text, m.sender_id::text, m.type, m.body_sealed, m.created_at::text,
 			m.recalled_at::text, m.recalled_by::text, u.username, u.avatar_url,
-			COALESCE(cm.role, 'member'), COALESCE(cm.member_title, '')
+			COALESCE(cm.role, 'member'), COALESCE(cm.member_title, ''),
+			COALESCE(m.mention_all, FALSE)
 		FROM messages m
 		JOIN users u ON u.id = m.sender_id
 		LEFT JOIN conversation_members cm ON cm.conversation_id = m.conversation_id AND cm.user_id = m.sender_id
@@ -122,6 +123,9 @@ func (s *Service) ListMessagesFiltered(ctx context.Context, conversationID, user
 	}
 	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
 		out[i], out[j] = out[j], out[i]
+	}
+	if err := s.attachMentions(ctx, out); err != nil {
+		return nil, false, err
 	}
 	return out, hasMore, nil
 }
@@ -228,7 +232,8 @@ func (s *Service) SearchMessages(ctx context.Context, conversationID, userID str
 		rows, err := s.pool.Query(ctx, `
 			SELECT m.id::text, m.conversation_id::text, m.sender_id::text, m.type, m.body_sealed, m.created_at::text,
 				m.recalled_at::text, m.recalled_by::text, u.username, u.avatar_url,
-				COALESCE(cm.role, 'member'), COALESCE(cm.member_title, '')
+				COALESCE(cm.role, 'member'), COALESCE(cm.member_title, ''),
+				COALESCE(m.mention_all, FALSE)
 			FROM messages m
 			JOIN users u ON u.id = m.sender_id
 			LEFT JOIN conversation_members cm ON cm.conversation_id = m.conversation_id AND cm.user_id = m.sender_id
@@ -241,6 +246,9 @@ func (s *Service) SearchMessages(ctx context.Context, conversationID, userID str
 		batchMsgs, err := s.scanMessageRows(rows, convType, ownerID)
 		rows.Close()
 		if err != nil {
+			return nil, false, err
+		}
+		if err := s.attachMentions(ctx, batchMsgs); err != nil {
 			return nil, false, err
 		}
 		if len(batchMsgs) == 0 {
@@ -339,7 +347,8 @@ func (s *Service) MessageContext(ctx context.Context, conversationID, userID, me
 	beforeRows, err := s.pool.Query(ctx, `
 		SELECT m.id::text, m.conversation_id::text, m.sender_id::text, m.type, m.body_sealed, m.created_at::text,
 			m.recalled_at::text, m.recalled_by::text, u.username, u.avatar_url,
-			COALESCE(cm.role, 'member'), COALESCE(cm.member_title, '')
+			COALESCE(cm.role, 'member'), COALESCE(cm.member_title, ''),
+			COALESCE(m.mention_all, FALSE)
 		FROM messages m
 		JOIN users u ON u.id = m.sender_id
 		LEFT JOIN conversation_members cm ON cm.conversation_id = m.conversation_id AND cm.user_id = m.sender_id
@@ -362,7 +371,8 @@ func (s *Service) MessageContext(ctx context.Context, conversationID, userID, me
 	afterRows, err := s.pool.Query(ctx, `
 		SELECT m.id::text, m.conversation_id::text, m.sender_id::text, m.type, m.body_sealed, m.created_at::text,
 			m.recalled_at::text, m.recalled_by::text, u.username, u.avatar_url,
-			COALESCE(cm.role, 'member'), COALESCE(cm.member_title, '')
+			COALESCE(cm.role, 'member'), COALESCE(cm.member_title, ''),
+			COALESCE(m.mention_all, FALSE)
 		FROM messages m
 		JOIN users u ON u.id = m.sender_id
 		LEFT JOIN conversation_members cm ON cm.conversation_id = m.conversation_id AND cm.user_id = m.sender_id
@@ -383,6 +393,9 @@ func (s *Service) MessageContext(ctx context.Context, conversationID, userID, me
 	if out == nil {
 		out = []Message{}
 	}
+	if err := s.attachMentions(ctx, out); err != nil {
+		return nil, err
+	}
 	return out, nil
 }
 
@@ -396,6 +409,7 @@ func (s *Service) scanMessageRows(rows pgx.Rows, convType string, ownerID *strin
 		if err := rows.Scan(
 			&m.ID, &m.ConversationID, &m.SenderID, &m.Type, &sealed, &m.CreatedAt,
 			&recalledAt, &recalledBy, &m.SenderUsername, &m.SenderAvatarURL, &role, &customTitle,
+			&m.MentionAll,
 		); err != nil {
 			return nil, err
 		}

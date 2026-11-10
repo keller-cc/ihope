@@ -151,7 +151,12 @@ export function ContactList({
                 className={selectedGroupId === g.id ? 'im-list-item is-active' : 'im-list-item'}
                 onClick={() => onSelectGroup(g)}
               >
-                <Avatar name={conversationTitle(g)} src={g.avatarUrl} group />
+                <Avatar
+                  name={conversationTitle(g)}
+                  src={g.avatarUrl}
+                  faces={g.memberFaces}
+                  group
+                />
                 <span className="im-list-item__body">
                   <span className="im-list-item__title">{conversationTitle(g)}</span>
                   <span className="im-list-item__preview">

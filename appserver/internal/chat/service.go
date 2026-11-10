@@ -15,12 +15,19 @@ import (
 	"github.com/keller-cc/ihope/appserver/internal/crypto"
 )
 
+// MemberFace is one tile in a WeChat-style default group avatar mosaic.
+type MemberFace struct {
+	Name      string  `json:"name"`
+	AvatarURL *string `json:"avatarUrl,omitempty"`
+}
+
 type Conversation struct {
 	ID                      string  `json:"id"`
 	Type                    string  `json:"type"`
 	Title                   string  `json:"title"`
 	CreatedAt               string  `json:"createdAt"`
 	PeerUsername            string  `json:"peerUsername,omitempty"`
+	PeerHopeID              *string `json:"peerHopeId,omitempty"`
 	PeerAvatarURL           *string `json:"peerAvatarUrl,omitempty"`
 	MemberCount             int     `json:"memberCount,omitempty"`
 	LastMessage             string  `json:"lastMessage,omitempty"`
@@ -34,6 +41,8 @@ type Conversation struct {
 	Muted                   bool    `json:"muted"`
 	PinnedAt                *string `json:"pinnedAt,omitempty"`
 	AvatarURL               *string `json:"avatarUrl,omitempty"`
+	// MemberFaces: first members for default mosaic when AvatarURL is empty (groups only).
+	MemberFaces             []MemberFace `json:"memberFaces,omitempty"`
 	Joined                  bool    `json:"joined,omitempty"`
 	JoinMode                string  `json:"joinMode"` // anyone | verify | deny
 	InviteRequiresApproval  bool    `json:"inviteRequiresApproval"` // legacy: true when joinMode=verify
@@ -46,6 +55,8 @@ type Conversation struct {
 	Removed                 bool    `json:"removed,omitempty"`
 	RemoveReason            string  `json:"removeReason,omitempty"`
 	Dissolved               bool    `json:"dissolved,omitempty"`
+	MentionHomeTip          bool    `json:"mentionHomeTip,omitempty"`
+	HasUnvisitedMention     bool    `json:"hasUnvisitedMention,omitempty"`
 }
 
 const (
@@ -108,18 +119,20 @@ type InviteResult struct {
 }
 
 type Message struct {
-	ID              string  `json:"id"`
-	ConversationID  string  `json:"conversationId"`
-	SenderID        string  `json:"senderId"`
-	SenderUsername  string  `json:"senderUsername,omitempty"`
-	SenderAvatarURL *string `json:"senderAvatarUrl,omitempty"`
-	SenderTitle     string  `json:"senderTitle,omitempty"`
-	Type            string  `json:"type"`
-	Body            string  `json:"body"`
-	CreatedAt       string  `json:"createdAt"`
-	Recalled        bool    `json:"recalled,omitempty"`
-	RecalledAt      *string `json:"recalledAt,omitempty"`
-	RecalledBy      *string `json:"recalledBy,omitempty"`
+	ID              string   `json:"id"`
+	ConversationID  string   `json:"conversationId"`
+	SenderID        string   `json:"senderId"`
+	SenderUsername  string   `json:"senderUsername,omitempty"`
+	SenderAvatarURL *string  `json:"senderAvatarUrl,omitempty"`
+	SenderTitle     string   `json:"senderTitle,omitempty"`
+	Type            string   `json:"type"`
+	Body            string   `json:"body"`
+	CreatedAt       string   `json:"createdAt"`
+	Recalled        bool     `json:"recalled,omitempty"`
+	RecalledAt      *string  `json:"recalledAt,omitempty"`
+	RecalledBy      *string  `json:"recalledBy,omitempty"`
+	MentionAll      bool     `json:"mentionAll,omitempty"`
+	Mentions        []string `json:"mentions,omitempty"`
 }
 
 type Contact struct {
@@ -186,6 +199,12 @@ func (s *Service) ListConversations(ctx context.Context, userID string) ([]Conve
 				WHERE cm.conversation_id = c.id AND cm.user_id <> $1
 				LIMIT 1
 			),
+			(
+				SELECT u.hope_id FROM conversation_members cm
+				JOIN users u ON u.id = cm.user_id
+				WHERE cm.conversation_id = c.id AND cm.user_id <> $1
+				LIMIT 1
+			),
 			(SELECT COUNT(*)::int FROM conversation_members cm2
 			 WHERE cm2.conversation_id = c.id AND cm2.removed_at IS NULL),
 			COALESCE((
@@ -224,6 +243,13 @@ func (s *Service) ListConversations(ctx context.Context, userID string) ([]Conve
 			mem.removed_at IS NOT NULL,
 			COALESCE(mem.remove_reason, ''),
 			c.dissolved_at IS NOT NULL,
+			COALESCE(mem.mention_home_tip, FALSE),
+			EXISTS (
+				SELECT 1 FROM messages m
+				JOIN message_mentions mm ON mm.message_id = m.id AND mm.user_id = $1
+				LEFT JOIN message_mention_visits v ON v.message_id = m.id AND v.user_id = $1
+				WHERE m.conversation_id = c.id AND v.message_id IS NULL AND m.recalled_at IS NULL
+			),
 			COALESCE((
 				SELECT m.created_at FROM messages m
 				WHERE m.conversation_id = c.id
@@ -248,6 +274,7 @@ func (s *Service) ListConversations(ctx context.Context, userID string) ([]Conve
 		var ownerID *string
 		var pinnedAt *string
 		var peerAvatar *string
+		var peerHopeID *string
 		var myRole string
 		var peerRemark string
 		var removed bool
@@ -255,10 +282,11 @@ func (s *Service) ListConversations(ctx context.Context, userID string) ([]Conve
 		var dissolved bool
 		var joinMode string
 		if err := rows.Scan(
-			&c.ID, &c.Type, &c.Title, &c.CreatedAt, &c.PeerUsername, &peerRemark, &peerAvatar, &c.MemberCount,
+			&c.ID, &c.Type, &c.Title, &c.CreatedAt, &c.PeerUsername, &peerRemark, &peerAvatar, &peerHopeID, &c.MemberCount,
 			&lastType, &sealed, &lastRecalled, &c.LastMessageAt, &c.UnreadCount, &c.GroupNo, &ownerID,
 			&c.Muted, &pinnedAt, &c.AvatarURL, &myRole,
-			&joinMode, &removed, &removeReason, &dissolved, &sortAt,
+			&joinMode, &removed, &removeReason, &dissolved,
+			&c.MentionHomeTip, &c.HasUnvisitedMention, &sortAt,
 		); err != nil {
 			return nil, err
 		}
@@ -266,13 +294,16 @@ func (s *Service) ListConversations(ctx context.Context, userID string) ([]Conve
 		c.OwnerID = ownerID
 		c.PinnedAt = pinnedAt
 		c.Pinned = pinnedAt != nil && *pinnedAt != ""
-		c.PeerAvatarURL = peerAvatar
 		c.Removed = removed
 		c.RemoveReason = removeReason
 		c.Dissolved = dissolved
 		if c.Type == "dm" {
+			c.PeerAvatarURL = peerAvatar
 			c.AvatarURL = peerAvatar
+			c.PeerHopeID = peerHopeID
 		}
+		// Groups: never expose a member's personal avatar as peerAvatarUrl
+		// (list UI must not fall back to it when group has no avatar).
 		if ownerID != nil && *ownerID == userID {
 			c.IsOwner = true
 		}
@@ -322,9 +353,15 @@ func (s *Service) ListConversations(ctx context.Context, userID string) ([]Conve
 	if out == nil {
 		out = []Conversation{}
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	_ = s.fillMemberFaces(ctx, out)
+	return out, nil
 }
 
+// MarkRead clears unread for the conversation (QQ-style list「标为已读」):
+// unread watermark, home @ tip, unvisited @ jumps, and pending announcement acks.
 func (s *Service) MarkRead(ctx context.Context, conversationID, userID string) error {
 	ok, err := s.CanAccessConversation(ctx, conversationID, userID)
 	if err != nil {
@@ -334,8 +371,37 @@ func (s *Service) MarkRead(ctx context.Context, conversationID, userID string) e
 		return errors.New("forbidden")
 	}
 	_, err = s.pool.Exec(ctx, `
-		UPDATE conversation_members SET last_read_at = now()
+		UPDATE conversation_members
+		SET last_read_at = now(), mention_home_tip = FALSE
 		WHERE conversation_id = $1 AND user_id = $2
+	`, conversationID, userID)
+	if err != nil {
+		return err
+	}
+	// Visit every unvisited @ (含 @我 / @所有人)，清掉聊内「有人@我」入口。
+	_, err = s.pool.Exec(ctx, `
+		INSERT INTO message_mention_visits (message_id, user_id)
+		SELECT m.id, $2
+		FROM messages m
+		JOIN message_mentions mm ON mm.message_id = m.id AND mm.user_id = $2
+		LEFT JOIN message_mention_visits v ON v.message_id = m.id AND v.user_id = $2
+		WHERE m.conversation_id = $1 AND v.message_id IS NULL AND m.recalled_at IS NULL
+		ON CONFLICT DO NOTHING
+	`, conversationID, userID)
+	if err != nil {
+		return err
+	}
+	// 未确认公告一并确认（避免列表「标为已读」后公告条仍卡着）。
+	_, err = s.pool.Exec(ctx, `
+		INSERT INTO group_announcement_acks (announcement_id, user_id)
+		SELECT a.id, $2
+		FROM group_announcements a
+		WHERE a.conversation_id = $1
+		  AND NOT EXISTS (
+			SELECT 1 FROM group_announcement_acks k
+			WHERE k.announcement_id = a.id AND k.user_id = $2
+		  )
+		ON CONFLICT DO NOTHING
 	`, conversationID, userID)
 	return err
 }
@@ -494,7 +560,61 @@ func (s *Service) ListGroups(ctx context.Context, userID string) ([]Conversation
 	if out == nil {
 		out = []Conversation{}
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	_ = s.fillMemberFaces(ctx, out)
+	return out, nil
+}
+
+// fillMemberFaces attaches up to 9 early members for WeChat-style default group avatars.
+// Skips groups that already have a custom avatar_url.
+func (s *Service) fillMemberFaces(ctx context.Context, list []Conversation) error {
+	ids := make([]string, 0, len(list))
+	idx := map[string]int{}
+	for i := range list {
+		c := &list[i]
+		if c.Type != "group" {
+			continue
+		}
+		if c.AvatarURL != nil && strings.TrimSpace(*c.AvatarURL) != "" {
+			continue
+		}
+		ids = append(ids, c.ID)
+		idx[c.ID] = i
+		c.MemberFaces = nil
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT conversation_id::text, username, avatar_url FROM (
+			SELECT cm.conversation_id, u.username, u.avatar_url,
+				ROW_NUMBER() OVER (PARTITION BY cm.conversation_id ORDER BY cm.joined_at ASC, u.id) AS rn
+			FROM conversation_members cm
+			JOIN users u ON u.id = cm.user_id
+			WHERE cm.conversation_id = ANY($1::uuid[]) AND cm.removed_at IS NULL
+		) t
+		WHERE rn <= 9
+		ORDER BY conversation_id, rn
+	`, ids)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid, name string
+		var av *string
+		if err := rows.Scan(&cid, &name, &av); err != nil {
+			return err
+		}
+		i, ok := idx[cid]
+		if !ok {
+			continue
+		}
+		list[i].MemberFaces = append(list[i].MemberFaces, MemberFace{Name: name, AvatarURL: av})
+	}
+	return rows.Err()
 }
 
 // compactSearchQuery trims and strips all whitespace so "Alice Bob" / "alicebob" match.
@@ -939,7 +1059,9 @@ func (s *Service) getConversation(ctx context.Context, id string) (*Conversation
 		return nil, err
 	}
 	applyJoinMode(&c, joinMode)
-	return &c, nil
+	tmp := []Conversation{c}
+	_ = s.fillMemberFaces(ctx, tmp)
+	return &tmp[0], nil
 }
 
 func allocGroupNo(ctx context.Context, tx pgx.Tx) (string, error) {
@@ -1922,7 +2044,8 @@ func (s *Service) getMessage(ctx context.Context, conversationID, messageID stri
 	err := s.pool.QueryRow(ctx, `
 		SELECT m.id::text, m.conversation_id::text, m.sender_id::text, m.type, m.body_sealed, m.created_at::text,
 			m.recalled_at::text, m.recalled_by::text, u.username, u.avatar_url,
-			COALESCE(cm.role, 'member'), COALESCE(cm.member_title, '')
+			COALESCE(cm.role, 'member'), COALESCE(cm.member_title, ''),
+			COALESCE(m.mention_all, FALSE)
 		FROM messages m
 		JOIN users u ON u.id = m.sender_id
 		LEFT JOIN conversation_members cm ON cm.conversation_id = m.conversation_id AND cm.user_id = m.sender_id
@@ -1930,6 +2053,7 @@ func (s *Service) getMessage(ctx context.Context, conversationID, messageID stri
 	`, messageID, conversationID).Scan(
 		&m.ID, &m.ConversationID, &m.SenderID, &m.Type, &sealed, &m.CreatedAt,
 		&recalledAt, &recalledBy, &m.SenderUsername, &m.SenderAvatarURL, &role, &customTitle,
+		&m.MentionAll,
 	)
 	if err != nil {
 		return nil, err
@@ -1937,6 +2061,10 @@ func (s *Service) getMessage(ctx context.Context, conversationID, messageID stri
 	applyMessageBody(&m, sealed, recalledAt, recalledBy, s.key)
 	if convType == "group" {
 		m.SenderTitle = resolveMemberTitle(ownerID, m.SenderID, role, customTitle)
+	}
+	tmp := []Message{m}
+	if err := s.attachMentions(ctx, tmp); err == nil {
+		m = tmp[0]
 	}
 	return &m, nil
 }
@@ -1977,7 +2105,7 @@ func (s *Service) fillSenderMeta(ctx context.Context, m *Message, userID string)
 	m.SenderTitle = resolveMemberTitle(ownerID, userID, role, custom)
 }
 
-func (s *Service) SendText(ctx context.Context, conversationID, userID, body string) (*Message, error) {
+func (s *Service) SendText(ctx context.Context, conversationID, userID, body string, opts *SendTextOpts) (*Message, error) {
 	body = strings.TrimSpace(body)
 	if body == "" {
 		return nil, errors.New("empty message")
@@ -1989,6 +2117,17 @@ func (s *Service) SendText(ctx context.Context, conversationID, userID, body str
 	if !ok {
 		return nil, errors.New("forbidden")
 	}
+	if err := s.errIfDissolved(ctx, conversationID); err != nil {
+		return nil, err
+	}
+	var mentionIDs []string
+	var mentionAll bool
+	if opts != nil {
+		mentionIDs, mentionAll, err = s.resolveMentionTargets(ctx, conversationID, userID, opts.MentionUserIDs, opts.MentionAll)
+		if err != nil {
+			return nil, err
+		}
+	}
 	sealed, err := crypto.Seal(s.key, []byte(body))
 	if err != nil {
 		return nil, err
@@ -1996,16 +2135,23 @@ func (s *Service) SendText(ctx context.Context, conversationID, userID, body str
 	var m Message
 	var sealedOut string
 	err = s.pool.QueryRow(ctx, `
-		INSERT INTO messages (conversation_id, sender_id, type, body_sealed)
-		VALUES ($1, $2, 'text', $3)
+		INSERT INTO messages (conversation_id, sender_id, type, body_sealed, mention_all)
+		VALUES ($1, $2, 'text', $3, $4)
 		RETURNING id::text, conversation_id::text, sender_id::text, type, body_sealed, created_at::text
-	`, conversationID, userID, sealed).Scan(
+	`, conversationID, userID, sealed, mentionAll).Scan(
 		&m.ID, &m.ConversationID, &m.SenderID, &m.Type, &sealedOut, &m.CreatedAt,
 	)
 	if err != nil {
 		return nil, err
 	}
 	m.Body = body
+	m.MentionAll = mentionAll
+	m.Mentions = mentionIDs
+	if len(mentionIDs) > 0 {
+		if err := s.saveMentions(ctx, m.ID, mentionIDs); err != nil {
+			return nil, err
+		}
+	}
 	s.fillSenderMeta(ctx, &m, userID)
 	_, _ = s.pool.Exec(ctx, `
 		UPDATE conversation_members SET hidden_at = NULL

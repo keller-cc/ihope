@@ -15,6 +15,7 @@
   GroupJoinRequest,
   InviteResult,
   JoinGroupResult,
+  MentionJumpResult,
   Message,
   MessageDay,
   PublicGroup,
@@ -589,10 +590,22 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(body),
     }),
-  sendMessage: (id: string, body: string) =>
+  sendMessage: (
+    id: string,
+    body: string,
+    opts?: { mentionUserIds?: string[]; mentionAll?: boolean },
+  ) =>
     request<Message>(`/api/conversations/${id}/messages`, {
       method: 'POST',
-      body: JSON.stringify({ body }),
+      body: JSON.stringify({
+        body,
+        mentionUserIds: opts?.mentionUserIds || [],
+        mentionAll: !!opts?.mentionAll,
+      }),
+    }),
+  jumpMention: (id: string) =>
+    request<MentionJumpResult>(`/api/conversations/${id}/mentions/jump`, {
+      method: 'POST',
     }),
   sendImage: async (id: string, file: File) => {
     const fd = new FormData()

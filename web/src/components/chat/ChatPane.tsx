@@ -13,6 +13,7 @@ import {
 } from 'tdesign-icons-react'
 import { Button, Dialog, MessagePlugin, Popup, Textarea } from 'tdesign-react'
 import { api, type Conversation, type GroupAnnouncement, type Message, type User } from '@/api'
+import { useGroupMentions } from '@/hooks/useGroupMentions'
 import type { CallRoom } from '@/lib/call/types'
 import {
   conversationTitle,
@@ -31,6 +32,7 @@ import {
 import { CHAT_EMOJIS } from '@/lib/emojis'
 import { chatBgStyle, resolveUserTheme } from '@/lib/chatBg'
 import { Avatar } from '@/components/Avatar'
+import { useIsMobile } from '@/hooks/useIsMobile'
 import { ImageViewer } from './ImageViewer'
 
 type Props = {
@@ -39,13 +41,14 @@ type Props = {
   messages: Message[]
   draft: string
   onDraft: (v: string) => void
-  onSend: () => void
+  onSend: (opts?: { mentionUserIds?: string[]; mentionAll?: boolean }) => void
   onSendImage: (file: File) => void
   onSendFile: (file: File) => void
   onSendVoice: (blob: Blob, duration: number, mime: string) => void
   onRecall: (messageId: string) => void
   onForward?: (messageIds: string[]) => void
   onOpenHistory?: () => void
+  onJumpMention?: () => void
   sendingMedia?: boolean
   hasMore?: boolean
   loadingMore?: boolean
@@ -152,6 +155,7 @@ export function ChatPane({
   onRecall,
   onForward,
   onOpenHistory,
+  onJumpMention,
   sendingMedia,
   hasMore,
   loadingMore,
@@ -176,6 +180,7 @@ export function ChatPane({
   onSelectModeChange,
   onToggleSelect,
 }: Props) {
+  const isMobile = useIsMobile()
   const imageRef = useRef<HTMLInputElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
   const theme = resolveUserTheme(user)
@@ -190,6 +195,25 @@ export function ChatPane({
   const [viewingAnn, setViewingAnn] = useState<GroupAnnouncement | null>(null)
   const pendingAnn = conversation?.pendingAnnouncement || null
   const annAcking = useRef<string | null>(null)
+  const mentions = useGroupMentions({
+    user,
+    conversation,
+    draft,
+    onDraft,
+  })
+  const [voiceMode, setVoiceMode] = useState(false)
+  const [recording, setRecording] = useState(false)
+  const [willCancel, setWillCancel] = useState(false)
+  const [recSec, setRecSec] = useState(0)
+  const mediaRec = useRef<MediaRecorder | null>(null)
+  const recChunks = useRef<Blob[]>([])
+  const recStartedAt = useRef(0)
+  const recTimer = useRef<number | null>(null)
+  const recMime = useRef('audio/webm')
+  const recStream = useRef<MediaStream | null>(null)
+  const pressActive = useRef(false)
+  const pressStartY = useRef(0)
+  const recCancelRef = useRef(false)
 
   const openPendingAnnouncement = () => {
     if (!pendingAnn) return
@@ -214,20 +238,6 @@ export function ChatPane({
       }
     })()
   }, [announceOpen, conversation, viewingAnn, onConversationPatch])
-
-  const [voiceMode, setVoiceMode] = useState(false)
-  const [recording, setRecording] = useState(false)
-  const [willCancel, setWillCancel] = useState(false)
-  const [recSec, setRecSec] = useState(0)
-  const mediaRec = useRef<MediaRecorder | null>(null)
-  const recChunks = useRef<Blob[]>([])
-  const recStartedAt = useRef(0)
-  const recTimer = useRef<number | null>(null)
-  const recMime = useRef('audio/webm')
-  const recStream = useRef<MediaStream | null>(null)
-  const pressActive = useRef(false)
-  const pressStartY = useRef(0)
-  const recCancelRef = useRef(false)
 
   useEffect(() => {
     if (!focusMessageId || !listRef.current) return
@@ -288,6 +298,27 @@ export function ChatPane({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  const doSend = () => {
+    onSend(mentions.sendOpts())
+    mentions.clearPending()
+  }
+
+  useEffect(() => {
+    const caret = mentions.consumePendingCaret()
+    if (caret == null) return
+    const el = document.querySelector(
+      '.im-composer__input textarea, .im-composer__input .t-textarea__inner',
+    ) as HTMLTextAreaElement | null
+    if (!el) return
+    requestAnimationFrame(() => {
+      el.focus()
+      el.setSelectionRange(caret, caret)
+      mentions.onCaretEvent({ target: el })
+    })
+    // Only when draft changes after a mention insert (pending caret).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draft])
 
   const startVoiceRecord = async () => {
     if (recording || sendingMedia || !conversation) return
@@ -683,6 +714,7 @@ export function ChatPane({
         </button>
       )}
 
+      <div className="im-messages-host">
       <div
         className="im-messages"
         ref={listRef}
@@ -918,7 +950,14 @@ export function ChatPane({
                       </div>
                     </button>
                   ) : (
-                    <div className="im-msg__bubble" {...press}>
+                    <div
+                      className={
+                        (m.mentions?.includes(user.id) || m.mentionAll) && !mine
+                          ? 'im-msg__bubble im-msg__bubble--mentioned'
+                          : 'im-msg__bubble'
+                      }
+                      {...press}
+                    >
                       {m.body}
                     </div>
                   )}
@@ -929,6 +968,22 @@ export function ChatPane({
             </div>
           )
         })}
+      </div>
+      {conversation?.type === 'group' &&
+        conversation.hasUnvisitedMention &&
+        !selectMode &&
+        onJumpMention && (
+          <button
+            type="button"
+            className="im-scroll-chip"
+            onClick={onJumpMention}
+          >
+            <span className="im-scroll-chip__ico" aria-hidden>
+              ↑
+            </span>
+            有人@我
+          </button>
+        )}
       </div>
 
       {conversation?.removed && !selectMode && (
@@ -962,7 +1017,7 @@ export function ChatPane({
                       type="button"
                       className="im-emoji-btn"
                       onClick={() => {
-                        onDraft(draft + e)
+                        mentions.onDraftChange(draft + e, (draft + e).length)
                         setEmojiOpen(false)
                       }}
                     >
@@ -1066,19 +1121,99 @@ export function ChatPane({
             </div>
           ) : (
             <>
-              <Textarea
-                className="im-composer__input"
-                value={draft}
-                onChange={(v) => onDraft(String(v))}
-                placeholder="输入消息"
-                autosize={{ minRows: 2, maxRows: 6 }}
-                onKeydown={(_value, { e }) => {
-                  if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault()
-                    onSend()
-                  }
-                }}
-              />
+              <div className="im-composer__input-wrap">
+                {mentions.enabled && mentions.open ? (
+                  <div className="im-mention-picker im-mention-picker--float" role="listbox" aria-label="选择要@的人">
+                    {mentions.loading && mentions.options.length === 0 ? (
+                      <p className="im-mention-picker__empty">加载中…</p>
+                    ) : mentions.options.length === 0 ? (
+                      <p className="im-mention-picker__empty">无匹配成员</p>
+                    ) : (
+                      mentions.options.map((opt, i) =>
+                        opt === 'all' ? (
+                          <button
+                            key="all"
+                            type="button"
+                            className={
+                              i === mentions.activeIndex
+                                ? 'im-mention-picker__item im-mention-picker__all is-active'
+                                : 'im-mention-picker__item im-mention-picker__all'
+                            }
+                            role="option"
+                            aria-selected={i === mentions.activeIndex}
+                            onMouseDown={(e) => e.preventDefault()}
+                            onClick={() => mentions.insert('all')}
+                          >
+                            @所有人
+                          </button>
+                        ) : (
+                          <button
+                            key={opt.id}
+                            type="button"
+                            className={
+                              i === mentions.activeIndex
+                                ? 'im-mention-picker__item is-active'
+                                : 'im-mention-picker__item'
+                            }
+                            role="option"
+                            aria-selected={i === mentions.activeIndex}
+                            onMouseDown={(e) => e.preventDefault()}
+                            onClick={() => mentions.insert(opt)}
+                          >
+                            <Avatar name={opt.name} size="sm" />
+                            <span>@{opt.name}</span>
+                          </button>
+                        ),
+                      )
+                    )}
+                  </div>
+                ) : null}
+                <Textarea
+                  className="im-composer__input"
+                  value={draft}
+                  onChange={(v) => {
+                    const next = String(v)
+                    const el = document.activeElement
+                    const caret =
+                      el instanceof HTMLTextAreaElement ? el.selectionStart : next.length
+                    mentions.onDraftChange(next, caret ?? next.length)
+                  }}
+                  placeholder={mentions.enabled ? '输入消息，@ 可提及成员' : '输入消息'}
+                  autosize={{ minRows: isMobile ? 1 : 2, maxRows: 6 }}
+                  onKeydown={(_value, { e }) => {
+                    if (mentions.open && mentions.options.length > 0) {
+                      if (e.key === 'ArrowDown') {
+                        e.preventDefault()
+                        mentions.moveActive(1)
+                        return
+                      }
+                      if (e.key === 'ArrowUp') {
+                        e.preventDefault()
+                        mentions.moveActive(-1)
+                        return
+                      }
+                      if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)) {
+                        e.preventDefault()
+                        mentions.confirmActive()
+                        return
+                      }
+                      if (e.key === 'Escape') {
+                        e.preventDefault()
+                        mentions.closePicker()
+                        return
+                      }
+                    }
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault()
+                      doSend()
+                      return
+                    }
+                    queueMicrotask(() => mentions.onCaretEvent({ target: e.target }))
+                  }}
+                  onClick={(e) => mentions.onCaretEvent({ target: e.target })}
+                  onKeyup={(e) => mentions.onCaretEvent({ target: e.target })}
+                />
+              </div>
 
               <div className="im-composer__bar">
                 <span className="im-composer__tip">Enter 发送 · 可粘贴图片/文件</span>
@@ -1087,7 +1222,7 @@ export function ChatPane({
                   theme="primary"
                   size="small"
                   disabled={!draft.trim()}
-                  onClick={onSend}
+                  onClick={doSend}
                 >
                   发送(S)
                 </Button>

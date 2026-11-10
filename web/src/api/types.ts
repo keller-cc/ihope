@@ -50,12 +50,18 @@ export type GroupAnnouncement = {
   ackCount?: number
 }
 
+export type MemberFace = {
+  name: string
+  avatarUrl?: string | null
+}
+
 export type Conversation = {
   id: string
   type: string
   title: string
   createdAt: string
   peerUsername?: string
+  peerHopeId?: string | null
   peerAvatarUrl?: string | null
   memberCount?: number
   lastMessage?: string
@@ -69,6 +75,8 @@ export type Conversation = {
   muted?: boolean
   pinnedAt?: string | null
   avatarUrl?: string | null
+  /** First members for default WeChat-style mosaic when avatarUrl is empty. */
+  memberFaces?: MemberFace[]
   joined?: boolean
   joinMode?: 'anyone' | 'verify' | 'deny' | string
   inviteRequiresApproval?: boolean
@@ -84,6 +92,10 @@ export type Conversation = {
   removeReason?: string
   /** Group soft-dissolved; history remains read-only. */
   dissolved?: boolean
+  /** Home list red tip — cleared after one in-chat @ jump. */
+  mentionHomeTip?: boolean
+  /** In-chat floating @ chip — until every relevant @ is visited. */
+  hasUnvisitedMention?: boolean
 }
 
 export type Contact = {
@@ -167,8 +179,16 @@ export type Message = {
   recalled?: boolean
   recalledAt?: string | null
   recalledBy?: string | null
+  mentionAll?: boolean
+  /** Mentioned user ids (includes everyone when mentionAll). */
+  mentions?: string[]
   /** Local-only: optimistic bubble while upload is in flight. */
   pending?: boolean
+}
+
+export type MentionJumpResult = {
+  messageId: string
+  hasMore: boolean
 }
 
 export type MessageDay = {

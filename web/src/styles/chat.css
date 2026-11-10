@@ -67,6 +67,77 @@
   line-height: 1.55;
 }
 
+.im-mention-home-tip {
+  color: #cf1322;
+  font-weight: 600;
+}
+
+.im-session-menu__ico {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  color: var(--im-color-text-secondary, #666);
+}
+
+.im-msg__bubble--mentioned {
+  box-shadow: inset 3px 0 0 #cf1322;
+}
+
+.im-composer__input-wrap {
+  position: relative;
+  width: 100%;
+}
+
+.im-mention-picker {
+  width: min(280px, 78vw);
+  max-height: 240px;
+  overflow: auto;
+  padding: 4px 0;
+}
+
+.im-mention-picker--float {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 6px);
+  z-index: 30;
+  background: #fff;
+  border: 1px solid var(--im-color-line, #e7e7e7);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 12%);
+}
+
+.im-mention-picker__item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  margin: 0;
+  padding: 8px 12px;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+}
+
+.im-mention-picker__item:hover,
+.im-mention-picker__item.is-active {
+  background: color-mix(in srgb, var(--im-color-primary, #0052d9) 10%, transparent);
+}
+
+.im-mention-picker__all {
+  font-weight: 600;
+}
+
+.im-mention-picker__empty {
+  margin: 0;
+  padding: 12px;
+  font-size: 0.85rem;
+  color: var(--im-color-text-secondary, #888);
+}
+
 .im-invite-pick {
   display: flex;
   flex-direction: column;
@@ -827,22 +898,50 @@
   z-index: 10000;
   background: rgba(0, 0, 0, 0.88);
   display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
+  flex-direction: column;
   cursor: zoom-out;
   box-sizing: border-box;
+  padding: 0;
+}
+
+.im-img-viewer__stage {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 48px 24px 16px;
+  cursor: default;
+  touch-action: none;
+  position: relative;
 }
 
 .im-img-viewer__img {
   display: block;
   max-width: min(96vw, 1200px);
-  max-height: 90vh;
+  max-height: 100%;
   width: auto;
   height: auto;
   object-fit: contain;
   cursor: default;
   background: transparent;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+.im-img-viewer__gesture-tip {
+  position: absolute;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  margin: 0;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.45);
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 0.78rem;
+  pointer-events: none;
+  white-space: nowrap;
 }
 
 .im-img-viewer__close {
@@ -857,6 +956,35 @@
   border-radius: 50%;
   font-size: 1rem;
   cursor: pointer;
+  z-index: 2;
+}
+
+.im-img-viewer__dock {
+  flex: none;
+  display: flex;
+  justify-content: center;
+  gap: 16px;
+  padding: 14px 16px calc(14px + env(safe-area-inset-bottom, 0px));
+  background: rgba(0, 0, 0, 0.55);
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+  cursor: default;
+}
+
+.im-img-viewer__dock-btn {
+  border: 0;
+  background: rgba(255, 255, 255, 0.16);
+  color: #fff;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+
+.im-img-viewer__dock-btn:hover {
+  background: rgba(255, 255, 255, 0.26);
 }
 
 .im-img-viewer__hint {
@@ -867,6 +995,7 @@
   color: #fff;
   font-size: 0.9rem;
   opacity: 0.85;
+  z-index: 2;
 }
 
 .im-msg__meta {
@@ -903,12 +1032,55 @@
   border-top: 1px solid var(--im-color-line);
 }
 
-.im-avatar--group:not(:has(img)) {
+.im-avatar--group:not(:has(img)):not(:has(.im-avatar__mosaic)) {
   background: linear-gradient(
     145deg,
     color-mix(in srgb, var(--im-color-success) 72%, #fff),
     color-mix(in srgb, var(--im-color-success) 45%, #1f5c38)
   );
+}
+
+.im-messages-host {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.im-messages-host > .im-messages {
+  flex: 1;
+  min-height: 0;
+}
+
+.im-scroll-chip {
+  position: absolute;
+  right: 0;
+  top: 12%;
+  z-index: 6;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0;
+  padding: 10px 10px 10px 12px;
+  border: 0;
+  border-radius: 20px 0 0 20px;
+  background: #fff;
+  color: var(--im-color-primary, #0052d9);
+  font: inherit;
+  font-size: 0.75rem;
+  font-weight: 600;
+  box-shadow: 0 2px 10px rgb(0 0 0 / 16%);
+  cursor: pointer;
+}
+
+.im-scroll-chip:hover {
+  background: #f7f9ff;
+}
+
+.im-scroll-chip__ico {
+  font-size: 0.95rem;
+  line-height: 1;
 }
 
 .im-back {
