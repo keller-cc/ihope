@@ -360,9 +360,10 @@ func (s *Service) ListConversations(ctx context.Context, userID string) ([]Conve
 	return out, nil
 }
 
-// MarkRead clears unread for the conversation (QQ-style list「标为已读」):
-// unread watermark, home @ tip, unvisited @ jumps, and pending announcement acks.
-func (s *Service) MarkRead(ctx context.Context, conversationID, userID string) error {
+// AdvanceLastRead clears the unread watermark when opening / viewing a chat.
+// It also drops the home-list「有人@我」tip, but keeps unvisited @ jumps and
+// announcement acks so the in-chat chip can still work (QQ-style).
+func (s *Service) AdvanceLastRead(ctx context.Context, conversationID, userID string) error {
 	ok, err := s.CanAccessConversation(ctx, conversationID, userID)
 	if err != nil {
 		return err
@@ -375,11 +376,17 @@ func (s *Service) MarkRead(ctx context.Context, conversationID, userID string) e
 		SET last_read_at = now(), mention_home_tip = FALSE
 		WHERE conversation_id = $1 AND user_id = $2
 	`, conversationID, userID)
-	if err != nil {
+	return err
+}
+
+// MarkRead is list「标为已读」: unread watermark, home @ tip, unvisited @ jumps,
+// and pending announcement acks.
+func (s *Service) MarkRead(ctx context.Context, conversationID, userID string) error {
+	if err := s.AdvanceLastRead(ctx, conversationID, userID); err != nil {
 		return err
 	}
 	// Visit every unvisited @ (含 @我 / @所有人)，清掉聊内「有人@我」入口。
-	_, err = s.pool.Exec(ctx, `
+	_, err := s.pool.Exec(ctx, `
 		INSERT INTO message_mention_visits (message_id, user_id)
 		SELECT m.id, $2
 		FROM messages m
@@ -859,18 +866,20 @@ func (s *Service) RejectFriendRequest(ctx context.Context, userID, requestID str
 }
 
 // CancelFriendRequest lets the sender withdraw a pending request.
-func (s *Service) CancelFriendRequest(ctx context.Context, userID, requestID string) error {
-	tag, err := s.pool.Exec(ctx, `
+// Returns the recipient user id so callers can push a cancel notice.
+func (s *Service) CancelFriendRequest(ctx context.Context, userID, requestID string) (toUserID string, err error) {
+	err = s.pool.QueryRow(ctx, `
 		UPDATE friend_requests SET status = 'rejected', decided_at = now()
 		WHERE id = $1 AND from_user_id = $2 AND status = 'pending'
-	`, requestID, userID)
+		RETURNING to_user_id::text
+	`, requestID, userID).Scan(&toUserID)
 	if err != nil {
-		return err
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", errors.New("request not found")
+		}
+		return "", err
 	}
-	if tag.RowsAffected() == 0 {
-		return errors.New("request not found")
-	}
-	return nil
+	return toUserID, nil
 }
 
 func (s *Service) areFriends(ctx context.Context, a, b string) (bool, error) {
@@ -1308,18 +1317,21 @@ func (s *Service) RejectGroupJoinRequest(ctx context.Context, conversationID, ac
 	return fromUserID, nil
 }
 
-func (s *Service) CancelGroupJoinRequest(ctx context.Context, userID, requestID string) error {
-	tag, err := s.pool.Exec(ctx, `
+// CancelGroupJoinRequest withdraws a pending join request.
+// Returns conversation id for notifying group managers.
+func (s *Service) CancelGroupJoinRequest(ctx context.Context, userID, requestID string) (conversationID string, err error) {
+	err = s.pool.QueryRow(ctx, `
 		UPDATE group_join_requests SET status = 'rejected', decided_at = now()
 		WHERE id = $1 AND from_user_id = $2 AND status = 'pending'
-	`, requestID, userID)
+		RETURNING conversation_id::text
+	`, requestID, userID).Scan(&conversationID)
 	if err != nil {
-		return err
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", errors.New("request not found")
+		}
+		return "", err
 	}
-	if tag.RowsAffected() == 0 {
-		return errors.New("request not found")
-	}
-	return nil
+	return conversationID, nil
 }
 
 func (s *Service) LeaveGroup(ctx context.Context, conversationID, userID string) error {

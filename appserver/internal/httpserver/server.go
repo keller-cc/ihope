@@ -995,6 +995,14 @@ func (s *Server) handleAcceptGroupJoinRequest(w http.ResponseWriter, r *http.Req
 		"conversationId": id,
 		"title":          s.chat.ConversationTitle(r.Context(), id),
 	})
+	if managers, _ := s.chat.GroupManagerIDs(r.Context(), id); len(managers) > 0 {
+		s.hub.PublishToUsers(managers, map[string]any{
+			"type":           "group.join_handled",
+			"conversationId": id,
+			"requestId":      rid,
+			"action":         "accepted",
+		})
+	}
 	title := s.chat.ConversationTitle(r.Context(), id)
 	if title == "" {
 		title = "群聊"
@@ -1025,6 +1033,14 @@ func (s *Server) handleRejectGroupJoinRequest(w http.ResponseWriter, r *http.Req
 		"conversationId": id,
 		"title":          title,
 	})
+	if managers, _ := s.chat.GroupManagerIDs(r.Context(), id); len(managers) > 0 {
+		s.hub.PublishToUsers(managers, map[string]any{
+			"type":           "group.join_handled",
+			"conversationId": id,
+			"requestId":      rid,
+			"action":         "rejected",
+		})
+	}
 	s.notifyQQSocial(fromID, fmt.Sprintf("「%s」未通过你的入群申请。", title),
 		"group.join_rejected:"+id)
 	writeJSON(w, http.StatusOK, map[string]string{"message": "rejected"})
@@ -1032,9 +1048,19 @@ func (s *Server) handleRejectGroupJoinRequest(w http.ResponseWriter, r *http.Req
 
 func (s *Server) handleCancelGroupJoinRequest(w http.ResponseWriter, r *http.Request, userID string) {
 	id := r.PathValue("id")
-	if err := s.chat.CancelGroupJoinRequest(r.Context(), userID, id); err != nil {
+	conversationID, err := s.chat.CancelGroupJoinRequest(r.Context(), userID, id)
+	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
+	}
+	if conversationID != "" {
+		managers, _ := s.chat.GroupManagerIDs(r.Context(), conversationID)
+		s.hub.PublishToUsers(managers, map[string]any{
+			"type":           "group.join_handled",
+			"conversationId": conversationID,
+			"requestId":      id,
+			"action":         "cancelled",
+		})
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"message": "cancelled"})
 }
@@ -1542,9 +1568,17 @@ func (s *Server) handleRejectFriendRequest(w http.ResponseWriter, r *http.Reques
 
 func (s *Server) handleCancelFriendRequest(w http.ResponseWriter, r *http.Request, userID string) {
 	id := r.PathValue("id")
-	if err := s.chat.CancelFriendRequest(r.Context(), userID, id); err != nil {
+	toUserID, err := s.chat.CancelFriendRequest(r.Context(), userID, id)
+	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
+	}
+	if toUserID != "" {
+		s.hub.PublishToUser(toUserID, map[string]any{
+			"type":      "friend.request_cancelled",
+			"requestId": id,
+			"fromUserId": userID,
+		})
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"message": "cancelled"})
 }
@@ -1695,7 +1729,22 @@ func (s *Server) handleDeleteChatBgImage(w http.ResponseWriter, r *http.Request,
 
 func (s *Server) handleMarkRead(w http.ResponseWriter, r *http.Request, userID string) {
 	id := r.PathValue("id")
-	if err := s.chat.MarkRead(r.Context(), id, userID); err != nil {
+	dismiss := r.URL.Query().Get("dismiss") == "1" || r.URL.Query().Get("dismiss") == "true"
+	if r.Body != nil && r.ContentLength != 0 {
+		var body struct {
+			Dismiss *bool `json:"dismiss"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err == nil && body.Dismiss != nil {
+			dismiss = *body.Dismiss
+		}
+	}
+	var err error
+	if dismiss {
+		err = s.chat.MarkRead(r.Context(), id, userID)
+	} else {
+		err = s.chat.AdvanceLastRead(r.Context(), id, userID)
+	}
+	if err != nil {
 		if err.Error() == "forbidden" {
 			writeErr(w, http.StatusForbidden, "forbidden")
 			return
@@ -1741,7 +1790,8 @@ func (s *Server) handleListMessages(w http.ResponseWriter, r *http.Request, user
 		return
 	}
 	if before == "" && opts.Type == "" && opts.SenderID == "" && len(opts.SenderIDs) == 0 && opts.Day == "" {
-		_ = s.chat.MarkRead(r.Context(), id, userID)
+		// Opening the chat: clear unread + list tip only; keep @ jump chips.
+		_ = s.chat.AdvanceLastRead(r.Context(), id, userID)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"messages": list, "hasMore": hasMore})
 }

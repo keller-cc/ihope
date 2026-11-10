@@ -535,8 +535,11 @@ export const api = {
     request<{ images: ChatBgImage[] }>('/api/me/chat-bg/images'),
   deleteMeChatBgImage: (id: string) =>
     request<User>(`/api/me/chat-bg/images/${id}`, { method: 'DELETE' }),
-  markRead: (id: string) =>
-    request<{ message: string }>(`/api/conversations/${id}/read`, { method: 'POST' }),
+  markRead: (id: string, opts?: { dismiss?: boolean }) =>
+    request<{ message: string }>(`/api/conversations/${id}/read`, {
+      method: 'POST',
+      body: JSON.stringify({ dismiss: !!opts?.dismiss }),
+    }),
   listMessages: (
     id: string,
     opts?: {

@@ -216,9 +216,17 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
       if (activeIdRef.current !== id) return
       setMessages(res.messages)
       setHasMoreMessages(!!res.hasMore)
-      // listMessages 服务端已 MarkRead；本地清未读即可，避免再打 /conversations
+      // listMessages 服务端已 AdvanceLastRead；本地清未读与列表 @ 提示，保留聊内 @ 跳转
       setConversations((prev) =>
-        prev.map((c) => (c.id === id && c.unreadCount ? { ...c, unreadCount: 0 } : c)),
+        prev.map((c) =>
+          c.id === id
+            ? {
+                ...c,
+                unreadCount: 0,
+                mentionHomeTip: false,
+              }
+            : c,
+        ),
       )
     } catch (e) {
       if (activeIdRef.current !== id) return
@@ -249,6 +257,7 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
         }
         setRealtimeOk(true)
         void loadConversations()
+        void loadContacts()
         const viewingId = activeIdRef.current
         if (viewingId && rightKindRef.current === 'chat') {
           void loadMessages(viewingId)
@@ -261,10 +270,17 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
         offlineTimer = null
       }, 2500)
     })
-    const onOnline = () => setNetOnline(true)
+    const onOnline = () => {
+      setNetOnline(true)
+      void loadConversations()
+      void loadContacts()
+    }
     const onOffline = () => setNetOnline(false)
     const onVisible = () => {
-      if (document.visibilityState === 'visible') void loadConversations()
+      if (document.visibilityState === 'visible') {
+        void loadConversations()
+        void loadContacts()
+      }
     }
     window.addEventListener('online', onOnline)
     window.addEventListener('offline', onOffline)
@@ -396,6 +412,9 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
       if (t === 'friend.request') {
         const req = data.request as FriendRequest | undefined
         const name = req?.fromUser?.username || '有人'
+        if (req?.id) {
+          setIncoming((prev) => (prev.some((r) => r.id === req.id) ? prev : [req, ...prev]))
+        }
         MessagePlugin.info(`${name} 请求添加你为好友`)
         void loadContacts()
         return
@@ -405,11 +424,20 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
         const name = peer?.username || '对方'
         MessagePlugin.success(`${name} 已同意你的好友申请`)
         void loadContacts()
+        void loadConversations()
         return
       }
       if (t === 'friend.rejected') {
         const name = String(data.peerUsername || '对方')
         MessagePlugin.info(`${name} 拒绝了你的好友申请`)
+        void loadContacts()
+        return
+      }
+      if (t === 'friend.request_cancelled') {
+        const requestId = String(data.requestId || '')
+        if (requestId) {
+          setIncoming((prev) => prev.filter((r) => r.id !== requestId))
+        }
         void loadContacts()
         return
       }
@@ -425,8 +453,10 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
         const conv =
           conversationsRef.current.find((c) => c.id === cid) ||
           groupsRef.current.find((c) => c.id === cid)
-        if (conv && !(conv.isOwner || conv.isAdmin)) return
         const req = data.request as GroupJoinRequest | undefined
+        if (req?.id) {
+          setGroupJoins((prev) => (prev.some((r) => r.id === req.id) ? prev : [req, ...prev]))
+        }
         const title = req?.group?.title || conv?.title || '群聊'
         MessagePlugin.info(`「${title}」有新的入群申请`)
         void loadContacts()
@@ -442,6 +472,15 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
       if (t === 'group.join_rejected') {
         const title = String(data.title || '群聊')
         MessagePlugin.info(`「${title}」未通过你的入群申请`)
+        void loadContacts()
+        return
+      }
+      if (t === 'group.join_handled') {
+        const requestId = String(data.requestId || '')
+        if (requestId) {
+          setGroupJoins((prev) => prev.filter((r) => r.id !== requestId))
+        }
+        void loadContacts()
         return
       }
       if (t === 'group.announcement') {
@@ -707,10 +746,7 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
             : c,
         ),
       )
-      if (!res.messageId) {
-        MessagePlugin.info('没有未读的@了')
-        return
-      }
+      if (!res.messageId) return
       await jumpToMessage(res.messageId, { showReturnToHistory: false })
     } catch (e) {
       MessagePlugin.error(apiErrorMessage(e, '跳转失败'))
@@ -1132,7 +1168,7 @@ export function ChatPage({ user, onUserChange, onLogout }: Props) {
                 }}
                 onMarkRead={async (c) => {
                   try {
-                    await api.markRead(c.id)
+                    await api.markRead(c.id, { dismiss: true })
                     setConversations((prev) =>
                       prev.map((x) =>
                         x.id === c.id
